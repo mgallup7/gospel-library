@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gospel Library</title>
+<meta name="description" content="A personal copy of the scriptures, general conference, and manuals, with instant search.">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Library">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#f3f2ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1d2024" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="bar">
+  <button id="homeBtn" class="icon-btn" aria-label="Library" title="Library">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15.5H6.5A2.5 2.5 0 0 0 4 21z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/><path d="M9 7h7M9 10.5h7"/></svg>
+  </button>
+  <form id="searchForm" class="search" role="search">
+    <input id="q" type="search" placeholder="Search, or type a reference like Alma 32:21" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search">
+    <button type="button" class="clear" aria-label="Clear">&times;</button>
+  </form>
+  <button id="filterBtn" class="text-btn" type="button">Filters</button>
+  <div class="scopes" role="tablist" aria-label="Where to search">
+    <button type="button" data-scope="all" class="on">All</button>
+    <button type="button" data-scope="scriptures">Scriptures</button>
+    <button type="button" data-scope="conference">Conference</button>
+    <button type="button" data-scope="manuals">Manuals</button>
+  </div>
+</header>
+
+<div id="filters" class="filters" hidden>
+  <label>Speaker
+    <input id="fSpeaker" list="speakerList" placeholder="Any speaker">
+    <datalist id="speakerList"></datalist>
+  </label>
+  <label>Conference years
+    <span class="row"><input id="fFrom" inputmode="numeric" placeholder="From" maxlength="4"><input id="fTo" inputmode="numeric" placeholder="To" maxlength="4"></span>
+  </label>
+  <label>Scripture book
+    <input id="fBook" placeholder="e.g. Alma, D&amp;C, Isaiah">
+  </label>
+  <label>Show results as
+    <span class="seg" id="fGroup"><button type="button" data-group="passages" class="on">Passages</button><button type="button" data-group="documents">Talks and chapters</button></span>
+  </label>
+  <div class="actions"><button id="fClear" class="text-btn" type="button">Clear filters</button></div>
+</div>
+
+<main>
+  <section id="list" class="pane" aria-live="polite"></section>
+  <section id="reader" class="pane" hidden></section>
+</main>
+
+<div id="sheet" class="sheet" hidden role="dialog" aria-label="Footnote">
+  <div class="handle"></div>
+  <button class="close" aria-label="Close">&times;</button>
+  <div class="sheet-body"></div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,530 @@
+/* Gospel Library — personal edition. Plain JavaScript, no build step. */
+(() => {
+  "use strict";
+
+  const $ = (sel, el = document) => el.querySelector(sel);
+  const el = (tag, attrs = {}, children = []) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") node.className = v;
+      else if (k === "html") node.innerHTML = v;
+      else if (k === "text") node.textContent = v;
+      else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+      else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v === true ? "" : v);
+    }
+    for (const c of [].concat(children)) if (c !== null && c !== undefined) node.append(c);
+    return node;
+  };
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const wide = () => window.matchMedia("(min-width: 900px)").matches;
+  const monthName = (m) => (m === 4 ? "April" : m === 10 ? "October" : "");
+
+  // ------------------------------------------------------------ state ----
+  const state = {
+    q: "", scope: "all", speaker: "", from: "", to: "", book: "", group: "passages",
+    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, view: "home", browse: null,
+  };
+  let searchSeq = 0;
+  let searchAbort = null;
+  let typeTimer = null;
+
+  const listPane = $("#list");
+  const readerPane = $("#reader");
+  const input = $("#q");
+  const filters = $("#filters");
+  const mainEl = $("main");
+
+  // -------------------------------------------------------------- api ----
+  async function api(path, params = {}, signal) {
+    const url = new URL("/api/" + path, location.origin);
+    for (const [k, v] of Object.entries(params)) if (v !== "" && v !== null && v !== undefined) url.searchParams.set(k, v);
+    const r = await fetch(url, { signal });
+    if (!r.ok) throw new Error(`${path}: ${r.status}`);
+    return r.json();
+  }
+
+  // ---------------------------------------------------------- routing ----
+  function urlFor() {
+    const p = new URLSearchParams();
+    if (state.q) p.set("q", state.q);
+    if (state.scope !== "all") p.set("scope", state.scope);
+    for (const k of ["speaker", "from", "to", "book"]) if (state[k]) p.set(k, state[k]);
+    if (state.group !== "passages") p.set("group", state.group);
+    const qs = p.toString();
+    if (state.docId) return `/read/${state.docId}${state.pid ? "#" + state.pid : ""}${qs ? "?" + qs : ""}`.replace(/(#[^?]*)(\?.*)/, "$2$1");
+    return (qs ? "/search?" + qs : "/");
+  }
+  function push(replace = false) {
+    const url = urlFor();
+    if (replace) history.replaceState({ ...state }, "", url); else history.pushState({ ...state }, "", url);
+  }
+  function readUrl() {
+    const p = new URLSearchParams(location.search);
+    state.q = p.get("q") || "";
+    state.scope = p.get("scope") || "all";
+    state.speaker = p.get("speaker") || "";
+    state.from = p.get("from") || "";
+    state.to = p.get("to") || "";
+    state.book = p.get("book") || "";
+    state.group = p.get("group") || "passages";
+    const m = location.pathname.match(/^\/read\/(\d+)/);
+    state.docId = m ? Number(m[1]) : null;
+    state.pid = location.hash ? location.hash.slice(1) : null;
+  }
+  window.addEventListener("popstate", () => { readUrl(); syncControls(); render({ fromHistory: true }); });
+
+  function syncControls() {
+    input.value = state.q;
+    for (const b of document.querySelectorAll(".scopes button")) b.classList.toggle("on", b.dataset.scope === state.scope);
+    $("#fSpeaker").value = state.speaker;
+    $("#fFrom").value = state.from;
+    $("#fTo").value = state.to;
+    $("#fBook").value = state.book;
+    for (const b of document.querySelectorAll("#fGroup button")) b.classList.toggle("on", b.dataset.group === state.group);
+    const active = !!(state.speaker || state.from || state.to || state.book || state.group !== "passages");
+    $("#filterBtn").classList.toggle("on", active);
+  }
+
+  // ------------------------------------------------------------ render ----
+  async function render({ fromHistory = false } = {}) {
+    if (state.q.trim().length >= 2) {
+      await runSearch({ typeahead: false, silent: true });
+    } else {
+      state.lastSearch = null;
+      renderHome();
+    }
+    if (state.docId) {
+      await openDoc(state.docId, state.pid, { push: false });
+    } else {
+      showList();
+    }
+  }
+
+  function showList() {
+    if (wide()) { listPane.hidden = false; readerPane.hidden = !state.docId; }
+    else { listPane.hidden = false; readerPane.hidden = true; }
+  }
+  function showReader() {
+    if (wide()) { listPane.hidden = false; readerPane.hidden = false; }
+    else { listPane.hidden = true; readerPane.hidden = false; }
+    window.scrollTo(0, 0);
+  }
+
+  // ------------------------------------------------------------ search ----
+  function scheduleSearch() {
+    clearTimeout(typeTimer);
+    typeTimer = setTimeout(() => runSearch({ typeahead: true }), 140);
+  }
+
+  async function runSearch({ typeahead = false, silent = false, more = false } = {}) {
+    const q = state.q.trim();
+    if (q.length < 2) { state.lastSearch = null; renderHome(); if (!silent) push(true); return; }
+    if (!more) state.offset = 0;
+    const seq = ++searchSeq;
+    if (searchAbort) searchAbort.abort();
+    searchAbort = new AbortController();
+    try {
+      const data = await api("search", {
+        q, scope: state.scope, typeahead: typeahead ? 1 : 0, limit: 40, offset: state.offset,
+        speaker: state.speaker, from: state.from, to: state.to, book: state.book, group: state.group,
+      }, searchAbort.signal);
+      if (seq !== searchSeq) return;
+      if (more && state.lastSearch) {
+        data.hits = state.lastSearch.hits.concat(data.hits);
+        data.documents = state.lastSearch.documents.concat(data.documents);
+        data.titles = state.lastSearch.titles;
+        data.jump = state.lastSearch.jump;
+      }
+      state.lastSearch = data;
+      state.terms = termsFrom(q);
+      renderResults(data);
+      if (!silent) push(true);
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      listPane.replaceChildren(el("div", { class: "status error", text: `Search is not answering: ${e.message}. Is the server running on the Mac?` }));
+    }
+  }
+
+  function termsFrom(q) {
+    return q.replace(/\b(speaker|by|year|book|in|scope):("[^"]*"|\S+)/gi, " ")
+      .replace(/[^\w\s'’-]/g, " ")
+      .split(/\s+/).filter((w) => w && !/^(or|and|not)$/i.test(w) && !w.startsWith("-") && w.length > 1)
+      .map((w) => w.replace(/^-/, ""));
+  }
+
+  function renderResults(data) {
+    state.view = "results";
+    const frag = document.createDocumentFragment();
+    if (data.error) frag.append(el("div", { class: "status error", text: data.error }));
+
+    if (data.jump) {
+      const j = data.jump;
+      frag.append(el("button", { class: "jump", onclick: () => j.doc_id ? openDoc(j.doc_id, j.pid) : null }, [
+        el("div", {}, [el("b", { text: j.label }), " ", el("span", { text: j.doc_id ? "Open" : "Not downloaded yet" })]),
+        el("span", { text: j.doc_id ? "›" : "" }),
+      ]));
+    }
+    if (data.titles && data.titles.length) {
+      frag.append(el("div", { class: "group-title", text: "By title" }));
+      for (const d of data.titles) frag.append(docRow(d));
+    }
+    const total = data.total || 0;
+    if (data.hits.length || data.documents.length) {
+      frag.append(el("div", { class: "group-title", text: `${total.toLocaleString()} ${state.group === "documents" ? "talks and chapters" : "passages"}${data.ms ? ` in ${data.ms} ms` : ""}` }));
+    } else if (!data.jump && !(data.titles || []).length) {
+      frag.append(el("div", { class: "empty", text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, or a different spelling.` }));
+    }
+    if (state.group === "documents") {
+      for (const d of data.documents) frag.append(docRow(d, d.hits));
+    } else {
+      for (const h of data.hits) frag.append(hitRow(h));
+    }
+    const shown = state.group === "documents" ? data.documents.length : data.hits.length;
+    if (shown < total) {
+      frag.append(el("button", { class: "more", text: `Show more (${(total - shown).toLocaleString()} left)`, onclick: () => { state.offset = shown; runSearch({ more: true, silent: true }); } }));
+    }
+    listPane.replaceChildren(frag);
+    listPane.scrollTop = 0;
+    markActive();
+  }
+  function scopeLabel() {
+    return state.scope === "all" ? "" : ` in ${state.scope === "conference" ? "general conference" : state.scope}`;
+  }
+
+  function hitRow(h) {
+    return el("button", { class: "hit", "data-doc": h.doc_id, "data-pid": h.pid, onclick: () => openDoc(h.doc_id, h.pid) }, [
+      el("div", { class: "cite", text: h.citation }),
+      el("div", { class: "snip", html: h.snippet }),
+      el("div", { class: "where", text: h.collection === "general-conference" ? [h.session, h.label].filter(Boolean).join(", ") : h.label }),
+    ]);
+  }
+  function docRow(d, hits) {
+    const meta = [];
+    if (d.author) meta.push(el("b", { text: d.author }));
+    if (d.label) meta.push(meta.length ? `, ${d.label}` : d.label);
+    if (hits) meta.push(` (${hits} ${hits === 1 ? "passage" : "passages"})`);
+    return el("button", { class: "doc-row", "data-doc": d.doc_id, onclick: () => openDoc(d.doc_id, null) }, [
+      el("div", { class: "t", text: d.title }),
+      el("div", { class: "m" }, meta),
+    ]);
+  }
+  function markActive() {
+    for (const b of listPane.querySelectorAll("[data-doc]")) b.classList.toggle("on", Number(b.dataset.doc) === state.docId);
+  }
+
+  // -------------------------------------------------------------- home ----
+  let homeCache = null;
+  async function renderHome() {
+    state.view = "home";
+    const frag = document.createDocumentFragment();
+    frag.append(el("div", { class: "status", id: "homeStatus", text: "" }));
+    const tabs = el("div", { class: "shelf", id: "homeTabs" });
+    const sections = [["conference", "Latest conference"], ["scriptures", "Scriptures"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
+    for (const [key, label] of sections) {
+      tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => { state.browse = { tab: key }; renderHome(); } }));
+    }
+    frag.append(tabs);
+    const body = el("div", { id: "homeBody" });
+    frag.append(body);
+    listPane.replaceChildren(frag);
+
+    try {
+      homeCache = homeCache || (await api("stats"));
+      const s = homeCache;
+      const last = s.meta?.last_sync?.finished ? new Date(s.meta.last_sync.finished) : null;
+      const when = last ? `Updated ${last.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.` : "No sync has run yet.";
+      $("#homeStatus").textContent = `${s.verses.toLocaleString()} verses and ${s.talks.toLocaleString()} talks on this Mac. ${when}`;
+    } catch (e) {
+      $("#homeStatus").textContent = `The library server is not answering (${e.message}).`;
+      $("#homeStatus").classList.add("error");
+      return;
+    }
+    const tab = state.browse?.tab || "conference";
+    if (tab === "conference") await browseConference(body);
+    else if (tab === "scriptures") await browseScriptures(body);
+    else await browseCollection(body, tab);
+  }
+
+  async function browseConference(body) {
+    const b = state.browse || {};
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: "conference", year: b.year }; renderHome(); });
+    const data = await api("browse", { collection: "general-conference" });
+    const books = data.books.filter((x) => x.docs > 0 || x.status === "ok");
+    if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks yet. The first sync pulls them in; the newest conference arrives first." })); return; }
+    if (!b.year && !b.all) {
+      const latest = await api("recent");
+      if (latest.conference) {
+        body.append(el("h2", { text: latest.conference.title }));
+        let session = null;
+        for (const t of latest.talks) {
+          if (t.session && t.session !== session) { session = t.session; body.append(el("div", { class: "toc-row section" }, [el("div", { class: "t", text: session })])); }
+          body.append(el("button", { class: "toc-row", "data-doc": t.id, onclick: () => openDoc(t.id, null) }, [el("div", { class: "t", text: t.title }), el("div", { class: "s", text: t.author || "" })]));
+        }
+      }
+      body.append(el("h2", { text: "All conferences" }));
+    }
+    const years = [...new Set(books.map((x) => x.year))].filter(Boolean).sort((a, c) => c - a);
+    const shelf = el("div", { class: "shelf" });
+    for (const y of years) shelf.append(el("button", { class: "chip" + (b.year === y ? " on" : ""), text: String(y), onclick: () => { state.browse = { tab: "conference", year: y, all: true }; renderHome(); } }));
+    body.append(shelf);
+    if (b.year) {
+      for (const bk of books.filter((x) => x.year === b.year)) {
+        body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: "conference", year: b.year, bookUri: bk.uri }; renderHome(); } }, [
+          el("div", { class: "t", text: `${monthName(bk.month)} ${bk.year}` }), el("div", { class: "s", text: `${bk.docs} talks` })]));
+      }
+    }
+  }
+
+  async function browseScriptures(body) {
+    const b = state.browse || {};
+    const shelf = await api("scriptures");
+    if (!b.book) {
+      for (const vol of shelf.volumes) {
+        body.append(el("h2", { text: vol.name }));
+        const row = el("div", { class: "shelf" });
+        for (const bk of vol.books) row.append(el("button", { class: "chip", text: bk.name.replace("JST, ", ""), onclick: () => { state.browse = { tab: "scriptures", book: bk.slug }; renderHome(); } }));
+        body.append(row);
+      }
+      return;
+    }
+    const bk = shelf.volumes.flatMap((v) => v.books).find((x) => x.slug === b.book);
+    body.append(el("div", { class: "crumbs" }, [el("button", { text: "Scriptures", onclick: () => { state.browse = { tab: "scriptures" }; renderHome(); } }), el("span", { text: bk.name })]));
+    const grid = el("div", { class: "chapters" });
+    for (const c of bk.chapters) grid.append(el("button", { text: String(c.n), disabled: !c.doc_id, onclick: () => openDoc(c.doc_id, null) }));
+    body.append(grid);
+    if (!bk.chapters.some((c) => c.doc_id)) body.append(el("div", { class: "empty", text: "Not downloaded yet. The nightly sync will bring it in." }));
+  }
+
+  async function browseCollection(body, slug) {
+    const b = state.browse || {};
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: slug }; renderHome(); });
+    const data = await api("browse", { collection: slug });
+    const books = data.books.filter((x) => x.status !== "missing");
+    if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with the nightly sync." })); return; }
+    if (books.length === 1) return renderBookToc(body, books[0].uri, null);
+    for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: slug, bookUri: bk.uri }; renderHome(); } }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} pages` })]));
+  }
+
+  async function renderBookToc(body, uri, back) {
+    const book = await api("book", { uri });
+    if (back) body.append(el("div", { class: "crumbs" }, [el("button", { text: "Back", onclick: back }), el("span", { text: book.title })]));
+    else body.append(el("h2", { text: book.title }));
+    for (const n of book.nodes) {
+      if (n.kind === "section") {
+        body.append(el("div", { class: "toc-row section" }, [el("div", { class: "t", text: n.title })]));
+      } else {
+        body.append(el("button", { class: "toc-row" + (n.depth > 1 ? " sub" : ""), disabled: !n.doc_id, "data-doc": n.doc_id, onclick: () => n.doc_id && openDoc(n.doc_id, null) }, [
+          el("div", { class: "t", text: n.title }), el("div", { class: "s", text: n.subtitle || "" })]));
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ reader ----
+  let currentDoc = null;
+  async function openDoc(id, pid, { push: doPush = true } = {}) {
+    if (!id) return;
+    state.docId = id; state.pid = pid || null;
+    if (doPush) push();
+    markActive();
+    showReader();
+    if (!currentDoc || currentDoc.id !== id) {
+      readerPane.replaceChildren(el("div", { class: "status", text: "Opening…" }));
+      try { currentDoc = await api("doc", { id }); }
+      catch (e) { readerPane.replaceChildren(el("div", { class: "status error", text: `Could not open that page (${e.message}).` })); return; }
+      renderDoc(currentDoc);
+    }
+    focusParagraph(state.pid);
+  }
+
+  function renderDoc(doc) {
+    const bar = el("div", { class: "reader-bar" }, [
+      el("button", { class: "icon-btn back", "aria-label": "Back", onclick: () => history.back(), html: ICON_BACK }),
+      el("div", { class: "crumb", text: crumbFor(doc) }),
+      el("div", { class: "spacer" }),
+      el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
+      el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
+      el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: "Open on churchofjesuschrist.org", "aria-label": "Open on churchofjesuschrist.org", html: ICON_OUT }),
+    ]);
+    const body = el("article", { class: "doc", html: doc.body_html || "" });
+    // Footnotes list at the end of the page
+    if (doc.footnotes && doc.footnotes.length) {
+      const notes = el("section", { class: "notes" }, [el("h2", { text: "Footnotes" })]);
+      const ol = el("ol");
+      for (const n of doc.footnotes) {
+        const li = el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), el("span", { html: n.html || esc(n.text) })]);
+        ol.append(li);
+      }
+      notes.append(ol);
+      body.append(notes);
+    }
+    const nav = el("div", { class: "doc-nav" }, [
+      doc.prev ? el("button", { text: `‹ ${doc.prev.title}`, onclick: () => openDoc(doc.prev.id, null) }) : el("span"),
+      doc.next ? el("button", { text: `${doc.next.title} ›`, onclick: () => openDoc(doc.next.id, null) }) : el("span"),
+    ]);
+    const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
+    readerPane.replaceChildren(bar, body, nav, foot);
+    readerPane.scrollTop = 0;
+
+    // Links inside the text stay inside the app when the page is on this Mac.
+    body.addEventListener("click", onBodyClick);
+    highlightTerms(body);
+  }
+
+  function crumbFor(doc) {
+    if (doc.collection === "general-conference") return [doc.author, doc.session, doc.label].filter(Boolean).join(" — ");
+    const path = (doc.section_path || []).join(" — ");
+    return [doc.label !== doc.title ? doc.label : null, path].filter(Boolean).join(" — ") || doc.collection_title;
+  }
+
+  async function onBodyClick(e) {
+    const a = e.target.closest("a");
+    if (!a) return;
+    const href = a.getAttribute("href") || "";
+    if (a.classList.contains("study-note-ref") || /^#note/.test(href) || a.dataset.scrollId) {
+      e.preventDefault();
+      const noteId = a.dataset.scrollId || href.split("#").pop();
+      showNote(noteId);
+      return;
+    }
+    if (href.startsWith("#")) {
+      e.preventDefault();
+      focusParagraph(href.slice(1));
+      return;
+    }
+    if (/^(\/study\/|https?:\/\/(www\.)?churchofjesuschrist\.org\/study\/)/.test(href)) {
+      e.preventDefault();
+      const res = await api("resolve", { href });
+      if (res.found) openDoc(res.doc_id, res.pid);
+      else window.open(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href, "_blank", "noopener");
+      return;
+    }
+    if (href.startsWith("/")) { e.preventDefault(); window.open("https://www.churchofjesuschrist.org" + href, "_blank", "noopener"); }
+    else if (/^https?:/.test(href)) { a.target = "_blank"; a.rel = "noopener"; }
+  }
+
+  function focusParagraph(pid) {
+    if (!pid || !currentDoc) return;
+    const body = $(".doc", readerPane);
+    if (!body) return;
+    for (const t of body.querySelectorAll(".is-target")) t.classList.remove("is-target");
+    let target = body.querySelector(`#${CSS.escape(pid)}`);
+    if (!target && /^p\d+$/.test(pid)) target = body.querySelector(`.verse:nth-of-type(${pid.slice(1)})`);
+    if (!target) return;
+    target.classList.add("is-target");
+    requestAnimationFrame(() => target.scrollIntoView({ block: "center", behavior: "auto" }));
+  }
+
+  // Highlight the current search terms in the open page and offer next/previous.
+  function highlightTerms(body) {
+    if (!state.terms.length) return;
+    const stems = state.terms.map((t) => t.toLowerCase().replace(/'s$/, "")).filter((t) => t.length >= 3);
+    if (!stems.length) return;
+    const re = new RegExp("\\b(" + stems.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi");
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement.closest("script, style, .notes") || !re.test(n.nodeValue)) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    let count = 0;
+    for (const n of nodes) {
+      re.lastIndex = 0;
+      const frag = document.createDocumentFragment();
+      let last = 0, m;
+      while ((m = re.exec(n.nodeValue))) {
+        frag.append(document.createTextNode(n.nodeValue.slice(last, m.index)));
+        frag.append(el("mark", { class: "hl", text: m[0] }));
+        last = m.index + m[0].length;
+        count++;
+      }
+      frag.append(document.createTextNode(n.nodeValue.slice(last)));
+      n.replaceWith(frag);
+    }
+    if (!count) return;
+    const marks = [...body.querySelectorAll("mark.hl")];
+    let i = -1;
+    const label = el("span", { text: `${count} match${count === 1 ? "" : "es"}` });
+    const go = (d) => { i = (i + d + marks.length) % marks.length; marks[i].scrollIntoView({ block: "center" }); label.textContent = `${i + 1} of ${count}`; };
+    const nav = el("span", { class: "matchnav" }, [label, el("button", { text: "↑", "aria-label": "Previous match", onclick: () => go(-1) }), el("button", { text: "↓", "aria-label": "Next match", onclick: () => go(1) })]);
+    $(".reader-bar .spacer", readerPane).replaceWith(nav, el("div", { class: "spacer" }));
+  }
+
+  function resize(delta) {
+    const sizes = [15, 16, 17, 18, 19, 21, 23, 26];
+    const cur = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17;
+    let i = Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(cur) + delta));
+    if (sizes.indexOf(cur) === -1) i = delta > 0 ? 3 : 1;
+    document.documentElement.style.setProperty("--reading-size", sizes[i] + "px");
+    try { localStorage.setItem("readingSize", sizes[i]); } catch (_) {}
+  }
+  try { const s = localStorage.getItem("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); } catch (_) {}
+
+  // ---------------------------------------------------------- footnotes ----
+  const sheet = $("#sheet");
+  function showNote(noteId) {
+    if (!currentDoc) return;
+    const n = (currentDoc.footnotes || []).find((x) => x.note_id === noteId) || null;
+    const bodyEl = $(".sheet-body", sheet);
+    if (!n) {
+      const inline = readerPane.querySelector(`#${CSS.escape(noteId)}`);
+      if (inline) { inline.scrollIntoView({ block: "center" }); return; }
+      bodyEl.replaceChildren(el("div", { text: "That note is not in the local copy." }));
+    } else {
+      bodyEl.replaceChildren(el("div", { class: "nm", text: `Note ${n.marker || ""}`.trim() }), el("div", { html: n.html || esc(n.text) }));
+    }
+    sheet.hidden = false;
+    const scrim = el("div", { class: "scrim", onclick: hideNote });
+    scrim.id = "scrim";
+    document.body.append(scrim);
+    bodyEl.onclick = (e) => {
+      const a = e.target.closest("a");
+      if (!a) return;
+      e.preventDefault();
+      const href = a.getAttribute("href") || "";
+      api("resolve", { href }).then((res) => {
+        hideNote();
+        if (res.found) openDoc(res.doc_id, res.pid);
+        else window.open(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href, "_blank", "noopener");
+      });
+    };
+  }
+  function hideNote() { sheet.hidden = true; $("#scrim")?.remove(); }
+  $(".close", sheet).addEventListener("click", hideNote);
+
+  // ----------------------------------------------------------- controls ----
+  input.addEventListener("input", () => { state.q = input.value; state.docId = state.docId; scheduleSearch(); });
+  $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(typeTimer); runSearch({ typeahead: false }); input.blur(); });
+  $(".clear").addEventListener("click", () => { input.value = ""; state.q = ""; input.focus(); runSearch(); });
+  for (const b of document.querySelectorAll(".scopes button")) {
+    b.addEventListener("click", () => { state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
+  }
+  $("#homeBtn").addEventListener("click", () => { state.q = ""; state.docId = null; state.pid = null; state.browse = null; syncControls(); renderHome(); showList(); push(); });
+  $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
+  const applyFilters = () => {
+    state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
+    syncControls(); runSearch({ typeahead: false });
+  };
+  for (const id of ["#fSpeaker", "#fFrom", "#fTo", "#fBook"]) $(id).addEventListener("change", applyFilters);
+  for (const b of document.querySelectorAll("#fGroup button")) b.addEventListener("click", () => { state.group = b.dataset.group; applyFilters(); });
+  $("#fClear").addEventListener("click", () => { state.speaker = state.from = state.to = state.book = ""; state.group = "passages"; syncControls(); runSearch({ typeahead: false }); });
+  window.addEventListener("resize", () => { if (state.docId) showReader(); else showList(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); input.select(); }
+    if (e.key === "Escape") { if (!sheet.hidden) hideNote(); else input.blur(); }
+  });
+
+  // speakers for the filter datalist
+  api("speakers").then((rows) => {
+    const dl = $("#speakerList");
+    for (const r of rows) dl.append(el("option", { value: r.name }));
+  }).catch(() => {});
+
+  const ICON_BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+  const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
+
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});
+
+  readUrl();
+  syncControls();
+  render();
+  if (!state.q && !state.docId && wide()) input.focus();
+})();
