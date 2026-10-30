@@ -255,15 +255,18 @@ class Store:
             interval = min(max(existing["check_interval"] * 2, config.RECHECK_FIRST_DAYS), config.RECHECK_MAX_DAYS)
             self.conn.execute(
                 """UPDATE documents SET fetched_at=?, next_check=?, check_interval=?, status='ok',
-                     author=COALESCE(?, author), subtitle=COALESCE(?, subtitle), session=COALESCE(?, session)
+                     session=COALESCE(?, session)
                    WHERE id=?""",
-                (ts, in_days(interval), interval, doc.author, doc.subtitle, extra.get("session"), existing["id"]),
+                (ts, in_days(interval), interval, extra.get("session"), existing["id"]),
             )
             self.conn.commit()
             return existing["id"], "unchanged"
 
-        title = doc.title or (node.title if node else doc.uri)
-        author = doc.author or (node.subtitle if node and extra.get("subtitle_is_author") else None)
+        title = extra.get("title") or doc.title or (node.title if node else doc.uri)
+        # Conference tables of contents give the plain name ("Dallin H. Oaks");
+        # the byline adds the title ("President ..."), which lives in author_role.
+        toc_author = node.subtitle if node and extra.get("subtitle_is_author") else None
+        author = toc_author or doc.author
         fields = {
             "collection_id": collection_id,
             "uri": doc.uri,

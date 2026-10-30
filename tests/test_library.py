@@ -235,7 +235,8 @@ def test_store_and_search(tmp_path, monkeypatch):
     assert res["documents"][0]["title"] == "Think Celestial!"
 
     d = search.document(conn, uri="/general-conference/2023/10/51nelson")
-    assert d["author"] == "President Russell M. Nelson" and d["footnotes"][0]["marker"] == "1"
+    assert d["author"] == "Russell M. Nelson" and d["author_role"].startswith("President of")
+    assert d["footnotes"][0]["marker"] == "1"
     assert search.resolve(conn, "/study/scriptures/bofm/alma/32?lang=eng&id=p21#p21")["pid"] == "p21"
-    assert search.speakers(conn)[0]["name"] == "President Russell M. Nelson"
+    assert search.speakers(conn)[0]["name"] == "Russell M. Nelson"
     store.close()

@@ -51,7 +51,7 @@
     for (const k of ["speaker", "from", "to", "book"]) if (state[k]) p.set(k, state[k]);
     if (state.group !== "passages") p.set("group", state.group);
     const qs = p.toString();
-    if (state.docId) return `/read/${state.docId}${state.pid ? "#" + state.pid : ""}${qs ? "?" + qs : ""}`.replace(/(#[^?]*)(\?.*)/, "$2$1");
+    if (state.docId) return `/read/${state.docId}${qs ? "?" + qs : ""}${state.pid ? "#" + state.pid : ""}`;
     return (qs ? "/search?" + qs : "/");
   }
   function push(replace = false) {
@@ -229,7 +229,7 @@
     listPane.replaceChildren(frag);
 
     try {
-      homeCache = homeCache || (await api("stats"));
+      homeCache = await api("stats");
       const s = homeCache;
       const last = s.meta?.last_sync?.finished ? new Date(s.meta.last_sync.finished) : null;
       const when = last ? `Updated ${last.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.` : "No sync has run yet.";
@@ -371,9 +371,9 @@
   }
 
   function crumbFor(doc) {
-    if (doc.collection === "general-conference") return [doc.author, doc.session, doc.label].filter(Boolean).join(" — ");
-    const path = (doc.section_path || []).join(" — ");
-    return [doc.label !== doc.title ? doc.label : null, path].filter(Boolean).join(" — ") || doc.collection_title;
+    if (doc.collection === "general-conference") return [doc.author, doc.session, doc.label].filter(Boolean).join(", ");
+    const path = (doc.section_path || []).join(", ");
+    return [doc.label !== doc.title ? doc.label : null, path].filter(Boolean).join(", ") || doc.collection_title;
   }
 
   async function onBodyClick(e) {
@@ -421,7 +421,7 @@
     if (!stems.length) return;
     const re = new RegExp("\\b(" + stems.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi");
     const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => (n.parentElement.closest("script, style, .notes") || !re.test(n.nodeValue)) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+      acceptNode: (n) => { re.lastIndex = 0; return (n.parentElement.closest("script, style, .notes") || !re.test(n.nodeValue)) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; },
     });
     const nodes = [];
     while (walker.nextNode()) nodes.push(walker.currentNode);
@@ -491,7 +491,11 @@
   $(".close", sheet).addEventListener("click", hideNote);
 
   // ----------------------------------------------------------- controls ----
-  input.addEventListener("input", () => { state.q = input.value; state.docId = state.docId; scheduleSearch(); });
+  input.addEventListener("input", () => {
+    state.q = input.value;
+    if (!wide() && !readerPane.hidden) { state.docId = null; state.pid = null; showList(); }
+    scheduleSearch();
+  });
   $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(typeTimer); runSearch({ typeahead: false }); input.blur(); });
   $(".clear").addEventListener("click", () => { input.value = ""; state.q = ""; input.focus(); runSearch(); });
   for (const b of document.querySelectorAll(".scopes button")) {

@@ -304,6 +304,8 @@ def context_for(uri: str, *, node: Node | None, book=None) -> dict:
     if found:
         b, chapter = found
         extra.update(volume=b.volume_name, book_slug=b.slug, book_name=b.name, chapter=chapter)
+        if chapter and str(chapter).isdigit():
+            extra["title"] = b.citation(int(chapter))  # "Alma 32", whatever the page's own heading says
         key = scriptures.sort_key(uri)
         if key is not None:
             extra["sort_key"] = key
