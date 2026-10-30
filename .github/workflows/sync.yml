@@ -1,0 +1,110 @@
+name: Library sync
+
+on:
+  schedule:
+    - cron: "17 10 * * *"   # 4:17 am in Denver during daylight time, 3:17 in winter
+  workflow_dispatch:
+    inputs:
+      collections:
+        description: "Only these collections (comma-separated slugs); blank for all"
+        required: false
+        default: ""
+      full:
+        description: "Re-fetch every page, not just what is missing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: library-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  GOSPEL_LIBRARY_DATA: ${{ github.workspace }}/data
+  LIBRARY_PASSPHRASE: ${{ secrets.LIBRARY_PASSPHRASE }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -q -r requirements.txt
+
+      - name: Check the passphrase is set
+        run: |
+          if [ -z "$LIBRARY_PASSPHRASE" ]; then
+            echo "::error::Add a repository secret named LIBRARY_PASSPHRASE (Settings, Secrets and variables, Actions). It is the key that locks the library."
+            exit 1
+          fi
+
+      - name: Restore previous state
+        run: bin/ci-restore.sh
+
+      - name: Sync with churchofjesuschrist.org
+        id: sync
+        continue-on-error: true
+        timeout-minutes: 300
+        run: |
+          args=""
+          if [ -n "${{ inputs.collections }}" ]; then args="$args --collections ${{ inputs.collections }}"; fi
+          if [ "${{ inputs.full }}" = "true" ]; then args="$args --full"; fi
+          python -m gospel_library sync $args
+
+      - name: Save state for tomorrow
+        if: always()
+        run: bin/ci-save.sh
+
+      - name: Build the device bundle
+        run: |
+          mkdir -p site
+          cp -R web/. site/
+          python -m gospel_library bundle --out site/data
+          python -m gospel_library stats
+
+      - name: Keep the sync log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-log
+          path: data/logs/*.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Pages needs a public repository on the free plan
+        if: github.event.repository.private
+        run: echo "::warning::This repository is private, so GitHub Pages cannot publish the app. Make it public (Settings, Danger Zone, Change visibility) or move to a paid plan; the library is encrypted either way."
+
+      - uses: actions/configure-pages@v5
+        if: ${{ !github.event.repository.private }}
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        if: ${{ !github.event.repository.private }}
+        with:
+          path: site
+
+      - id: deployment
+        if: ${{ !github.event.repository.private }}
+        uses: actions/deploy-pages@v4
+
+      - name: Report a failed sync
+        if: steps.sync.outcome == 'failure'
+        run: |
+          echo "::warning::The sync step failed or ran out of time; what it fetched was saved and published, and tomorrow's run continues from there."

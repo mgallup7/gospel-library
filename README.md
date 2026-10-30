@@ -1,8 +1,9 @@
 # Gospel Library, personal edition
 
 A private copy of the scriptures, every General Conference talk since 1971,
-Come, Follow Me, the General Handbook, and selected manuals, kept on your own
-Mac and searched from your iPad in a few milliseconds.
+Come, Follow Me, the General Handbook, and selected manuals, downloaded onto
+your own iPhone and iPad and searched there in a few milliseconds, online or
+not.
 
 - Search as you type, across everything or one shelf. Exact phrases in quotes,
   `-word` to exclude, `speaker:nelson`, `year:2015-2020`, `book:alma`.
@@ -10,70 +11,49 @@ Mac and searched from your iPad in a few milliseconds.
 - Results are verses and paragraphs with the matches highlighted; open one and
   the whole chapter or talk is there with footnotes, speaker, session, and
   previous/next.
-- Nightly, the Mac quietly checks the site for anything new or changed.
+- Every night a job on GitHub checks churchofjesuschrist.org for anything new
+  or changed and publishes a fresh library. The app offers the update when it
+  sees one.
 
-Everything stays on your machine. Nothing is sent anywhere except the page
-requests to churchofjesuschrist.org.
+## How it is put together
 
-## Install on the Mac (once)
+| Piece | Where it runs | What it does |
+|---|---|---|
+| `gospel_library/` (Python) | GitHub Actions, nightly | Walks the site's tables of contents, fetches new and changed pages through the same content API the site's own reader uses, parses them into SQLite with an FTS5 full-text index. |
+| `bundle` | end of the nightly job | Compacts the database, gzips it, encrypts it with your passphrase (AES-256-GCM, key from PBKDF2), publishes it with the app to GitHub Pages. |
+| `web/` | your devices | The app. `engine.js` runs SQLite compiled to WebAssembly inside a Web Worker and keeps the library in the browser's private storage (OPFS). `app.js` is the interface. |
 
-```bash
-git clone git@github.com:YOUR-USERNAME/gospel-library.git ~/gospel-library
-cd ~/gospel-library
-./install.sh
-```
+The code is public and ordinary. The library file is public too, but unreadable
+without the passphrase, which exists only in your GitHub secret and on your
+devices.
 
-The installer sets up Python, loads the scripture text so search works right
-away, starts the web app (and makes it start at every login), schedules the
-nightly sync for 3:30 am, and begins the first full pull in the background.
-The first pull runs at a polite pace: expect about an hour for the scriptures
-and all conference talks, longer for the study helps. You can use the app
-while it runs; new material appears as it lands.
+## Setting it up (once)
 
-If macOS asks whether `python3` may accept incoming connections, choose Allow.
+1. **Repository.** This repository must be public for GitHub Pages to serve the
+   app on the free plan (Settings, Danger Zone, Change visibility). Nothing
+   sensitive is in it.
+2. **Passphrase.** Settings, Secrets and variables, Actions, New repository
+   secret. Name: `LIBRARY_PASSPHRASE`. Value: a long passphrase you will type
+   once on each device. A sentence works well. Keep it somewhere safe.
+3. **First build.** Actions tab, "Library sync", Run workflow. The first run
+   pulls everything from the site at a polite pace and takes a couple of hours;
+   after that, nightly runs take minutes. The run ends by publishing the app at
+   `https://YOUR-USERNAME.github.io/gospel-library/`.
+4. **Devices.** Open that address in Safari on the iPhone and iPad. Tap Share,
+   then **Add to Home Screen**, and open it from there (this is what lets the
+   library stay on the device). Enter the passphrase; the library downloads
+   once and everything works from then on, offline included.
 
-## Open it on the iPad
-
-On the same Wi-Fi, open Safari and go to the address the installer printed,
-something like `http://mikes-mac-mini.local:8777`. Tap Share, then
-**Add to Home Screen**. It opens full screen with its own icon from then on.
-
-## Use it away from home (optional, five minutes)
-
-[Tailscale](https://tailscale.com) is a free private network between your own
-devices. Install it on the Mac and the iPad, sign in to the same account on
-both, then on the Mac run:
-
-```bash
-tailscale serve --bg --https=443 http://127.0.0.1:8777
-```
-
-Tailscale prints a private `https://your-mac.your-tailnet.ts.net` address that
-works from anywhere the iPad has internet, with a real certificate and no port
-forwarding. Add that address to the home screen instead; with `https` the app
-shell also works offline for a moment if the Mac is briefly unreachable.
-
-## Day to day
-
-| What | How |
-|---|---|
-| See what is in the library | `.venv/bin/python -m gospel_library stats` |
-| Run a sync now | `bin/nightly.sh` (or `.venv/bin/python -m gospel_library sync`) |
-| Search from the terminal | `.venv/bin/python -m gospel_library search "plan of happiness"` |
-| Check the site is reachable | `.venv/bin/python -m gospel_library doctor` |
-| Look at what the site offers under a URI | `.venv/bin/python -m gospel_library discover /manual` |
-| Logs | `data/logs/` (one file per day, plus `server.err` and `nightly.out`) |
-| Stop everything | `./uninstall.sh` (keeps the data) |
-
-Updates to the code land through `git pull`; the nightly job does that itself
-and restarts the web app when something changed.
+Nightly runs that change nothing publish nothing. When conference talks or
+edits arrive, the app shows "A newer library is available" and updates in the
+background when you tap it.
 
 ## What gets pulled, and how
 
 The collections live at the bottom of `gospel_library/config.py`. Each has a
 list of site URIs (without the `/study` prefix). A root that does not exist
 yet, such as next year's Come, Follow Me, is skipped quietly and tried again
-each night, so next year's manual appears on its own when the Church posts it.
+each night, so new manuals appear on their own when the Church posts them.
 
 For each book the sync reads the table of contents, fetches pages it has not
 seen, and re-reads a budgeted number of pages whose turn has come: a new
@@ -81,42 +61,51 @@ conference talk is checked again after a week (small edits are common in the
 weeks after conference), then the interval doubles each time it comes back
 unchanged, up to four months. Requests go out one every half second, never in
 parallel, and robots.txt is honored. Pages the site says it does not have are
-retried on a backing-off schedule rather than every night.
+retried on a backing-off schedule.
 
-Every page is also kept raw in `data/raw.sqlite`, so parsing can be improved and
-re-run offline with `rebuild`.
+Between runs the job keeps its working state (the database and raw copies of
+every page) as encrypted assets on a release named `state`.
 
-## Where things are
+## Working on it locally
 
-| Path | Contents |
-|---|---|
-| `data/library.sqlite` | the library: documents, paragraphs, footnotes, full-text index |
-| `data/raw.sqlite` | raw copies of every page fetched |
-| `data/logs/` | logs |
-| `gospel_library/` | scraper, database, search, server |
-| `web/` | the app the iPad loads |
-| `tests/` | `.venv/bin/python -m pip install -r requirements-dev.txt && .venv/bin/python -m pytest -q` |
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q                                  # tests
+.venv/bin/python -m gospel_library seed                        # public-domain scripture text in seconds
+.venv/bin/python -m gospel_library sync --collections scriptures --max-requests 50
+.venv/bin/python -m gospel_library search "plan of happiness"
+LIBRARY_PASSPHRASE=test .venv/bin/python -m gospel_library bundle --out data/bundle
+.venv/bin/python -m gospel_library serve                       # app at http://localhost:8777 using data/bundle
+.venv/bin/python -m gospel_library discover /manual            # see what the site offers under a URI
+```
 
-Set `GOSPEL_LIBRARY_DATA=/some/other/folder` before installing to keep the data
-elsewhere, and `GOSPEL_LIBRARY_PORT` to use a different port.
+`bin/gen-web-data.py` regenerates `web/lib/scriptures-data.js` if the scripture
+metadata changes. Data lives in `data/` (ignored by git); set
+`GOSPEL_LIBRARY_DATA` to put it elsewhere.
+
+### Running the nightly job on a Mac instead
+
+`install.sh` sets up the same sync as a launchd job on a Mac that stays on,
+serving the app on your home network. It predates the GitHub edition and still
+works, but the device-side library above needs nothing at home, so it is the
+better default.
 
 ## If something is off
 
-- **The iPad cannot reach it.** Both devices on the same Wi-Fi? Is the Mac
-  awake? `curl http://127.0.0.1:8777/api/stats` on the Mac should print JSON;
-  if it does not, read `data/logs/server.err`. Some routers isolate wireless
-  clients from each other; Tailscale sidesteps that too.
-- **The nightly sync did not run.** launchd runs it at the next wake if the Mac
-  was asleep at 3:30. To keep the Mac awake for it: System Settings, Energy,
-  prevent automatic sleeping when the display is off, or schedule a wake with
-  `sudo pmset repeat wakeorpoweron MTWRFSU 03:25:00`.
-- **Something on the site changed and pages stopped parsing.** The log says
-  which pages produced no text. `discover` shows what a book's table of
-  contents looks like now, and `rebuild` re-parses cached pages after a fix.
+- **The app says the library file is not published yet.** The first workflow
+  run has not finished, or Pages is not enabled. Check the Actions tab.
+- **"That passphrase does not unlock this library."** The passphrase typed on
+  the device differs from the `LIBRARY_PASSPHRASE` secret used to build it.
+- **Pages fails in the workflow.** The repository is private; see step 1.
+- **A talk or chapter looks wrong.** The sync log (attached to each workflow
+  run as `sync-log`) says which pages produced no text. `discover` shows what a
+  table of contents looks like now, and `rebuild` re-parses cached pages after a
+  fix, without touching the site.
 
 ## A word on the content
 
 The scripture text is public domain. Footnotes, chapter headings, conference
 talks, manuals, and the handbook are copyrighted by Intellectual Reserve, Inc.
 and offered by the Church for personal, noncommercial use, which is exactly
-what this is. Keep the repository private and do not publish the data folder.
+what this is. The published library file is encrypted for that reason; do not
+share the passphrase or publish a decrypted copy.

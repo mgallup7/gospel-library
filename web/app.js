@@ -1,4 +1,6 @@
-/* Gospel Library — personal edition. Plain JavaScript, no build step. */
+/* Gospel Library — personal edition. Plain JavaScript, no build step.
+   The library lives on this device; engine.js (a Web Worker) holds it and
+   answers searches. This file is the interface. */
 (() => {
   "use strict";
 
@@ -18,14 +20,44 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const wide = () => window.matchMedia("(min-width: 900px)").matches;
   const monthName = (m) => (m === 4 ? "April" : m === 10 ? "October" : "");
+  const mb = (n) => `${(n / 1048576).toFixed(n > 50 * 1048576 ? 0 : 1)} MB`;
+  const BASE = new URL(".", document.baseURI);
+  const MANIFEST_URL = new URL("data/manifest.json", BASE).href;
+  const store = {
+    get(k, d = null) { try { const v = localStorage.getItem("gospel." + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
+    set(k, v) { try { localStorage.setItem("gospel." + k, JSON.stringify(v)); } catch (_) {} },
+    del(k) { try { localStorage.removeItem("gospel." + k); } catch (_) {} },
+  };
 
-  // ------------------------------------------------------------ state ----
+  // ------------------------------------------------------------ engine ----
+  const worker = new Worker(new URL("engine.js", BASE), { type: "module" });
+  const pending = new Map();
+  let seq = 0;
+  worker.onmessage = (e) => {
+    const { id, result, error, progress } = e.data;
+    const p = pending.get(id);
+    if (!p) return;
+    if (progress) { p.onProgress && p.onProgress(progress); return; }
+    pending.delete(id);
+    if (error) p.reject(Object.assign(new Error(error.message), { name: error.name }));
+    else p.resolve(result);
+  };
+  worker.onerror = (e) => { for (const p of pending.values()) p.reject(new Error(e.message || "the library engine stopped")); pending.clear(); };
+  function call(method, params = {}, onProgress = null) {
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve, reject, onProgress });
+      worker.postMessage({ id, method, params });
+    });
+  }
+  const api = (method, params) => call(method, params);
+
+  // ------------------------------------------------------------- state ----
   const state = {
     q: "", scope: "all", speaker: "", from: "", to: "", book: "", group: "passages",
-    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, view: "home", browse: null,
+    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, view: "home", browse: null, ready: false,
   };
   let searchSeq = 0;
-  let searchAbort = null;
   let typeTimer = null;
 
   const listPane = $("#list");
@@ -34,32 +66,29 @@
   const filters = $("#filters");
   const mainEl = $("main");
 
-  // -------------------------------------------------------------- api ----
-  async function api(path, params = {}, signal) {
-    const url = new URL("/api/" + path, location.origin);
-    for (const [k, v] of Object.entries(params)) if (v !== "" && v !== null && v !== undefined) url.searchParams.set(k, v);
-    const r = await fetch(url, { signal });
-    if (!r.ok) throw new Error(`${path}: ${r.status}`);
-    return r.json();
-  }
-
-  // ---------------------------------------------------------- routing ----
+  // ----------------------------------------------------------- routing ----
+  // Hash routes so the app works from any static host:  #q=faith&scope=conference   #read/123?q=faith#p21
   function urlFor() {
     const p = new URLSearchParams();
     if (state.q) p.set("q", state.q);
     if (state.scope !== "all") p.set("scope", state.scope);
     for (const k of ["speaker", "from", "to", "book"]) if (state[k]) p.set(k, state[k]);
     if (state.group !== "passages") p.set("group", state.group);
+    if (state.pid) p.set("p", state.pid);
     const qs = p.toString();
-    if (state.docId) return `/read/${state.docId}${qs ? "?" + qs : ""}${state.pid ? "#" + state.pid : ""}`;
-    return (qs ? "/search?" + qs : "/");
+    if (state.docId) return `#read/${state.docId}${qs ? "?" + qs : ""}`;
+    return qs ? `#search?${qs}` : "#";
   }
   function push(replace = false) {
     const url = urlFor();
-    if (replace) history.replaceState({ ...state }, "", url); else history.pushState({ ...state }, "", url);
+    if (location.hash === url || (url === "#" && !location.hash)) return;
+    if (replace) history.replaceState(null, "", url); else history.pushState(null, "", url);
   }
   function readUrl() {
-    const p = new URLSearchParams(location.search);
+    const h = location.hash.replace(/^#/, "");
+    const m = h.match(/^read\/(\d+)(?:\?(.*))?$/);
+    const qs = m ? (m[2] || "") : h.replace(/^search\??/, "");
+    const p = new URLSearchParams(qs);
     state.q = p.get("q") || "";
     state.scope = p.get("scope") || "all";
     state.speaker = p.get("speaker") || "";
@@ -67,11 +96,10 @@
     state.to = p.get("to") || "";
     state.book = p.get("book") || "";
     state.group = p.get("group") || "passages";
-    const m = location.pathname.match(/^\/read\/(\d+)/);
     state.docId = m ? Number(m[1]) : null;
-    state.pid = location.hash ? location.hash.slice(1) : null;
+    state.pid = p.get("p") || null;
   }
-  window.addEventListener("popstate", () => { readUrl(); syncControls(); render({ fromHistory: true }); });
+  window.addEventListener("popstate", () => { if (!state.ready) return; readUrl(); syncControls(); render(); });
 
   function syncControls() {
     input.value = state.q;
@@ -86,49 +114,147 @@
   }
 
   // ------------------------------------------------------------ render ----
-  async function render({ fromHistory = false } = {}) {
-    if (state.q.trim().length >= 2) {
-      await runSearch({ typeahead: false, silent: true });
-    } else {
-      state.lastSearch = null;
-      renderHome();
-    }
-    if (state.docId) {
-      await openDoc(state.docId, state.pid, { push: false });
-    } else {
-      showList();
-    }
+  async function render() {
+    if (state.q.trim().length >= 2) await runSearch({ typeahead: false, silent: true });
+    else { state.lastSearch = null; await renderHome(); }
+    if (state.docId) await openDoc(state.docId, state.pid, { push: false });
+    else showList();
   }
-
   function showList() {
-    if (wide()) { listPane.hidden = false; readerPane.hidden = !state.docId; }
-    else { listPane.hidden = false; readerPane.hidden = true; }
+    listPane.hidden = false;
+    readerPane.hidden = wide() ? !state.docId : true;
   }
   function showReader() {
-    if (wide()) { listPane.hidden = false; readerPane.hidden = false; }
-    else { listPane.hidden = true; readerPane.hidden = false; }
+    listPane.hidden = !wide();
+    readerPane.hidden = false;
     window.scrollTo(0, 0);
+  }
+
+  // ------------------------------------------------------------- setup ----
+  // The library is downloaded once per device and unlocked with the passphrase.
+  async function ensureLibrary() {
+    const active = store.get("active");
+    let status;
+    try { status = await call("open", { slot: active?.slot }); }
+    catch (err) { showFatal(`The library engine could not start: ${err.message}`); return false; }
+    if (status.hasLibrary) {
+      store.set("active", { slot: status.slot, version: status.version, builtAt: status.builtAt, mode: status.mode });
+      return true;
+    }
+    return new Promise((resolve) => renderSetup(status, resolve));
+  }
+
+  async function renderSetup(status, done) {
+    readerPane.hidden = true;
+    listPane.hidden = false;
+    document.body.classList.add("setup");
+    const box = el("div", { class: "setup" });
+    const head = el("h1", { text: "Your library" });
+    const lede = el("p", { class: "lede", text: "Loading what is available…" });
+    const form = el("form", { class: "unlock" });
+    const pass = el("input", { type: "password", placeholder: "Library passphrase", autocomplete: "current-password", autocapitalize: "off", autocorrect: "off", spellcheck: "false", "aria-label": "Library passphrase" });
+    const btn = el("button", { type: "submit", class: "primary", text: "Download library" });
+    const msg = el("p", { class: "msg" });
+    const bar = el("div", { class: "progress", hidden: true }, [el("div", { class: "fill" })]);
+    const note = el("p", { class: "fine" });
+    form.append(pass, btn);
+    box.append(head, lede, form, bar, msg, note);
+    listPane.replaceChildren(box);
+    if (status.mode !== "opfs") {
+      note.textContent = "This browser cannot keep the library between visits, so it downloads each time you open the app. Adding it to the home screen fixes that on iPhone and iPad.";
+    }
+    let manifest = null;
+    try {
+      manifest = await call("manifest", { manifestUrl: MANIFEST_URL });
+      const built = new Date(manifest.built_at);
+      lede.textContent = `${manifest.verses.toLocaleString()} verses, ${manifest.talks.toLocaleString()} talks, ${manifest.documents.toLocaleString()} pages in all, built ${built.toLocaleDateString([], { month: "long", day: "numeric" })}. One download of ${mb(manifest.bundle_size)}, then everything works on this device, offline too.`;
+    } catch (err) {
+      lede.textContent = "The library file is not published yet. Once the nightly job has run on GitHub, reload this page.";
+      btn.disabled = true;
+    }
+    const saved = store.get("passphrase");
+    if (saved) pass.value = saved;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!pass.value) { pass.focus(); return; }
+      btn.disabled = true; pass.disabled = true; msg.textContent = ""; bar.hidden = false;
+      const fill = $(".fill", bar);
+      try {
+        const result = await call("install", { passphrase: pass.value, manifestUrl: MANIFEST_URL, slot: "/library-a.sqlite" }, (p) => {
+          const pct = p.total ? Math.min(100, Math.round((p.loaded / p.total) * 100)) : 0;
+          fill.style.width = pct + "%";
+          msg.textContent = p.phase === "download" ? `Downloading… ${mb(p.loaded)} of ${mb(p.total)}` : `Unpacking… ${pct}%`;
+        });
+        store.set("passphrase", pass.value);
+        store.set("active", { slot: result.slot, version: result.version, builtAt: result.builtAt, mode: result.mode });
+        document.body.classList.remove("setup");
+        done(true);
+      } catch (err) {
+        bar.hidden = true;
+        msg.textContent = err.message;
+        btn.disabled = false; pass.disabled = false; pass.focus();
+      }
+    });
+    pass.focus();
+  }
+
+  function showFatal(text) {
+    listPane.replaceChildren(el("div", { class: "setup" }, [el("h1", { text: "Something is wrong" }), el("p", { class: "lede", text })]));
+  }
+
+  // A newer library on the server? Offer it; install into the other slot, then switch.
+  async function checkForUpdate() {
+    if (!navigator.onLine) return;
+    const active = store.get("active");
+    let manifest;
+    try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { return; }
+    if (!active || manifest.version === active.version) return;
+    const banner = el("div", { class: "banner" }, [
+      el("span", { text: `A newer library is available (built ${new Date(manifest.built_at).toLocaleDateString([], { month: "short", day: "numeric" })}, ${mb(manifest.bundle_size)}).` }),
+      el("button", { class: "text-btn", text: "Update now", onclick: () => updateNow(banner, manifest) }),
+      el("button", { class: "icon-btn", "aria-label": "Later", text: "×", onclick: () => banner.remove() }),
+    ]);
+    $("header.bar").after(banner);
+  }
+  async function updateNow(banner, manifest) {
+    const active = store.get("active");
+    const passphrase = store.get("passphrase");
+    const slot = active?.slot === "/library-a.sqlite" ? "/library-b.sqlite" : "/library-a.sqlite";
+    const label = $("span", banner);
+    for (const b of banner.querySelectorAll("button")) b.disabled = true;
+    try {
+      const result = await call("install", { passphrase, manifestUrl: MANIFEST_URL, slot }, (p) => {
+        const pct = p.total ? Math.round((p.loaded / p.total) * 100) : 0;
+        label.textContent = p.phase === "download" ? `Downloading the new library… ${pct}%` : `Unpacking… ${pct}%`;
+      });
+      store.set("active", { slot: result.slot, version: result.version, builtAt: result.builtAt, mode: result.mode });
+      if (active?.slot && active.slot !== result.slot) call("forget", { slot: active.slot }).catch(() => {});
+      banner.remove();
+      currentDoc = null;
+      render();
+    } catch (err) {
+      label.textContent = `Update failed: ${err.message}`;
+      for (const b of banner.querySelectorAll("button")) b.disabled = false;
+    }
   }
 
   // ------------------------------------------------------------ search ----
   function scheduleSearch() {
     clearTimeout(typeTimer);
-    typeTimer = setTimeout(() => runSearch({ typeahead: true }), 140);
+    typeTimer = setTimeout(() => runSearch({ typeahead: true }), 120);
   }
 
   async function runSearch({ typeahead = false, silent = false, more = false } = {}) {
     const q = state.q.trim();
     if (q.length < 2) { state.lastSearch = null; renderHome(); if (!silent) push(true); return; }
     if (!more) state.offset = 0;
-    const seq = ++searchSeq;
-    if (searchAbort) searchAbort.abort();
-    searchAbort = new AbortController();
+    const mySeq = ++searchSeq;
     try {
       const data = await api("search", {
-        q, scope: state.scope, typeahead: typeahead ? 1 : 0, limit: 40, offset: state.offset,
+        q, scope: state.scope, typeahead, limit: 40, offset: state.offset,
         speaker: state.speaker, from: state.from, to: state.to, book: state.book, group: state.group,
-      }, searchAbort.signal);
-      if (seq !== searchSeq) return;
+      });
+      if (mySeq !== searchSeq) return;
       if (more && state.lastSearch) {
         data.hits = state.lastSearch.hits.concat(data.hits);
         data.documents = state.lastSearch.documents.concat(data.documents);
@@ -140,27 +266,24 @@
       renderResults(data);
       if (!silent) push(true);
     } catch (e) {
-      if (e.name === "AbortError") return;
-      listPane.replaceChildren(el("div", { class: "status error", text: `Search is not answering: ${e.message}. Is the server running on the Mac?` }));
+      listPane.replaceChildren(el("div", { class: "status error", text: `Search failed: ${e.message}` }));
     }
   }
 
   function termsFrom(q) {
     return q.replace(/\b(speaker|by|year|book|in|scope):("[^"]*"|\S+)/gi, " ")
       .replace(/[^\w\s'’-]/g, " ")
-      .split(/\s+/).filter((w) => w && !/^(or|and|not)$/i.test(w) && !w.startsWith("-") && w.length > 1)
-      .map((w) => w.replace(/^-/, ""));
+      .split(/\s+/).filter((w) => w && !/^(or|and|not)$/i.test(w) && !w.startsWith("-") && w.length > 1);
   }
 
   function renderResults(data) {
     state.view = "results";
     const frag = document.createDocumentFragment();
     if (data.error) frag.append(el("div", { class: "status error", text: data.error }));
-
     if (data.jump) {
       const j = data.jump;
       frag.append(el("button", { class: "jump", onclick: () => j.doc_id ? openDoc(j.doc_id, j.pid) : null }, [
-        el("div", {}, [el("b", { text: j.label }), " ", el("span", { text: j.doc_id ? "Open" : "Not downloaded yet" })]),
+        el("div", {}, [el("b", { text: j.label }), " ", el("span", { text: j.doc_id ? "Open" : "Not in the library yet" })]),
         el("span", { text: j.doc_id ? "›" : "" }),
       ]));
     }
@@ -174,11 +297,8 @@
     } else if (!data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty", text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, or a different spelling.` }));
     }
-    if (state.group === "documents") {
-      for (const d of data.documents) frag.append(docRow(d, d.hits));
-    } else {
-      for (const h of data.hits) frag.append(hitRow(h));
-    }
+    if (state.group === "documents") for (const d of data.documents) frag.append(docRow(d, d.hits));
+    else for (const h of data.hits) frag.append(hitRow(h));
     const shown = state.group === "documents" ? data.documents.length : data.hits.length;
     if (shown < total) {
       frag.append(el("button", { class: "more", text: `Show more (${(total - shown).toLocaleString()} left)`, onclick: () => { state.offset = shown; runSearch({ more: true, silent: true }); } }));
@@ -187,9 +307,7 @@
     listPane.scrollTop = 0;
     markActive();
   }
-  function scopeLabel() {
-    return state.scope === "all" ? "" : ` in ${state.scope === "conference" ? "general conference" : state.scope}`;
-  }
+  function scopeLabel() { return state.scope === "all" ? "" : ` in ${state.scope === "conference" ? "general conference" : state.scope}`; }
 
   function hitRow(h) {
     return el("button", { class: "hit", "data-doc": h.doc_id, "data-pid": h.pid, onclick: () => openDoc(h.doc_id, h.pid) }, [
@@ -213,7 +331,6 @@
   }
 
   // -------------------------------------------------------------- home ----
-  let homeCache = null;
   async function renderHome() {
     state.view = "home";
     const frag = document.createDocumentFragment();
@@ -227,30 +344,32 @@
     const body = el("div", { id: "homeBody" });
     frag.append(body);
     listPane.replaceChildren(frag);
-
     try {
-      homeCache = await api("stats");
-      const s = homeCache;
-      const last = s.meta?.last_sync?.finished ? new Date(s.meta.last_sync.finished) : null;
-      const when = last ? `Updated ${last.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.` : "No sync has run yet.";
-      $("#homeStatus").textContent = `${s.verses.toLocaleString()} verses and ${s.talks.toLocaleString()} talks on this Mac. ${when}`;
+      const s = await api("stats");
+      const built = s.meta?.bundle?.built_at ? new Date(s.meta.bundle.built_at) : null;
+      const when = built ? `Library built ${built.toLocaleDateString([], { month: "short", day: "numeric" })}.` : "";
+      $("#homeStatus").textContent = `${s.verses.toLocaleString()} verses and ${s.talks.toLocaleString()} talks on this device. ${when}`;
     } catch (e) {
-      $("#homeStatus").textContent = `The library server is not answering (${e.message}).`;
+      $("#homeStatus").textContent = `The library is not answering (${e.message}).`;
       $("#homeStatus").classList.add("error");
       return;
     }
     const tab = state.browse?.tab || "conference";
-    if (tab === "conference") await browseConference(body);
-    else if (tab === "scriptures") await browseScriptures(body);
-    else await browseCollection(body, tab);
+    try {
+      if (tab === "conference") await browseConference(body);
+      else if (tab === "scriptures") await browseScriptures(body);
+      else await browseCollection(body, tab);
+    } catch (e) {
+      body.append(el("div", { class: "status error", text: e.message }));
+    }
   }
 
   async function browseConference(body) {
     const b = state.browse || {};
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: "conference", year: b.year }; renderHome(); });
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: "conference", year: b.year, all: true }; renderHome(); });
     const data = await api("browse", { collection: "general-conference" });
-    const books = data.books.filter((x) => x.docs > 0 || x.status === "ok");
-    if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks yet. The first sync pulls them in; the newest conference arrives first." })); return; }
+    const books = data.books.filter((x) => x.docs > 0);
+    if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks in this library yet. They arrive with the nightly build, newest conference first." })); return; }
     if (!b.year && !b.all) {
       const latest = await api("recent");
       if (latest.conference) {
@@ -292,15 +411,15 @@
     const grid = el("div", { class: "chapters" });
     for (const c of bk.chapters) grid.append(el("button", { text: String(c.n), disabled: !c.doc_id, onclick: () => openDoc(c.doc_id, null) }));
     body.append(grid);
-    if (!bk.chapters.some((c) => c.doc_id)) body.append(el("div", { class: "empty", text: "Not downloaded yet. The nightly sync will bring it in." }));
+    if (!bk.chapters.some((c) => c.doc_id)) body.append(el("div", { class: "empty", text: "Not in this library yet. It arrives with a later build." }));
   }
 
   async function browseCollection(body, slug) {
     const b = state.browse || {};
     if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: slug }; renderHome(); });
     const data = await api("browse", { collection: slug });
-    const books = data.books.filter((x) => x.status !== "missing");
-    if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with the nightly sync." })); return; }
+    const books = data.books.filter((x) => x.docs > 0);
+    if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with a later nightly build." })); return; }
     if (books.length === 1) return renderBookToc(body, books[0].uri, null);
     for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: slug, bookUri: bk.uri }; renderHome(); } }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} pages` })]));
   }
@@ -309,13 +428,10 @@
     const book = await api("book", { uri });
     if (back) body.append(el("div", { class: "crumbs" }, [el("button", { text: "Back", onclick: back }), el("span", { text: book.title })]));
     else body.append(el("h2", { text: book.title }));
-    for (const n of book.nodes) {
-      if (n.kind === "section") {
-        body.append(el("div", { class: "toc-row section" }, [el("div", { class: "t", text: n.title })]));
-      } else {
-        body.append(el("button", { class: "toc-row" + (n.depth > 1 ? " sub" : ""), disabled: !n.doc_id, "data-doc": n.doc_id, onclick: () => n.doc_id && openDoc(n.doc_id, null) }, [
-          el("div", { class: "t", text: n.title }), el("div", { class: "s", text: n.subtitle || "" })]));
-      }
+    for (const n of book.nodes || []) {
+      if (n.kind === "section") body.append(el("div", { class: "toc-row section" }, [el("div", { class: "t", text: n.title })]));
+      else body.append(el("button", { class: "toc-row" + (n.depth > 1 ? " sub" : ""), disabled: !n.doc_id, "data-doc": n.doc_id, onclick: () => n.doc_id && openDoc(n.doc_id, null) }, [
+        el("div", { class: "t", text: n.title }), el("div", { class: "s", text: n.subtitle || "" })]));
     }
   }
 
@@ -331,6 +447,7 @@
       readerPane.replaceChildren(el("div", { class: "status", text: "Opening…" }));
       try { currentDoc = await api("doc", { id }); }
       catch (e) { readerPane.replaceChildren(el("div", { class: "status error", text: `Could not open that page (${e.message}).` })); return; }
+      if (!currentDoc) { readerPane.replaceChildren(el("div", { class: "status error", text: "That page is not in the library." })); return; }
       renderDoc(currentDoc);
     }
     focusParagraph(state.pid);
@@ -346,14 +463,10 @@
       el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: "Open on churchofjesuschrist.org", "aria-label": "Open on churchofjesuschrist.org", html: ICON_OUT }),
     ]);
     const body = el("article", { class: "doc", html: doc.body_html || "" });
-    // Footnotes list at the end of the page
     if (doc.footnotes && doc.footnotes.length) {
       const notes = el("section", { class: "notes" }, [el("h2", { text: "Footnotes" })]);
       const ol = el("ol");
-      for (const n of doc.footnotes) {
-        const li = el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), el("span", { html: n.html || esc(n.text) })]);
-        ol.append(li);
-      }
+      for (const n of doc.footnotes) ol.append(el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), el("span", { html: n.html || esc(n.text) })]));
       notes.append(ol);
       body.append(notes);
     }
@@ -364,8 +477,6 @@
     const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
     readerPane.replaceChildren(bar, body, nav, foot);
     readerPane.scrollTop = 0;
-
-    // Links inside the text stay inside the app when the page is on this Mac.
     body.addEventListener("click", onBodyClick);
     highlightTerms(body);
   }
@@ -382,15 +493,10 @@
     const href = a.getAttribute("href") || "";
     if (a.classList.contains("study-note-ref") || /^#note/.test(href) || a.dataset.scrollId) {
       e.preventDefault();
-      const noteId = a.dataset.scrollId || href.split("#").pop();
-      showNote(noteId);
+      showNote(a.dataset.scrollId || href.split("#").pop());
       return;
     }
-    if (href.startsWith("#")) {
-      e.preventDefault();
-      focusParagraph(href.slice(1));
-      return;
-    }
+    if (href.startsWith("#")) { e.preventDefault(); focusParagraph(href.slice(1)); return; }
     if (/^(\/study\/|https?:\/\/(www\.)?churchofjesuschrist\.org\/study\/)/.test(href)) {
       e.preventDefault();
       const res = await api("resolve", { href });
@@ -414,7 +520,6 @@
     requestAnimationFrame(() => target.scrollIntoView({ block: "center", behavior: "auto" }));
   }
 
-  // Highlight the current search terms in the open page and offer next/previous.
   function highlightTerms(body) {
     if (!state.terms.length) return;
     const stems = state.terms.map((t) => t.toLowerCase().replace(/'s$/, "")).filter((t) => t.length >= 3);
@@ -454,9 +559,9 @@
     let i = Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(cur) + delta));
     if (sizes.indexOf(cur) === -1) i = delta > 0 ? 3 : 1;
     document.documentElement.style.setProperty("--reading-size", sizes[i] + "px");
-    try { localStorage.setItem("readingSize", sizes[i]); } catch (_) {}
+    store.set("readingSize", sizes[i]);
   }
-  try { const s = localStorage.getItem("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); } catch (_) {}
+  { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); }
 
   // ---------------------------------------------------------- footnotes ----
   const sheet = $("#sheet");
@@ -492,43 +597,47 @@
 
   // ----------------------------------------------------------- controls ----
   input.addEventListener("input", () => {
+    if (!state.ready) return;
     state.q = input.value;
     if (!wide() && !readerPane.hidden) { state.docId = null; state.pid = null; showList(); }
     scheduleSearch();
   });
-  $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(typeTimer); runSearch({ typeahead: false }); input.blur(); });
-  $(".clear").addEventListener("click", () => { input.value = ""; state.q = ""; input.focus(); runSearch(); });
+  $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); if (!state.ready) return; clearTimeout(typeTimer); runSearch({ typeahead: false }); input.blur(); });
+  $(".clear").addEventListener("click", () => { if (!state.ready) return; input.value = ""; state.q = ""; input.focus(); runSearch(); });
   for (const b of document.querySelectorAll(".scopes button")) {
-    b.addEventListener("click", () => { state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
+    b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
   }
-  $("#homeBtn").addEventListener("click", () => { state.q = ""; state.docId = null; state.pid = null; state.browse = null; syncControls(); renderHome(); showList(); push(); });
+  $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.docId = null; state.pid = null; state.browse = null; syncControls(); renderHome(); showList(); push(); });
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
   const applyFilters = () => {
+    if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
     syncControls(); runSearch({ typeahead: false });
   };
   for (const id of ["#fSpeaker", "#fFrom", "#fTo", "#fBook"]) $(id).addEventListener("change", applyFilters);
   for (const b of document.querySelectorAll("#fGroup button")) b.addEventListener("click", () => { state.group = b.dataset.group; applyFilters(); });
   $("#fClear").addEventListener("click", () => { state.speaker = state.from = state.to = state.book = ""; state.group = "passages"; syncControls(); runSearch({ typeahead: false }); });
-  window.addEventListener("resize", () => { if (state.docId) showReader(); else showList(); });
+  window.addEventListener("resize", () => { if (!state.ready) return; if (state.docId) showReader(); else showList(); });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); input.select(); }
+    if (e.key === "/" && document.activeElement !== input && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
     if (e.key === "Escape") { if (!sheet.hidden) hideNote(); else input.blur(); }
   });
-
-  // speakers for the filter datalist
-  api("speakers").then((rows) => {
-    const dl = $("#speakerList");
-    for (const r of rows) dl.append(el("option", { value: r.name }));
-  }).catch(() => {});
 
   const ICON_BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
   const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
 
-  readUrl();
-  syncControls();
-  render();
-  if (!state.q && !state.docId && wide()) input.focus();
+  // ------------------------------------------------------------- start ----
+  (async () => {
+    readUrl();
+    syncControls();
+    const ok = await ensureLibrary();
+    if (!ok) return;
+    state.ready = true;
+    api("speakers", {}).then((rows) => { const dl = $("#speakerList"); for (const r of rows) dl.append(el("option", { value: r.name })); }).catch(() => {});
+    await render();
+    if (!state.q && !state.docId && wide()) input.focus();
+    setTimeout(checkForUpdate, 1500);
+  })();
 })();

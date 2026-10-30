@@ -161,6 +161,42 @@ def cmd_search(args) -> int:
     return 0
 
 
+def cmd_bundle(args) -> int:
+    from . import bundle
+
+    passphrase = _passphrase(args)
+    m = bundle.build(Path(args.out), passphrase)
+    print(f"library.bin {m['bundle_size'] / 1e6:.1f} MB (uncompressed {m['plain_size'] / 1e6:.1f} MB), "
+          f"version {m['version']}, {m['documents']} documents, {m['verses']:,} verses, {m['talks']:,} talks")
+    return 0
+
+
+def cmd_seal(args) -> int:
+    """Encrypt any file (used for the nightly job's state)."""
+    from . import bundle
+
+    h = bundle.encrypt_file(Path(args.src), Path(args.dst), _passphrase(args), compress=not args.no_compress)
+    print(f"{args.dst}: {h['bundle_size'] / 1e6:.1f} MB")
+    return 0
+
+
+def cmd_unseal(args) -> int:
+    from . import bundle
+
+    bundle.decrypt_file(Path(args.src), Path(args.dst), _passphrase(args))
+    print(f"{args.dst}: {Path(args.dst).stat().st_size / 1e6:.1f} MB")
+    return 0
+
+
+def _passphrase(args) -> str:
+    import os
+
+    value = os.environ.get(args.passphrase_env or "LIBRARY_PASSPHRASE", "")
+    if not value:
+        raise SystemExit(f"set {args.passphrase_env or 'LIBRARY_PASSPHRASE'} to the library passphrase")
+    return value
+
+
 def cmd_doctor(args) -> int:
     from .fetch import Fetcher, FetchError
 
@@ -219,6 +255,24 @@ def main(argv=None) -> int:
     s.add_argument("--scope")
     s.add_argument("--limit", type=int, default=10)
     s.set_defaults(fn=cmd_search, to_file=False)
+
+    s = sub.add_parser("bundle", help="build the encrypted device bundle (library.bin + manifest.json)")
+    s.add_argument("--out", default="site/data")
+    s.add_argument("--passphrase-env", default="LIBRARY_PASSPHRASE")
+    s.set_defaults(fn=cmd_bundle, to_file=False)
+
+    s = sub.add_parser("seal", help="encrypt a file with the library passphrase")
+    s.add_argument("src")
+    s.add_argument("dst")
+    s.add_argument("--no-compress", action="store_true")
+    s.add_argument("--passphrase-env", default="LIBRARY_PASSPHRASE")
+    s.set_defaults(fn=cmd_seal, to_file=False)
+
+    s = sub.add_parser("unseal", help="decrypt a sealed file")
+    s.add_argument("src")
+    s.add_argument("dst")
+    s.add_argument("--passphrase-env", default="LIBRARY_PASSPHRASE")
+    s.set_defaults(fn=cmd_unseal, to_file=False)
 
     s = sub.add_parser("doctor", help="check connectivity to the site")
     s.set_defaults(fn=cmd_doctor, to_file=False)

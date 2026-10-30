@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -63,7 +64,9 @@ CREATE TABLE IF NOT EXISTS documents(
   content_type TEXT,
   sort_key INTEGER,
   word_count INTEGER NOT NULL DEFAULT 0,
-  body_html TEXT,
+  body_html BLOB,
+  par_first INTEGER,
+  par_last INTEGER,
   content_hash TEXT,
   fetched_at TEXT,
   first_seen TEXT,
@@ -78,32 +81,14 @@ CREATE INDEX IF NOT EXISTS documents_coll_year ON documents(collection_id, year,
 CREATE INDEX IF NOT EXISTS documents_next_check ON documents(next_check);
 CREATE INDEX IF NOT EXISTS documents_scripture ON documents(book_slug, chapter);
 
-CREATE TABLE IF NOT EXISTS paragraphs(
-  id INTEGER PRIMARY KEY,
-  document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-  seq INTEGER NOT NULL,
-  pid TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  verse INTEGER,
-  text TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS paragraphs_doc ON paragraphs(document_id, seq);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS paragraphs_fts USING fts5(
+-- One copy of every paragraph's text, inside the full-text index itself.
+-- A document's paragraphs occupy a contiguous rowid range (documents.par_first
+-- .. par_last), which is how they are read back in order and removed.
+CREATE VIRTUAL TABLE IF NOT EXISTS paragraphs USING fts5(
   text,
-  content='paragraphs', content_rowid='id',
+  document_id UNINDEXED, seq UNINDEXED, pid UNINDEXED, kind UNINDEXED, verse UNINDEXED,
   tokenize='porter unicode61 remove_diacritics 2'
 );
-CREATE TRIGGER IF NOT EXISTS paragraphs_ai AFTER INSERT ON paragraphs BEGIN
-  INSERT INTO paragraphs_fts(rowid, text) VALUES (new.id, new.text);
-END;
-CREATE TRIGGER IF NOT EXISTS paragraphs_ad AFTER DELETE ON paragraphs BEGIN
-  INSERT INTO paragraphs_fts(paragraphs_fts, rowid, text) VALUES ('delete', old.id, old.text);
-END;
-CREATE TRIGGER IF NOT EXISTS paragraphs_au AFTER UPDATE ON paragraphs BEGIN
-  INSERT INTO paragraphs_fts(paragraphs_fts, rowid, text) VALUES ('delete', old.id, old.text);
-  INSERT INTO paragraphs_fts(rowid, text) VALUES (new.id, new.text);
-END;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   title, author,
@@ -163,6 +148,28 @@ def now() -> str:
 
 def in_days(days: float) -> str:
     return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def compress_html(html: str | None) -> bytes | None:
+    """Reader HTML is stored zlib-compressed; it is read far less often than it is carried around."""
+    if not html:
+        return None
+    return zlib.compress(html.encode("utf-8"), 6)
+
+
+def decompress_html(blob) -> str:
+    if blob is None:
+        return ""
+    if isinstance(blob, str):  # rows written before compression
+        return blob
+    return zlib.decompress(blob).decode("utf-8")
+
+
+def counts(conn: sqlite3.Connection) -> dict:
+    """Paragraph and verse counts; a scan, so the result is cached in meta after each sync."""
+    paragraphs = conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+    verses = conn.execute("SELECT COUNT(*) FROM paragraphs WHERE kind='verse'").fetchone()[0]
+    return {"paragraphs": paragraphs, "verses": verses}
 
 
 def connect(path: Path = config.DB_PATH, *, readonly: bool = False) -> sqlite3.Connection:
@@ -278,7 +285,7 @@ class Store:
             "description": doc.description,
             "content_type": doc.content_type,
             "word_count": doc.word_count,
-            "body_html": doc.body_html,
+            "body_html": compress_html(doc.body_html),
             "content_hash": doc.content_hash,
             "fetched_at": ts,
             "next_check": in_days(config.RECHECK_FIRST_DAYS),
@@ -306,7 +313,7 @@ class Store:
                 doc_id = existing["id"]
                 sets = ", ".join(f"{k}=?" for k in fields)
                 self.conn.execute(f"UPDATE documents SET {sets}, changed_at=? WHERE id=?", (*fields.values(), ts, doc_id))
-                self.conn.execute("DELETE FROM paragraphs WHERE document_id=?", (doc_id,))
+                self._delete_paragraphs(doc_id)
                 self.conn.execute("DELETE FROM footnotes WHERE document_id=?", (doc_id,))
                 outcome = "changed"
             else:
@@ -316,15 +323,27 @@ class Store:
                 cur = self.conn.execute(f"INSERT INTO documents({cols}) VALUES ({marks})", tuple(fields.values()))
                 doc_id = cur.lastrowid
                 outcome = "added"
-            self.conn.executemany(
-                "INSERT INTO paragraphs(document_id, seq, pid, kind, verse, text) VALUES (?,?,?,?,?,?)",
-                [(doc_id, p.seq, p.pid, p.kind, p.verse, p.text) for p in doc.paragraphs],
-            )
+            first = last = None
+            for p in doc.paragraphs:
+                cur = self.conn.execute(
+                    "INSERT INTO paragraphs(text, document_id, seq, pid, kind, verse) VALUES (?,?,?,?,?,?)",
+                    (p.text, doc_id, p.seq, p.pid, p.kind, p.verse),
+                )
+                last = cur.lastrowid
+                first = first if first is not None else last
+            self.conn.execute("UPDATE documents SET par_first=?, par_last=? WHERE id=?", (first, last, doc_id))
             self.conn.executemany(
                 "INSERT INTO footnotes(document_id, note_id, marker, pid, html, text, refs) VALUES (?,?,?,?,?,?,?)",
                 [(doc_id, f.note_id, f.marker, f.pid, f.html, f.text, json.dumps(f.refs)) for f in doc.footnotes],
             )
         return doc_id, outcome
+
+    def _delete_paragraphs(self, doc_id: int) -> None:
+        row = self.conn.execute("SELECT par_first, par_last FROM documents WHERE id=?", (doc_id,)).fetchone()
+        if row and row["par_first"] is not None:
+            self.conn.execute("DELETE FROM paragraphs WHERE rowid BETWEEN ? AND ?", (row["par_first"], row["par_last"]))
+        else:  # legacy rows without a recorded range
+            self.conn.execute("DELETE FROM paragraphs WHERE document_id=?", (doc_id,))
 
     def defer_document(self, doc_id: int, days: float, status: str = "error") -> None:
         self.conn.execute("UPDATE documents SET next_check=?, status=? WHERE id=?", (in_days(days), status, doc_id))
@@ -389,10 +408,11 @@ class Store:
         return json.loads(row[0]) if row else default
 
     def optimize(self) -> None:
-        self.conn.execute("INSERT INTO paragraphs_fts(paragraphs_fts) VALUES ('optimize')")
+        self.conn.execute("INSERT INTO paragraphs(paragraphs) VALUES ('optimize')")
         self.conn.execute("INSERT INTO documents_fts(documents_fts) VALUES ('optimize')")
         self.conn.commit()
         self.conn.execute("PRAGMA optimize")
+        self.set_meta("counts", counts(self.conn))
 
     def close(self) -> None:
         self.conn.close()
@@ -409,8 +429,10 @@ def stats(conn: sqlite3.Connection) -> dict:
     for r in rows:
         out["collections"].append(dict(r))
         out["documents"] += r["docs"]
-    out["paragraphs"] = conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
-    out["verses"] = conn.execute("SELECT COUNT(*) FROM paragraphs WHERE kind='verse'").fetchone()[0]
+    cached = conn.execute("SELECT value FROM meta WHERE key='counts'").fetchone()
+    c = json.loads(cached[0]) if cached else counts(conn)
+    out["paragraphs"] = c["paragraphs"]
+    out["verses"] = c["verses"]
     out["talks"] = conn.execute(
         "SELECT COUNT(*) FROM documents d JOIN collections c ON c.id=d.collection_id WHERE c.slug='general-conference'"
     ).fetchone()[0]

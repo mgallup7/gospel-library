@@ -24,6 +24,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from . import scriptures
+from .db import decompress_html
 
 _SCOPES = {
     "scriptures": ["scriptures"],
@@ -169,7 +170,7 @@ def search(conn: sqlite3.Connection, raw: str, *, scope: str | None = None, type
     if not q.match:
         return out
 
-    where = ["paragraphs_fts MATCH ?"]
+    where = ["paragraphs MATCH ?"]
     params: list = [q.match]
     if q.collections:
         where.append(f"c.slug IN ({','.join('?' for _ in q.collections)})")
@@ -189,8 +190,7 @@ def search(conn: sqlite3.Connection, raw: str, *, scope: str | None = None, type
     where_sql = " AND ".join(where)
 
     base = f"""
-        FROM paragraphs_fts f
-        JOIN paragraphs p ON p.id = f.rowid
+        FROM paragraphs p
         JOIN documents d ON d.id = p.document_id
         JOIN collections c ON c.id = d.collection_id
         WHERE {where_sql}"""
@@ -199,7 +199,7 @@ def search(conn: sqlite3.Connection, raw: str, *, scope: str | None = None, type
         if group == "documents":
             rows = conn.execute(
                 f"""SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name,
-                           d.chapter, d.volume, c.slug AS collection, COUNT(*) AS hits, MIN(f.rank) AS best
+                           d.chapter, d.volume, c.slug AS collection, COUNT(*) AS hits, MIN(p.rank) AS best
                     {base} GROUP BY d.id ORDER BY best LIMIT ? OFFSET ?""",
                 (*params, limit, offset),
             ).fetchall()
@@ -208,9 +208,9 @@ def search(conn: sqlite3.Connection, raw: str, *, scope: str | None = None, type
             return out
 
         rows = conn.execute(
-            f"""SELECT p.id AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
-                       snippet(paragraphs_fts, 0, ?, ?, ' … ', 48) AS snip,
-                       bm25(paragraphs_fts) AS rank,
+            f"""SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
+                       snippet(paragraphs, 0, ?, ?, ' … ', 48) AS snip,
+                       bm25(paragraphs) AS rank,
                        d.uri, d.title, d.author, d.author_role, d.year, d.month, d.session, d.date,
                        d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection
                 {base} ORDER BY rank LIMIT ? OFFSET ?""",
@@ -370,7 +370,8 @@ def document(conn: sqlite3.Connection, *, doc_id: int | None = None, uri: str | 
         ).fetchone()
     if row is None:
         return None
-    doc = {k: row[k] for k in row.keys() if k not in ("content_hash",)}
+    doc = {k: row[k] for k in row.keys() if k not in ("content_hash", "body_html")}
+    doc["body_html"] = decompress_html(row["body_html"])
     doc["section_path"] = json.loads(row["section_path"]) if row["section_path"] else []
     doc["label"] = doc_label(row)
     doc["citation"] = _doc_citation(row)

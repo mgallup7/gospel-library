@@ -1,7 +1,8 @@
-/* Keeps the app shell available when the Mac is briefly unreachable.
-   Searches and pages always go to the network first. */
-const SHELL = "gospel-shell-v1";
-const FILES = ["/", "/index.html", "/app.css", "/app.js", "/manifest.webmanifest", "/icons/icon.svg"];
+/* Keeps the app shell available offline. The library itself lives in the
+   browser's private storage; the data files are never cached here. */
+const SHELL = "gospel-shell-v2";
+const FILES = ["./", "./index.html", "./app.css", "./app.js", "./engine.js", "./lib/query.js", "./lib/scriptures.js",
+  "./lib/scriptures-data.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
@@ -12,12 +13,11 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
-  if (url.pathname.startsWith("/api/")) return; // live data only
+  if (url.pathname.includes("/data/")) return; // the library bundle and manifest always come from the network
   e.respondWith(
     fetch(e.request).then((res) => {
-      const copy = res.clone();
-      caches.open(SHELL).then((c) => c.put(e.request, copy)).catch(() => {});
+      if (res.ok) { const copy = res.clone(); caches.open(SHELL).then((c) => c.put(e.request, copy)).catch(() => {}); }
       return res;
-    }).catch(() => caches.match(e.request).then((hit) => hit || caches.match("/index.html")))
+    }).catch(() => caches.match(e.request).then((hit) => hit || (e.request.mode === "navigate" ? caches.match("./index.html") : undefined)))
   );
 });

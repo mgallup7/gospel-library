@@ -96,8 +96,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("", "/", "/index.html") or path.startswith("/read/") or path.startswith("/search"):
             path = "/index.html"
         safe = Path(urllib.parse.unquote(path)).as_posix().lstrip("/")
-        target = (config.WEB_DIR / safe).resolve()
-        if not str(target).startswith(str(config.WEB_DIR.resolve())) or not target.is_file():
+        if safe.startswith("data/"):
+            root = config.DATA_DIR / "bundle"  # python -m gospel_library bundle --out data/bundle
+            target = (root / safe[5:]).resolve()
+        else:
+            root = config.WEB_DIR
+            target = (root / safe).resolve()
+        if not str(target).startswith(str(root.resolve())) or not target.is_file():
             self._error(404, "not found")
             return
         ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"

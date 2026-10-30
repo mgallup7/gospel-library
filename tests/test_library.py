@@ -240,3 +240,32 @@ def test_store_and_search(tmp_path, monkeypatch):
     assert search.resolve(conn, "/study/scriptures/bofm/alma/32?lang=eng&id=p21#p21")["pid"] == "p21"
     assert search.speakers(conn)[0]["name"] == "Russell M. Nelson"
     store.close()
+
+
+def test_bundle_round_trip(tmp_path, monkeypatch):
+    from gospel_library import bundle
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "lib.sqlite")
+    store = Store(config.DB_PATH)
+    cid = store.collection_id("scriptures", "Scriptures", "books", 0)
+    bid = store.book_id(cid, "/scriptures/bofm", "Book of Mormon")
+    doc = parse_content(CHAPTER_PAYLOAD, "/scriptures/bofm/alma/32")
+    from gospel_library.sync import context_for
+    store.save_document(collection_id=cid, book_id=bid, doc=doc, node=None, extra=context_for(doc.uri, node=None))
+    store.optimize()
+    store.close()
+
+    out = tmp_path / "site"
+    manifest = bundle.build(out, "a long passphrase", db_path=config.DB_PATH)
+    assert (out / "library.bin").exists() and manifest["documents"] == 1 and manifest["verses"] == 2
+    header = bundle.read_header(out / "library.bin")
+    assert header["version"] == manifest["version"] and header["chunks"] >= 1
+
+    plain = tmp_path / "back.sqlite"
+    bundle.decrypt_file(out / "library.bin", plain, "a long passphrase")
+    import sqlite3
+    conn = sqlite3.connect(plain)
+    assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
+    assert conn.execute("SELECT rowid FROM paragraphs WHERE paragraphs MATCH 'faith'").fetchall()
+    with pytest.raises(ValueError):
+        bundle.decrypt_file(out / "library.bin", tmp_path / "x.sqlite", "wrong")
