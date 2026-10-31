@@ -3,7 +3,7 @@
 // server does: search, document, resolve, browse. Mirrors gospel_library/search.py.
 import sqlite3InitModule from "./vendor/sqlite3.mjs";
 import * as S from "./lib/scriptures.js";
-import { compileQuery, ftsPhrase } from "./lib/query.js";
+import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections } from "./lib/query.js";
 
 const HL_OPEN = "\u0001", HL_CLOSE = "\u0002";
 const LABELS = { handbook: "General Handbook", "come-follow-me": "Come, Follow Me", "preach-my-gospel": "Preach My Gospel", manuals: "Manual", "study-helps": "Study Helps", scriptures: "Scriptures" };
@@ -272,9 +272,30 @@ function markTerms(text, terms) {
 }
 
 // ----------------------------------------------------------------- search ----
+// Surnames of conference speakers, for recognising "what did Nelson say".
+let speakerIndex = null;
+function speakersBySurname() {
+  if (speakerIndex) return speakerIndex;
+  const rows_ = rows("SELECT author AS name, COUNT(*) AS n FROM documents WHERE author IS NOT NULL AND author != '' GROUP BY author HAVING n >= 2");
+  const bySurname = new Map();
+  for (const r of rows_) {
+    const surname = r.name.replace(/^(President|Elder|Sister|Brother|Bishop)\s+/, "").trim().split(/\s+/).pop().toLowerCase().replace(/[^a-z]/g, "");
+    if (surname.length < 3) continue;
+    const prev = bySurname.get(surname);
+    if (!prev || r.n > prev.n) bySurname.set(surname, { name: r.name, n: r.n });
+  }
+  // Use the surname alone as the filter so every form of the name matches ("Russell M. Nelson", "President Russell M. Nelson").
+  speakerIndex = [...bySurname.entries()].map(([surname, v]) => ({ surname, name: surname.charAt(0).toUpperCase() + surname.slice(1), full: v.name }));
+  return speakerIndex;
+}
+
 function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, group = "passages" }) {
   const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [] };
   const t0 = performance.now();
+  if (isNatural(q) && group === "passages") {
+    const r = naturalSearch(q, { scope, limit, offset, speaker, from, to, book });
+    if (r) { r.ms = Math.round((performance.now() - t0) * 10) / 10; return r; }
+  }
   const cq = compileQuery(q, { typeahead, scope });
   if (speaker) cq.speaker = speaker;
   if (from) cq.yearFrom = Number(from);
@@ -343,6 +364,75 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
   }
   out.ms = Math.round((performance.now() - t0) * 10) / 10;
   return out;
+}
+
+// A question, answered in tiers: the exact phrase first, then passages with
+// every idea, then passages with any of them, best matches first within each.
+function naturalSearch(q, { scope, limit, offset, speaker, from, to, book }) {
+  const n = naturalQuery(q, speakersBySurname());
+  if (!n.terms.length) return null;
+  const cq = { collections: scopeCollections(n.scope || scope || "all"), speaker: speaker || n.speaker, yearFrom: from ? Number(from) : n.yearFrom, yearTo: to ? Number(to) : n.yearTo, bookSlug: n.bookSlug, terms: n.terms };
+  if (book) { const ref = S.parseReference(book); if (ref) cq.bookSlug = ref.book.slug; }
+  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], smart: { terms: n.terms, speaker: cq.speaker, scope: n.scope, book: cq.bookSlug, years: n.yearFrom ? [n.yearFrom, n.yearTo] : null } };
+  const seen = new Set();
+  const want = limit + offset;
+  const tiers = [n.phrase, n.strict, n.loose].filter(Boolean).filter((m, i, arr) => arr.indexOf(m) === i);
+  let collected = [];
+  for (const match of tiers) {
+    if (collected.length >= want) break;
+    let rs;
+    try { rs = passageRows(match, cq, want - collected.length + seen.size, 0); } catch (_) { continue; }
+    for (const r of rs) {
+      if (seen.has(r.paragraph_id)) continue;
+      seen.add(r.paragraph_id);
+      collected.push(r);
+    }
+  }
+  const last = tiers[tiers.length - 1];
+  try { out.total = Math.max(collected.length, last ? value(`SELECT COUNT(*) ${baseSql(cq)}`, [last, ...whereParams(cq)]) : 0); } catch (_) { out.total = collected.length; }
+  for (const r of collected.slice(offset, offset + limit)) {
+    out.hits.push({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse,
+      snippet: r.kind === "verse" ? markTerms(r.text, expandTerms(n.terms)) : highlight(r.snip), citation: citation(r, r.verse) });
+  }
+  if (offset === 0) out.titles = titleMatches(n.terms, cq);
+  return out;
+}
+function expandTerms(terms) {
+  const out = [];
+  for (const t of terms) { out.push(t); for (const w of t.split(" ")) if (w.length > 3) out.push(w); }
+  return out;
+}
+function whereParts(cq) {
+  const where = [];
+  const params = [];
+  if (cq.collections.length) { where.push(`c.slug IN (${cq.collections.map(() => "?").join(",")})`); params.push(...cq.collections); }
+  if (cq.speaker) { where.push("d.author LIKE ?"); params.push(`%${cq.speaker}%`); }
+  if (cq.yearFrom) { where.push("d.year >= ?"); params.push(cq.yearFrom); }
+  if (cq.yearTo) { where.push("d.year <= ?"); params.push(cq.yearTo); }
+  if (cq.bookSlug) { where.push("d.book_slug = ?"); params.push(cq.bookSlug); }
+  return { where, params };
+}
+function whereParams(cq) { return whereParts(cq).params; }
+function baseSql(cq) {
+  const { where } = whereParts(cq);
+  return ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id WHERE ${["paragraphs MATCH ?", ...where].join(" AND ")}`;
+}
+function passageRows(match, cq, limit, offset) {
+  return rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
+                      snippet(paragraphs, 0, ?, ?, ' \u2026 ', 48) AS snip, bm25(paragraphs) AS rank,
+                      d.uri, d.title, d.author, d.author_role, d.year, d.month, d.session, d.date,
+                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection
+               ${baseSql(cq)} ORDER BY rank LIMIT ? OFFSET ?`, [HL_OPEN, HL_CLOSE, match, ...whereParams(cq), limit, offset]);
+}
+function titleMatches(terms, cq) {
+  const titleMatch = terms.map((t) => ftsPhrase(t)).filter(Boolean).join(" OR ");
+  if (!titleMatch) return [];
+  const { where, params } = whereParts(cq);
+  try {
+    return rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection
+                   FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN collections c ON c.id=d.collection_id
+                  WHERE ${["documents_fts MATCH ?", ...where].join(" AND ")} ORDER BY bm25(documents_fts) LIMIT 6`, [`title : (${titleMatch})`, ...params]).map(summary);
+  } catch (_) { return []; }
 }
 
 // --------------------------------------------------------------- document ----

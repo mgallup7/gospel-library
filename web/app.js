@@ -265,9 +265,38 @@
       state.terms = termsFrom(q);
       renderResults(data);
       if (!silent) push(true);
+      if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
       listPane.replaceChildren(el("div", { class: "status error", text: `Search failed: ${e.message}` }));
     }
+  }
+
+  // On return, with an API key, Claude proposes a few more searches for a
+  // question and their results are folded in under the local ones.
+  async function widenWithClaude(q, data, mySeq) {
+    const note = $(".smart-line", listPane);
+    if (note) note.append(el("span", { class: "widening", text: " · asking Claude for more…" }));
+    let plan;
+    try { plan = await window.Ask.plan(q); } catch (_) { $(".widening", listPane)?.remove(); return; }
+    if (mySeq !== searchSeq) return;
+    const have = new Set(data.hits.map((h) => h.paragraph_id));
+    const extra = new Map();
+    for (const [i, pq] of (plan.queries || []).entries()) {
+      if (pq.q.trim().toLowerCase() === q.trim().toLowerCase()) continue;
+      try {
+        const r = await api("search", { q: pq.q, scope: pq.scope && pq.scope !== "all" ? pq.scope : state.scope, limit: 10, speaker: state.speaker, from: state.from, to: state.to, book: state.book });
+        r.hits.forEach((h, rank) => { if (!have.has(h.paragraph_id)) { const prev = extra.get(h.paragraph_id); const score = 1 / (rank + 2 + i); if (prev) prev.score += score; else extra.set(h.paragraph_id, { hit: h, score }); } });
+      } catch (_) {}
+    }
+    if (mySeq !== searchSeq) return;
+    $(".widening", listPane)?.remove();
+    const added = [...extra.values()].sort((a, b) => b.score - a.score).slice(0, 20).map((x) => x.hit);
+    if (!added.length) return;
+    data.hits = data.hits.concat(added);
+    data.total = Math.max(data.total, data.hits.length);
+    data.widened = (plan.queries || []).map((x) => x.q);
+    state.lastSearch = data;
+    renderResults(data);
   }
 
   function termsFrom(q) {
@@ -287,6 +316,20 @@
         el("span", { text: j.doc_id ? "›" : "" }),
       ]));
     }
+    if (data.smart) {
+      const bits = [];
+      if (data.smart.terms?.length) bits.push(data.smart.terms.join(", "));
+      if (data.smart.speaker) bits.push(`by ${data.smart.speaker}`);
+      if (data.smart.book) bits.push(`in ${data.smart.book.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace("Sections", "D&C")}`);
+      if (data.smart.scope) bits.push(`in ${{ conference: "conference", scriptures: "the scriptures", handbook: "the handbook", pmg: "Preach My Gospel", cfm: "Come, Follow Me", helps: "study helps" }[data.smart.scope] || data.smart.scope}`);
+      if (data.smart.years) bits.push(data.smart.years[0] === data.smart.years[1] ? String(data.smart.years[0]) : `${data.smart.years[0]} to ${data.smart.years[1]}`);
+      const line = el("div", { class: "smart-line" }, [
+        el("span", { text: `Reading this as: ${bits.join(" · ")}` }),
+        el("button", { type: "button", class: "text-btn small", text: "Exact words", onclick: () => { state.q = `"${data.query.trim()}"`; syncControls(); runSearch({ typeahead: false }); } }),
+      ]);
+      if (data.widened) line.append(el("span", { class: "widened", text: ` · Claude also searched: ${data.widened.join("; ")}` }));
+      frag.append(line);
+    }
     if (data.titles && data.titles.length) {
       frag.append(el("div", { class: "group-title", text: "By title" }));
       for (const d of data.titles) frag.append(docRow(d));
@@ -295,7 +338,10 @@
     if (data.hits.length || data.documents.length) {
       frag.append(el("div", { class: "group-title", text: `${total.toLocaleString()} ${state.group === "documents" ? "talks and chapters" : "passages"}${data.ms ? ` in ${data.ms} ms` : ""}` }));
     } else if (!data.jump && !(data.titles || []).length) {
-      frag.append(el("div", { class: "empty", text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, or a different spelling.` }));
+      frag.append(el("div", { class: "empty" }, [
+        el("div", { text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, a different spelling, or ask the question instead:` }),
+        el("button", { type: "button", class: "text-btn", text: "Ask Claude", onclick: () => { state.browse = { tab: "ask" }; state.q = ""; syncControls(); renderHome(); setTimeout(() => { const ta = $(".ask-input"); if (ta) { ta.value = data.query; ta.focus(); } }, 50); } }),
+      ]));
     }
     if (state.group === "documents") for (const d of data.documents) frag.append(docRow(d, d.hits));
     else for (const h of data.hits) frag.append(hitRow(h));

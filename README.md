@@ -5,8 +5,15 @@ Come, Follow Me, the General Handbook, and selected manuals, downloaded onto
 your own iPhone and iPad and searched there in a few milliseconds, online or
 not.
 
-- Search as you type, across everything or one shelf. Exact phrases in quotes,
-  `-word` to exclude, `speaker:nelson`, `year:2015-2020`, `book:alma`.
+- Search as you type, in plain language: "what did Nelson say about covenants
+  and identity" becomes a search for covenant and identity (and their
+  scriptural synonyms) in talks by President Nelson; "where does Alma teach
+  about faith and knowledge" looks in Alma; an exact phrase such as "plan of
+  happiness" wins when it exists. The results say how the question was read,
+  with an "Exact words" switch. With a Claude API key set, pressing return
+  also has Claude propose a few more searches and folds their results in.
+  Power syntax still works: quotes, `-word`, `speaker:nelson`,
+  `year:2015-2020`, `book:alma`, `in:conference`.
 - Type a reference (`Alma 32:21`, `d&c 76 22`, `js-h 1:17`) and jump straight to it.
 - Results are verses and paragraphs with the matches highlighted; open one and
   the whole chapter or talk is there with footnotes, speaker, session, and

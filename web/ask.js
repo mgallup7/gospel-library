@@ -370,5 +370,5 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return text;
   }
 
-  window.Ask = { render, settings };
+  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key };
 })();

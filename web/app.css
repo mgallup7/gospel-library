@@ -436,3 +436,6 @@ body.presenting { overflow: hidden; }
 .stage-map { width: 100%; max-height: 72vh; display: block; }
 .stage-text:has(.stage-map) { max-width: none; width: 100%; }
 .stage-body.is-wide .stage-text { max-width: none; width: 100%; }
+.smart-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 10px 16px 0; font-size: 13px; color: var(--ink-2); }
+.smart-line .widened, .smart-line .widening { color: var(--ink-3); }
+.text-btn.small { height: 28px; padding: 0 8px; font-size: 13px; }

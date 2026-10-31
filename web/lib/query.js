@@ -76,3 +76,109 @@ export function compileQuery(raw, { typeahead = false, scope = null } = {}) {
 }
 
 export { phrase as ftsPhrase, words as ftsWords };
+
+// ---------------------------------------------------------------------------
+// Natural-language queries. "what did nelson say about covenants and identity"
+// becomes: speaker Nelson, terms covenant + identity (with synonyms), ranked so
+// that passages matching more of the words come first.
+// ---------------------------------------------------------------------------
+
+const QUESTION_WORDS = new Set(("what when where which who whom whose why how does do did is are was were be been being have has had " +
+  "can could should would will shall may might must the a an and or but if then than so of to in on at by for from with without into onto over under " +
+  "about around through during before after between among against up down out off again further once here there this that these those it its " +
+  "i me my mine we us our you your he him his she her they them their one ones any some all each every both few more most other such no not only " +
+  "own same too very just also ever never always often sometimes something anything nothing everything someone anyone everyone " +
+  "say said says saying tell told tells teach taught teaches teaching talk talked talks talking speak spoke spoken speaks mention mentioned " +
+  "find show give me list quote quotes quoted verse verses scripture scriptures passage passages reference references about regarding concerning " +
+  "need want like look looking search for best good great favorite examples example mean means meaning think thinks thought " +
+  "lord's god's").split(/\s+/));
+
+// Scriptural vocabulary that people phrase several ways. Each entry expands a
+// typed word into alternatives inside one OR group.
+const SYNONYMS = {
+  happiness: ["joy", "rejoice", "happy"], joy: ["happiness", "rejoice", "glad"], happy: ["joy", "happiness"],
+  obey: ["obedience", "obedient", "keep the commandments", "hearken"], obedience: ["obey", "obedient", "keep the commandments"],
+  commandments: ["commandment", "statutes", "law"], sin: ["sins", "iniquity", "transgression", "wickedness"], sins: ["sin", "iniquity", "transgression"],
+  repent: ["repentance", "turn"], repentance: ["repent", "turn unto"], forgive: ["forgiveness", "forgiven", "remission"], forgiveness: ["forgive", "forgiven", "remission of sins"],
+  faith: ["believe", "belief", "trust"], believe: ["faith", "belief"], hope: ["hope"], charity: ["love", "pure love of christ"], love: ["charity", "loved", "loveth"],
+  jesus: ["christ", "savior", "redeemer", "lord"], christ: ["jesus", "savior", "redeemer", "messiah"], savior: ["christ", "jesus", "redeemer"], saviour: ["savior", "christ", "redeemer"],
+  "holy ghost": ["spirit", "holy spirit", "comforter"], spirit: ["holy ghost", "comforter"],
+  temple: ["house of the lord", "temples", "endowment", "ordinances"], covenant: ["covenants", "covenant path", "promise"], covenants: ["covenant", "covenant path"],
+  tithing: ["tithe", "tithes", "offerings"], tithe: ["tithing", "tithes"], prayer: ["pray", "prayed", "praying", "supplication"], pray: ["prayer", "praying", "ask"],
+  scripture: ["scriptures", "word of god", "words of christ"], scriptures: ["scripture", "word of god"], missionary: ["missionaries", "preach", "proclaim", "gospel"], missionaries: ["missionary", "preach"],
+  gather: ["gathering", "gathered", "israel"], gathering: ["gather", "gathered", "israel"], zion: ["zion", "new jerusalem"], atonement: ["atone", "atoning", "redeem", "redemption"],
+  grace: ["grace", "mercy"], mercy: ["merciful", "grace"], justice: ["just", "judgment"], peace: ["peace", "peaceable", "rest"], fear: ["fear", "afraid", "courage"], courage: ["courageous", "fear not", "be of good cheer"],
+  family: ["families", "parents", "children", "home"], marriage: ["marry", "married", "husband", "wife"], children: ["child", "little ones", "youth"], youth: ["young", "children", "rising generation"],
+  death: ["die", "died", "resurrection", "spirit world"], resurrection: ["resurrected", "rise again", "immortality"], heaven: ["celestial", "kingdom of god", "eternal life"],
+  priesthood: ["priesthood", "keys", "ordain"], revelation: ["reveal", "revealed", "inspiration", "spirit"], prophet: ["prophets", "seer", "revelator"], prophets: ["prophet", "seers"],
+  trial: ["trials", "affliction", "adversity", "tribulation"], trials: ["trial", "afflictions", "adversity", "tribulation"], suffering: ["suffer", "affliction", "pain"],
+  humble: ["humility", "meek", "lowly"], humility: ["humble", "meek", "lowly of heart"], pride: ["proud", "lifted up", "haughty"], service: ["serve", "serving", "minister"], serve: ["service", "minister", "ministering"],
+  sabbath: ["sabbath day", "lord's day", "sunday"], sacrament: ["sacrament", "bread and water", "remembrance"], baptism: ["baptize", "baptized", "born again"], endure: ["endure to the end", "endured", "press forward"],
+  identity: ["child of god", "who you are", "divine nature", "children of god"], testimony: ["testify", "witness", "know"], agency: ["choose", "free to choose", "liberty"],
+};
+
+const BOOK_WORDS = new Map([
+  ["nephi", "1-nephi"], ["alma", "alma"], ["mosiah", "mosiah"], ["helaman", "helaman"], ["moroni", "moroni"], ["mormon", "mormon"], ["ether", "ether"], ["jacob", "jacob"], ["enos", "enos"],
+  ["isaiah", "isaiah"], ["jeremiah", "jeremiah"], ["ezekiel", "ezekiel"], ["daniel", "daniel"], ["genesis", "genesis"], ["exodus", "exodus"], ["deuteronomy", "deuteronomy"], ["joshua", "joshua"],
+  ["psalms", "psalms"], ["psalm", "psalms"], ["proverbs", "proverbs"], ["matthew", "matthew"], ["luke", "luke"], ["romans", "romans"], ["corinthians", "1-corinthians"], ["hebrews", "hebrews"],
+  ["revelation", "revelation"], ["moses", "moses"], ["abraham", "abraham"], ["d&c", "sections"], ["dc", "sections"],
+]);
+const SCOPE_WORDS = { conference: "conference", talks: "conference", talk: "conference", scriptures: "scriptures", scripture: "scriptures", handbook: "handbook", pmg: "pmg", "preach my gospel": "pmg", "come follow me": "cfm", "topical guide": "helps", "bible dictionary": "helps" };
+
+export function isNatural(raw) {
+  const t = raw.trim();
+  if (/[":()*]|(^|\s)-\w|\b(OR|AND|NOT)\b|\w+:\S/.test(t)) return false; // explicit syntax wins
+  const words = t.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length < 3) return false;
+  return words.some((w) => QUESTION_WORDS.has(w));
+}
+
+/** Turn a question into search parts. speakers: [{name, surname}] from the library. */
+export function naturalQuery(raw, speakers = []) {
+  let text = raw.trim().toLowerCase().replace(/[?.!,;]+/g, " ").replace(/’/g, "'");
+  const out = { speaker: null, scope: null, bookSlug: null, yearFrom: null, yearTo: null, terms: [], phrase: null, strict: null, loose: null };
+
+  for (const [phrase, scope] of Object.entries(SCOPE_WORDS)) {
+    if (text.includes(" " + phrase + " ") || text.startsWith(phrase + " ") || text.endsWith(" " + phrase)) { out.scope = scope; text = text.replace(phrase, " "); break; }
+  }
+  text = text.replace(/\b(19[7-9]\d|20[0-4]\d)s?\b/g, (m) => { const y = parseInt(m, 10); out.yearFrom = out.yearFrom ? Math.min(out.yearFrom, y) : y; out.yearTo = out.yearTo ? Math.max(out.yearTo, y) : y; if (m.endsWith("s")) out.yearTo = y + 9; return " "; });
+
+  // Two-word ideas first ("holy ghost", "covenant path"), so they stay together.
+  for (const key of Object.keys(SYNONYMS).filter((k) => k.includes(" "))) {
+    if (text.includes(key)) text = text.replace(key, key.replace(" ", "_"));
+  }
+  let words = text.split(/\s+/).filter(Boolean).map((w) => w.replace(/_/g, " "));
+  // speakers: a surname that the library knows, in a question that asks what someone said
+  const asksWho = /\b(say|said|says|teach|taught|teaches|talk|talks|talked|quote|quotes|elder|president|sister|brother|bishop|speak|spoke|think|thinks|according)\b/.test(text);
+  if (speakers.length && asksWho) {
+    for (const w of words) {
+      const hit = speakers.find((s) => s.surname === w);
+      if (hit) { out.speaker = hit.name; words = words.filter((x) => x !== w); break; }
+    }
+  }
+  // a scripture book named in passing: "in alma", "from the psalms"
+  for (const w of words) {
+    if (BOOK_WORDS.has(w) && words.length > 2) { out.bookSlug = BOOK_WORDS.get(w); words = words.filter((x) => x !== w); if (out.bookSlug === "1-nephi") out.bookSlug = null; break; }
+  }
+  const content = words.filter((w) => !QUESTION_WORDS.has(w) && w.length > 1 && /[a-z]/.test(w));
+  const uniq = [...new Set(content)];
+  if (!uniq.length) return out;
+  out.terms = uniq;
+
+  // The words as typed, trimmed of leading and trailing filler: an exact phrase
+  // such as "plan of happiness" should beat any clever expansion.
+  let a = 0, b = words.length - 1;
+  while (a <= b && QUESTION_WORDS.has(words[a])) a++;
+  while (b >= a && QUESTION_WORDS.has(words[b])) b--;
+  const core = words.slice(a, b + 1);
+  if (core.length >= 2 && core.length <= 7 && core.some((w) => !QUESTION_WORDS.has(w))) out.phrase = phrase(core.join(" "));
+
+  const group = (w) => {
+    const alts = [w, ...(SYNONYMS[w] || [])].map((a) => phrase(a)).filter(Boolean);
+    return alts.length > 1 ? `(${alts.join(" OR ")})` : alts[0];
+  };
+  const groups = uniq.map(group);
+  out.strict = groups.join(" AND ");
+  out.loose = groups.length > 1 ? groups.join(" OR ") : null;
+  return out;
+}
