@@ -175,6 +175,7 @@ const methods = {
   async recent() { need(); return recent(); },
   async scriptures() { need(); return shelf(); },
   async context({ doc_id, pid, before = 1, after = 1 }) { need(); return context(Number(doc_id), pid, before, after); },
+  async verses({ words, volume = "all", limit = 400 }) { need(); return allVerses(words, volume, limit); },
 };
 
 function need() { if (!db) throw new Error("no library is loaded yet"); }
@@ -458,6 +459,29 @@ async function document(id, uri) {
   }
   doc.source_url = `https://www.churchofjesuschrist.org/study${r.uri}?lang=eng`;
   return doc;
+}
+
+// Every scripture verse containing any of the given words (prefix-matched, so
+// "redeem" also finds redeemed and redeemer), in canonical order. For the
+// complete lists a keyword search ranked by relevance cannot give.
+const VOLUMES = { ot: "Old Testament", nt: "New Testament", bofm: "Book of Mormon", dc: "Doctrine and Covenants", pgp: "Pearl of Great Price" };
+function allVerses(words, volume, limit) {
+  const terms = String(words || "").toLowerCase().split(/[\s,]+|\bor\b/).map((w) => w.replace(/[^\p{L}\p{N}'’*]/gu, "")).filter((w) => w.length > 1);
+  if (!terms.length) return { total: 0, verses: [], query: "" };
+  const match = terms.map((t) => (t.endsWith("*") ? `"${t.slice(0, -1)}"*` : `"${t}"*`)).join(" OR ");
+  const where = ["paragraphs MATCH ?", "p.kind = 'verse'", "c.slug = 'scriptures'"];
+  const params = [match];
+  if (volume && VOLUMES[volume]) { where.push("d.volume = ?"); params.push(VOLUMES[volume]); }
+  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id WHERE ${where.join(" AND ")}`;
+  let total = 0, rs = [];
+  try {
+    total = value(`SELECT COUNT(*) ${base}`, params);
+    rs = rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text, d.uri, d.title, d.author, d.year, d.month, d.session,
+                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection ${base} ORDER BY d.sort_key, p.seq LIMIT ?`, [...params, Math.min(limit, 600)]);
+  } catch (err) {
+    return { total: 0, verses: [], query: match, error: err.message };
+  }
+  return { total, query: match, verses: rs.map((r) => ({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, citation: citation(r, r.verse) })) };
 }
 
 // The paragraphs around one hit, for giving Claude a little more than a verse.

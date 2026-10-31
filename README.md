@@ -35,8 +35,11 @@ not.
   excerpts side by side and the arrow between them, and the deck ends with a
   map of every passage and connection.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
-  conference training, a letter). The library is searched on the device and
-  every passage found appears as a card (book and verse, or speaker, talk and
+  conference training, a letter). Claude searches the library itself, with
+  tools that run on the device: ranked search, every verse containing a word
+  family (for complete lists), and reading a chapter or talk in context. It
+  keeps searching until it has what it needs, then writes. Every passage found
+  appears as a card (book and verse, or speaker, talk and
   conference, with the full text) that you can open, present, or tick and add
   to the deck; the passages Claude cites are badged and listed first. The
   answer streams in beside them, citing passages by name. Runs on your own Claude API key (from
