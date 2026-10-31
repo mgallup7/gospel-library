@@ -1,7 +1,7 @@
 /* Keeps the app shell available offline. The library itself lives in the
    browser's private storage; the data files are never cached here. */
-const SHELL = "gospel-shell-v2";
-const FILES = ["./", "./index.html", "./app.css", "./app.js", "./engine.js", "./lib/query.js", "./lib/scriptures.js",
+const SHELL = "gospel-shell-v3";
+const FILES = ["./", "./index.html", "./app.css", "./app.js", "./ask.js", "./engine.js", "./lib/query.js", "./lib/scriptures.js",
   "./lib/scriptures-data.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
 
 self.addEventListener("install", (e) => {

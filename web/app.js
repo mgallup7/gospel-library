@@ -336,7 +336,7 @@
     const frag = document.createDocumentFragment();
     frag.append(el("div", { class: "status", id: "homeStatus", text: "" }));
     const tabs = el("div", { class: "shelf", id: "homeTabs" });
-    const sections = [["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
+    const sections = [["ask", "Ask"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
     for (const [key, label] of sections) {
       tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => { state.browse = { tab: key }; renderHome(); } }));
     }
@@ -356,6 +356,7 @@
     }
     const tab = state.browse?.tab || "conference";
     try {
+      if (tab === "ask") { window.Ask?.render(body); return; }
       if (tab === "conference") await browseConference(body);
       else if (tab === "scriptures") await browseScriptures(body);
       else await browseCollection(body, tab);
@@ -603,7 +604,17 @@
     const pid = fromPid || state.pid || $(".doc .is-target", readerPane)?.id || null;
     let i = pid ? units.findIndex((u) => u.pid === pid) : 0;
     if (i < 0) i = 0;
-    show = { units, i, doc: currentDoc, scale: store.get("stageScale", 1) };
+    openStage({ units, i, doc: currentDoc });
+  }
+
+  // A hand-picked list of passages (from Ask, for instance), each with its own citation.
+  function startPresentingUnits(units) {
+    if (!units || !units.length) return;
+    openStage({ units: units.map((u) => ({ kind: u.kind || "para", html: u.html || esc(u.text || ""), text: u.text || "", where: u.where || "", pid: null, doc_id: u.doc_id || null })), i: 0, doc: null });
+  }
+
+  function openStage(next) {
+    show = { ...next, scale: store.get("stageScale", 1) };
     document.body.classList.add("presenting");
     stage.hidden = false;
     renderStage();
@@ -613,7 +624,7 @@
 
   function stopPresenting() {
     if (!show) return;
-    const atPid = show.units[show.i]?.pid;
+    const atPid = show.doc ? show.units[show.i]?.pid : null;
     show.lock?.release?.();
     show = null;
     stage.hidden = true;
@@ -626,8 +637,11 @@
     if (!show) return;
     const u = show.units[show.i];
     const d = show.doc;
-    const ref = u.kind === "verse" && d.book_slug && u.pid ? `${d.citation.replace(/:\d.*$/, "")}:${u.pid.replace(/^p/, "")}` : null;
-    const where = d.collection === "general-conference" ? [d.author, d.title, d.label.replace(" General Conference", "")].filter(Boolean).join("  \u00b7  ") : (ref || d.citation);
+    let where = u.where || "";
+    if (d) {
+      const ref = u.kind === "verse" && d.book_slug && u.pid ? `${d.citation.replace(/:\d.*$/, "")}:${u.pid.replace(/^p/, "")}` : null;
+      where = d.collection === "general-conference" ? [d.author, d.title, d.label.replace(" General Conference", "")].filter(Boolean).join("  \u00b7  ") : (ref || d.citation);
+    }
     const body = $(".stage-body", stage);
     body.style.setProperty("--stage-scale", show.scale);
     body.classList.toggle("is-title", u.kind === "title");
@@ -739,6 +753,7 @@
   }
   $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.docId = null; state.pid = null; state.browse = null; syncControls(); renderHome(); showList(); push(); });
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
+  $("#askBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.browse = { tab: "ask" }; syncControls(); renderHome(); showList(); push(); });
   const applyFilters = () => {
     if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
@@ -767,6 +782,13 @@
   const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
+
+  // What ask.js needs from the app.
+  window.GL = {
+    api, el, esc, store, openDoc, startPresentingUnits,
+    get ready() { return state.ready; },
+    get wide() { return wide(); },
+  };
 
   // ------------------------------------------------------------- start ----
   (async () => {

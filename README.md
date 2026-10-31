@@ -15,6 +15,11 @@ not.
   a projector, a TV over AirPlay, or a tablet turned toward the room. Tap the
   screen icon in the reader (or press P, or double-tap a paragraph). Arrow
   keys, space, taps and swipes move through the text; Esc returns to reading.
+- Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
+  conference training, a letter). The library is searched on the device, the
+  best passages go to Claude with your request, and the answer streams in with
+  citations you can open or present. Runs on your own Claude API key (from
+  console.anthropic.com), stored on the device and sent only to Anthropic.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it
   sees one.
@@ -25,7 +30,7 @@ not.
 |---|---|---|
 | `gospel_library/` (Python) | GitHub Actions, nightly | Walks the site's tables of contents, fetches new and changed pages through the same content API the site's own reader uses, parses them into SQLite with an FTS5 full-text index. |
 | `bundle` | end of the nightly job | Compacts the database, gzips it, encrypts it with your passphrase (AES-256-GCM, key from PBKDF2), publishes it with the app to GitHub Pages. |
-| `web/` | your devices | The app. `engine.js` runs SQLite compiled to WebAssembly inside a Web Worker and keeps the library in the browser's private storage (OPFS). `app.js` is the interface. |
+| `web/` | your devices | The app. `engine.js` runs SQLite compiled to WebAssembly inside a Web Worker and keeps the library in the browser's private storage (OPFS). `app.js` is the interface; `ask.js` is the Claude layer (search planning with Haiku, answers with the model you pick, streamed straight from api.anthropic.com). |
 
 The code is public and ordinary. The library file is public too, but unreadable
 without the passphrase, which exists only in your GitHub secret and on your

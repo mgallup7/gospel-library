@@ -174,6 +174,7 @@ const methods = {
   async book({ uri, id }) { need(); return bookToc(uri, id); },
   async recent() { need(); return recent(); },
   async scriptures() { need(); return shelf(); },
+  async context({ doc_id, pid, before = 1, after = 1 }) { need(); return context(Number(doc_id), pid, before, after); },
 };
 
 function need() { if (!db) throw new Error("no library is loaded yet"); }
@@ -367,6 +368,24 @@ async function document(id, uri) {
   }
   doc.source_url = `https://www.churchofjesuschrist.org/study${r.uri}?lang=eng`;
   return doc;
+}
+
+// The paragraphs around one hit, for giving Claude a little more than a verse.
+function context(docId, pid, before, after) {
+  const d = row("SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, d.par_first, d.par_last, c.slug AS collection FROM documents d JOIN collections c ON c.id=d.collection_id WHERE d.id=?", [docId]);
+  if (!d || d.par_first === null) return null;
+  const anchor = row("SELECT seq FROM paragraphs WHERE rowid BETWEEN ? AND ? AND pid=?", [d.par_first, d.par_last, pid]);
+  if (!anchor) return null;
+  const rs = rows("SELECT rowid AS paragraph_id, seq, pid, kind, verse, text FROM paragraphs WHERE rowid BETWEEN ? AND ? AND seq BETWEEN ? AND ? AND kind IN ('verse','para','summary','heading') ORDER BY seq",
+    [d.par_first, d.par_last, anchor.seq - before, anchor.seq + after]);
+  const verses = rs.filter((r) => r.kind === "verse").map((r) => r.verse).filter((v) => v !== null);
+  let cite = citation(d);
+  if (verses.length && d.book_slug) {
+    const b = S.book(d.book_slug);
+    const ch = /^\d+$/.test(String(d.chapter)) ? parseInt(d.chapter, 10) : d.chapter;
+    cite = b ? S.citation(b, ch, verses[0], verses[verses.length - 1]) : cite;
+  }
+  return { ...summary(d), citation: cite, anchor_pid: pid, paragraphs: rs };
 }
 
 function normalizeUri(uri) {
