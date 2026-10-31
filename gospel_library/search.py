@@ -34,8 +34,9 @@ _SCOPES = {
     "gc": ["general-conference"],
     "handbook": ["handbook"],
     "cfm": ["come-follow-me"],
-    "manuals": ["manuals", "come-follow-me", "handbook"],
-    "manual": ["manuals", "come-follow-me", "handbook"],
+    "pmg": ["preach-my-gospel"],
+    "manuals": ["manuals", "come-follow-me", "handbook", "preach-my-gospel"],
+    "manual": ["manuals", "come-follow-me", "handbook", "preach-my-gospel"],
     "helps": ["study-helps"],
     "all": [],
 }
@@ -284,7 +285,7 @@ def doc_label(r) -> str:
         return f"{'April' if r['month'] == 4 else 'October'} {r['year']} General Conference"
     if r["volume"]:
         return r["volume"]
-    return {"handbook": "General Handbook", "come-follow-me": "Come, Follow Me",
+    return {"handbook": "General Handbook", "come-follow-me": "Come, Follow Me", "preach-my-gospel": "Preach My Gospel",
             "manuals": "Manual", "study-helps": "Study Helps", "scriptures": "Scriptures"}.get(coll, coll or "")
 
 

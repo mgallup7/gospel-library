@@ -91,11 +91,16 @@ COLLECTIONS: list[dict] = [
         "roots": ["/manual/general-handbook"],
     },
     {
+        "slug": "preach-my-gospel",
+        "title": "Preach My Gospel",
+        "kind": "books",
+        "roots": ["/manual/preach-my-gospel-2023"],
+    },
+    {
         "slug": "manuals",
         "title": "Manuals",
         "kind": "books",
         "roots": [
-            "/manual/preach-my-gospel-2023",
             "/manual/teaching-in-the-saviors-way-2022",
             "/manual/for-the-strength-of-youth",
             "/manual/gospel-topics",

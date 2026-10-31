@@ -6,7 +6,7 @@ import * as S from "./lib/scriptures.js";
 import { compileQuery, ftsPhrase } from "./lib/query.js";
 
 const HL_OPEN = "\u0001", HL_CLOSE = "\u0002";
-const LABELS = { handbook: "General Handbook", "come-follow-me": "Come, Follow Me", manuals: "Manual", "study-helps": "Study Helps", scriptures: "Scriptures" };
+const LABELS = { handbook: "General Handbook", "come-follow-me": "Come, Follow Me", "preach-my-gospel": "Preach My Gospel", manuals: "Manual", "study-helps": "Study Helps", scriptures: "Scriptures" };
 
 let sqlite3 = null;
 let pool = null;      // OPFS SAH pool util, when available

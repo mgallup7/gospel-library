@@ -269,3 +269,19 @@ def test_bundle_round_trip(tmp_path, monkeypatch):
     assert conn.execute("SELECT rowid FROM paragraphs WHERE paragraphs MATCH 'faith'").fetchall()
     with pytest.raises(ValueError):
         bundle.decrypt_file(out / "library.bin", tmp_path / "x.sqlite", "wrong")
+
+
+def test_book_moves_between_collections(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "lib.sqlite")
+    store = Store(config.DB_PATH)
+    manuals = store.collection_id("manuals", "Manuals", "books", 5)
+    bid = store.book_id(manuals, "/manual/preach-my-gospel-2023", "Preach My Gospel")
+    doc = parse_content(TALK_PAYLOAD, "/manual/preach-my-gospel-2023/1-purpose")
+    store.save_document(collection_id=manuals, book_id=bid, doc=doc, node=None, extra={})
+    pmg = store.collection_id("preach-my-gospel", "Preach My Gospel", "books", 4)
+    bid2 = store.book_id(pmg, "/manual/preach-my-gospel-2023", "Preach My Gospel")
+    assert bid2 == bid
+    row = store.conn.execute("SELECT collection_id FROM documents WHERE uri=?", ("/manual/preach-my-gospel-2023/1-purpose",)).fetchone()
+    assert row[0] == pmg
+    assert "/manual/preach-my-gospel-2023/1-purpose" in store.known_uris(pmg)
+    store.close()

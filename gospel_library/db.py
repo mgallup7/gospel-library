@@ -206,12 +206,17 @@ class Store:
             """INSERT INTO books(collection_id, uri, title, content_type, sort, year, month)
                VALUES (?,?,?,?,?,?,?)
                ON CONFLICT(uri) DO UPDATE SET title=excluded.title, sort=excluded.sort,
+                 collection_id=excluded.collection_id,
                  content_type=COALESCE(excluded.content_type, books.content_type),
                  year=COALESCE(excluded.year, books.year), month=COALESCE(excluded.month, books.month)""",
             (collection_id, uri, title, content_type, sort, year, month),
         )
+        book_id = self.conn.execute("SELECT id FROM books WHERE uri=?", (uri,)).fetchone()[0]
+        # A root that moved to another collection (Preach My Gospel got its own
+        # shelf) takes the pages already fetched under it along, no refetch.
+        self.conn.execute("UPDATE documents SET collection_id=? WHERE book_id=? AND collection_id!=?", (collection_id, book_id, collection_id))
         self.conn.commit()
-        return self.conn.execute("SELECT id FROM books WHERE uri=?", (uri,)).fetchone()[0]
+        return book_id
 
     def book(self, uri: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM books WHERE uri=?", (uri,)).fetchone()

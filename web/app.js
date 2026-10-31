@@ -307,7 +307,7 @@
     listPane.scrollTop = 0;
     markActive();
   }
-  function scopeLabel() { return state.scope === "all" ? "" : ` in ${state.scope === "conference" ? "general conference" : state.scope}`; }
+  function scopeLabel() { return state.scope === "all" ? "" : ` in ${{ conference: "general conference", pmg: "Preach My Gospel" }[state.scope] || state.scope}`; }
 
   function hitRow(h) {
     return el("button", { class: "hit", "data-doc": h.doc_id, "data-pid": h.pid, onclick: () => openDoc(h.doc_id, h.pid) }, [
@@ -336,7 +336,7 @@
     const frag = document.createDocumentFragment();
     frag.append(el("div", { class: "status", id: "homeStatus", text: "" }));
     const tabs = el("div", { class: "shelf", id: "homeTabs" });
-    const sections = [["conference", "Latest conference"], ["scriptures", "Scriptures"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
+    const sections = [["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
     for (const [key, label] of sections) {
       tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => { state.browse = { tab: key }; renderHome(); } }));
     }

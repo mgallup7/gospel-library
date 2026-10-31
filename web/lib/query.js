@@ -4,8 +4,8 @@ import { parseReference } from "./scriptures.js";
 const SCOPES = {
   scriptures: ["scriptures"], scripture: ["scriptures"],
   conference: ["general-conference"], talks: ["general-conference"], gc: ["general-conference"],
-  handbook: ["handbook"], cfm: ["come-follow-me"],
-  manuals: ["manuals", "come-follow-me", "handbook"], manual: ["manuals", "come-follow-me", "handbook"],
+  handbook: ["handbook"], cfm: ["come-follow-me"], pmg: ["preach-my-gospel"],
+  manuals: ["manuals", "come-follow-me", "handbook", "preach-my-gospel"], manual: ["manuals", "come-follow-me", "handbook", "preach-my-gospel"],
   helps: ["study-helps"], all: [],
 };
 const FILTER = /(speaker|by|year|book|in|scope):("[^"]+"|\S+)/gi;
