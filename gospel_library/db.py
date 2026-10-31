@@ -267,9 +267,9 @@ class Store:
             interval = min(max(existing["check_interval"] * 2, config.RECHECK_FIRST_DAYS), config.RECHECK_MAX_DAYS)
             self.conn.execute(
                 """UPDATE documents SET fetched_at=?, next_check=?, check_interval=?, status='ok',
-                     session=COALESCE(?, session)
+                     session=COALESCE(?, session), collection_id=?, book_id=COALESCE(?, book_id)
                    WHERE id=?""",
-                (ts, in_days(interval), interval, extra.get("session"), existing["id"]),
+                (ts, in_days(interval), interval, extra.get("session"), collection_id, book_id, existing["id"]),
             )
             self.conn.commit()
             return existing["id"], "unchanged"

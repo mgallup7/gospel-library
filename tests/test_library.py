@@ -285,3 +285,32 @@ def test_book_moves_between_collections(tmp_path, monkeypatch):
     assert row[0] == pmg
     assert "/manual/preach-my-gospel-2023/1-purpose" in store.known_uris(pmg)
     store.close()
+
+
+def test_sync_moves_cached_book_to_new_collection(tmp_path, monkeypatch):
+    """A book whose TOC is not due for a re-read still moves shelves."""
+    from gospel_library.sync import Syncer
+    from gospel_library.toc import Node
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "lib.sqlite")
+    store = Store(config.DB_PATH)
+    manuals = store.collection_id("manuals", "Manuals", "books", 5)
+    bid = store.book_id(manuals, "/manual/preach-my-gospel-2023", "Preach My Gospel")
+    node = Node(kind="content", uri="/manual/preach-my-gospel-2023/1-purpose", title="Purpose", order=1)
+    store.record_toc(bid, [node], next_check_days=30)
+    doc = parse_content(TALK_PAYLOAD, node.uri)
+    store.save_document(collection_id=manuals, book_id=bid, doc=doc, node=node, extra={})
+
+    class NoNetwork:
+        requests_made = 0
+        cache = None
+        def page_state(self, *a, **k): raise AssertionError("should not fetch")
+        def content(self, *a, **k): raise AssertionError("should not fetch")
+
+    pmg = store.collection_id("preach-my-gospel", "Preach My Gospel", "books", 4)
+    syncer = Syncer(store, NoNetwork())
+    nodes, book_id = syncer._book_nodes(pmg, "/manual/preach-my-gospel-2023", sort=0, toc_days=30, missing_days=7)
+    assert book_id == bid and [n.uri for n in nodes] == [node.uri]
+    assert store.conn.execute("SELECT collection_id FROM books WHERE id=?", (bid,)).fetchone()[0] == pmg
+    assert store.conn.execute("SELECT collection_id FROM documents WHERE uri=?", (node.uri,)).fetchone()[0] == pmg
+    store.close()

@@ -125,6 +125,10 @@ class Syncer:
                     year: int | None = None, month: int | None = None) -> tuple[list[Node], int | None]:
         """Return the content nodes for a book, refreshing its TOC when due."""
         book = self.store.book(uri)
+        if book is not None and book["collection_id"] != cid:
+            # The root moved to another shelf in config; take the book and its pages along.
+            self.store.book_id(cid, uri, book["title"], sort=sort, year=year, month=month)
+            book = self.store.book(uri)
         if book is not None and not self.full and book["toc_next_check"] and book["toc_next_check"] > now():
             if book["status"] == "missing":
                 return [], book["id"]
