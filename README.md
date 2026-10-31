@@ -15,6 +15,12 @@ not.
   a projector, a TV over AirPlay, or a tablet turned toward the room. Tap the
   screen icon in the reader (or press P, or double-tap a paragraph). Arrow
   keys, space, taps and swipes move through the text; Esc returns to reading.
+- Deck: tap verses or paragraphs while reading (or the + on a search result,
+  or "Add to deck" under an Ask answer) to collect passages. Give the deck a
+  title, pick a theme, and download a PowerPoint file written on the device:
+  one passage per slide, long passages split at verse or sentence breaks,
+  verse numbers set small, the reference above, speaker and talk under a
+  quote. Or present the deck straight from the iPad.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
   conference training, a letter). The library is searched on the device, the
   best passages go to Claude with your request, and the answer streams in with

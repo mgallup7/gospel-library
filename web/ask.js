@@ -271,6 +271,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         ]));
       }
       toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Present these passages", onclick: () => GL().startPresentingUnits(cited.map((p) => ({ text: p.text.replace(/^\d+ /, ""), where: p.citation || p.label, kind: p.kind === "verse" ? "verse" : "para", doc_id: p.doc_id }))) }));
+      toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Add to deck", onclick: (e) => {
+        for (const p of cited) window.Deck?.addPassage({ doc_id: p.doc_id, pid: p.pid, kind: p.kind, text: p.text.replace(/^\d+ /, ""), citation: p.citation, label: p.label, collection: p.citation && /^[A-Z1-4].*\d+:\d+/.test(p.citation) ? "scriptures" : "other" });
+        GL().toast(`Added ${cited.length} passages to the deck.`);
+        e.currentTarget.disabled = true;
+      } }));
     }
     toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Copy", onclick: () => navigator.clipboard?.writeText(plainText(reply, passages)).catch(() => {}) }));
   }

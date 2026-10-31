@@ -310,11 +310,21 @@
   function scopeLabel() { return state.scope === "all" ? "" : ` in ${{ conference: "general conference", pmg: "Preach My Gospel" }[state.scope] || state.scope}`; }
 
   function hitRow(h) {
-    return el("button", { class: "hit", "data-doc": h.doc_id, "data-pid": h.pid, onclick: () => openDoc(h.doc_id, h.pid) }, [
-      el("div", { class: "cite", text: h.citation }),
-      el("div", { class: "snip", html: h.snippet }),
-      el("div", { class: "where", text: h.collection === "general-conference" ? [h.session, h.label].filter(Boolean).join(", ") : h.label }),
+    const row = el("div", { class: "hit-row" }, [
+      el("button", { class: "hit", "data-doc": h.doc_id, "data-pid": h.pid, onclick: () => openDoc(h.doc_id, h.pid) }, [
+        el("div", { class: "cite", text: h.citation }),
+        el("div", { class: "snip", html: h.snippet }),
+        el("div", { class: "where", text: h.collection === "general-conference" ? [h.session, h.label].filter(Boolean).join(", ") : h.label }),
+      ]),
+      el("button", { class: "add", "aria-label": "Add to deck", title: "Add to deck", text: "+", onclick: (e) => {
+        e.stopPropagation();
+        const text = el("div", { html: h.snippet }).textContent;
+        window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection });
+        e.currentTarget.textContent = "\u2713";
+        setTimeout(() => { e.currentTarget && (e.currentTarget.textContent = "+"); }, 1200);
+      } }),
     ]);
+    return row;
   }
   function docRow(d, hits) {
     const meta = [];
@@ -336,7 +346,7 @@
     const frag = document.createDocumentFragment();
     frag.append(el("div", { class: "status", id: "homeStatus", text: "" }));
     const tabs = el("div", { class: "shelf", id: "homeTabs" });
-    const sections = [["ask", "Ask"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
+    const sections = [["ask", "Ask"], ["deck", "Deck"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
     for (const [key, label] of sections) {
       tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => { state.browse = { tab: key }; renderHome(); } }));
     }
@@ -357,6 +367,7 @@
     const tab = state.browse?.tab || "conference";
     try {
       if (tab === "ask") { window.Ask?.render(body); return; }
+      if (tab === "deck") { window.Deck?.render(body); return; }
       if (tab === "conference") await browseConference(body);
       else if (tab === "scriptures") await browseScriptures(body);
       else await browseCollection(body, tab);
@@ -480,11 +491,61 @@
     readerPane.replaceChildren(bar, body, nav, foot);
     readerPane.scrollTop = 0;
     body.addEventListener("click", onBodyClick);
+    body.addEventListener("click", onSelectClick);
     body.addEventListener("dblclick", (e) => {
       const unit = e.target.closest("p, h2, h3, li");
       if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
     });
     highlightTerms(body);
+  }
+
+  // Tap a verse or paragraph to select it for the deck; a bar offers what to do with the selection.
+  function onSelectClick(e) {
+    if (e.defaultPrevented || e.target.closest("a, button, .notes, header")) return;
+    const unit = e.target.closest("p.verse, .body-block p, .body-block li, p[id]");
+    if (!unit || !unit.id || !unit.closest(".doc")) return;
+    unit.classList.toggle("sel");
+    updateSelectBar();
+  }
+  function selectedUnits() {
+    const body = $(".doc", readerPane);
+    if (!body) return [];
+    return [...body.querySelectorAll(".sel")].map((n) => {
+      const c = n.cloneNode(true);
+      for (const junk of c.querySelectorAll("sup.marker, .verse-number, .page-break")) junk.remove();
+      const num = n.querySelector(".verse-number");
+      const verse = num ? parseInt(num.textContent, 10) : null;
+      return { pid: n.id, kind: n.classList.contains("verse") ? "verse" : "para", verse: Number.isFinite(verse) ? verse : null, text: c.textContent.replace(/\s+/g, " ").trim() };
+    });
+  }
+  function clearSelection() {
+    for (const n of readerPane.querySelectorAll(".sel")) n.classList.remove("sel");
+    updateSelectBar();
+  }
+  function updateSelectBar() {
+    let bar = $(".select-bar", readerPane);
+    const n = readerPane.querySelectorAll(".sel").length;
+    if (!n) { bar?.remove(); return; }
+    if (!bar) {
+      bar = el("div", { class: "select-bar" }, [
+        el("span", { class: "n" }),
+        el("button", { type: "button", class: "primary", text: "Add to deck", onclick: () => {
+          const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
+          clearSelection();
+          toast(added === 1 ? "Added to the deck." : `Added ${added} passages to the deck.`);
+        } }),
+        el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
+        el("button", { type: "button", class: "text-btn", text: "Clear", onclick: clearSelection }),
+      ]);
+      readerPane.append(bar);
+    }
+    $(".n", bar).textContent = `${n} selected`;
+  }
+  function toast(text) {
+    const t = el("div", { class: "toast", text });
+    document.body.append(t);
+    setTimeout(() => t.classList.add("show"), 10);
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 1800);
   }
 
   function crumbFor(doc) {
@@ -754,6 +815,7 @@
   $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.docId = null; state.pid = null; state.browse = null; syncControls(); renderHome(); showList(); push(); });
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
   $("#askBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.browse = { tab: "ask" }; syncControls(); renderHome(); showList(); push(); });
+  $("#deckBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.browse = { tab: "deck" }; syncControls(); renderHome(); showList(); push(); });
   const applyFilters = () => {
     if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
@@ -785,7 +847,7 @@
 
   // What ask.js needs from the app.
   window.GL = {
-    api, el, esc, store, openDoc, startPresentingUnits,
+    api, el, esc, store, openDoc, startPresentingUnits, toast,
     get ready() { return state.ready; },
     get wide() { return wide(); },
   };
