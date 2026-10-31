@@ -11,6 +11,10 @@ not.
 - Results are verses and paragraphs with the matches highlighted; open one and
   the whole chapter or talk is there with footnotes, speaker, session, and
   previous/next.
+- Present: one verse or paragraph at a time, large, on a plain background, for
+  a projector, a TV over AirPlay, or a tablet turned toward the room. Tap the
+  screen icon in the reader (or press P, or double-tap a paragraph). Arrow
+  keys, space, taps and swipes move through the text; Esc returns to reading.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it
   sees one.

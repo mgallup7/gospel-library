@@ -294,3 +294,35 @@ main {
 .banner { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 16px; background: var(--target); border-bottom: 1px solid var(--rule); font-size: 14px; }
 .banner span { flex: 1; }
 .banner .icon-btn { width: 34px; height: 34px; font-size: 20px; }
+
+/* ---- present mode --------------------------------------------------- */
+.stage {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; grid-template-rows: 1fr auto;
+  background: #fbfaf7; color: #1d1f23;
+  font-family: var(--serif);
+  padding: calc(var(--safe-top) + 3vmin) 6vmin calc(var(--safe-bottom) + 2vmin);
+  user-select: none; -webkit-user-select: none;
+}
+.stage.dark { background: #0e1013; color: #f2efe8; }
+.stage-body { display: flex; align-items: center; justify-content: center; min-height: 0; overflow: hidden; }
+.stage-text {
+  max-width: 34ch; text-align: left; line-height: 1.32; font-size: 7.2vmin; font-weight: 400;
+  letter-spacing: -0.005em; text-wrap: pretty;
+}
+.stage-body.is-title .stage-text { text-align: center; font-weight: 600; }
+.stage-text .verse-number { display: none; }
+.stage-text .small-caps { font-variant: small-caps; }
+.stage-text .clarity-word { font-style: italic; }
+.stage-text .line { display: block; }
+.stage-text mark { background: transparent; color: inherit; }
+.stage-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; font-family: var(--sans); font-size: 2.6vmin; opacity: .7; padding-top: 2vmin; }
+.stage-count { font-variant-numeric: tabular-nums; }
+.stage-controls { position: absolute; top: calc(var(--safe-top) + 8px); right: 8px; display: flex; gap: 2px; opacity: 0; transition: opacity .2s; }
+.stage:hover .stage-controls, .stage:focus-within .stage-controls, .stage.show-controls .stage-controls { opacity: 1; }
+@media (hover: none) { .stage-controls { opacity: .55; } }
+.stage-controls button { width: 44px; height: 44px; border-radius: 10px; font: 20px var(--sans); color: inherit; background: rgba(127,127,127,.12); }
+.stage-controls button:disabled { opacity: .3; }
+.stage-controls .stage-smaller { font-size: 14px; }
+body.presenting { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .stage-controls { transition: none; } }

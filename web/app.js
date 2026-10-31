@@ -460,6 +460,7 @@
       el("div", { class: "spacer" }),
       el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
       el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
+      el("button", { class: "icon-btn", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: "Open on churchofjesuschrist.org", "aria-label": "Open on churchofjesuschrist.org", html: ICON_OUT }),
     ]);
     const body = el("article", { class: "doc", html: doc.body_html || "" });
@@ -478,6 +479,10 @@
     readerPane.replaceChildren(bar, body, nav, foot);
     readerPane.scrollTop = 0;
     body.addEventListener("click", onBodyClick);
+    body.addEventListener("dblclick", (e) => {
+      const unit = e.target.closest("p, h2, h3, li");
+      if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
+    });
     highlightTerms(body);
   }
 
@@ -563,6 +568,131 @@
   }
   { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); }
 
+  // ------------------------------------------------------------ present ----
+  // One paragraph or verse at a time, large, on a plain background: for a
+  // projector, a TV over AirPlay, or a tablet turned toward the room.
+  const stage = $("#stage");
+  let show = null; // { units: [{pid, kind, html, verse}], i, doc }
+
+  function presentUnits(doc) {
+    const scratch = el("div", { html: doc.body_html || "" });
+    const units = [];
+    const take = (node, kind) => {
+      const c = node.cloneNode(true);
+      for (const junk of c.querySelectorAll("sup.marker, .page-break, a.study-note-ref sup")) junk.remove();
+      for (const a of c.querySelectorAll("a")) a.replaceWith(...a.childNodes);
+      const html = c.innerHTML.trim();
+      const text = c.textContent.replace(/\s+/g, " ").trim();
+      if (!text) return;
+      units.push({ pid: node.id || null, kind, html, text });
+    };
+    for (const node of scratch.querySelectorAll("h1, h2, h3, p, li, figcaption")) {
+      if (node.closest("nav, video, audio, .byline, footer, .notes")) continue;
+      if (node.tagName === "LI" && node.querySelector("p, li")) continue;
+      const cls = node.classList;
+      if (cls.contains("author-name") || cls.contains("author-role")) continue;
+      take(node, cls.contains("verse") ? "verse" : node.tagName === "H1" ? "title" : /^H/.test(node.tagName) ? "heading" : cls.contains("kicker") ? "kicker" : "para");
+    }
+    return units;
+  }
+
+  function startPresenting(fromPid) {
+    if (!currentDoc) return;
+    const units = presentUnits(currentDoc);
+    if (!units.length) return;
+    const pid = fromPid || state.pid || $(".doc .is-target", readerPane)?.id || null;
+    let i = pid ? units.findIndex((u) => u.pid === pid) : 0;
+    if (i < 0) i = 0;
+    show = { units, i, doc: currentDoc, scale: store.get("stageScale", 1) };
+    document.body.classList.add("presenting");
+    stage.hidden = false;
+    renderStage();
+    if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().catch(() => {});
+    try { navigator.wakeLock?.request("screen").then((l) => { show.lock = l; }).catch(() => {}); } catch (_) {}
+  }
+
+  function stopPresenting() {
+    if (!show) return;
+    const atPid = show.units[show.i]?.pid;
+    show.lock?.release?.();
+    show = null;
+    stage.hidden = true;
+    document.body.classList.remove("presenting");
+    if (document.fullscreenElement) document.exitFullscreen?.().catch?.(() => {});
+    if (atPid) focusParagraph(atPid);
+  }
+
+  function renderStage() {
+    if (!show) return;
+    const u = show.units[show.i];
+    const d = show.doc;
+    const ref = u.kind === "verse" && d.book_slug && u.pid ? `${d.citation.replace(/:\d.*$/, "")}:${u.pid.replace(/^p/, "")}` : null;
+    const where = d.collection === "general-conference" ? [d.author, d.title, d.label.replace(" General Conference", "")].filter(Boolean).join("  \u00b7  ") : (ref || d.citation);
+    const body = $(".stage-body", stage);
+    body.style.setProperty("--stage-scale", show.scale);
+    body.classList.toggle("is-title", u.kind === "title");
+    $(".stage-text", stage).innerHTML = u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html;
+    $(".stage-ref", stage).textContent = where;
+    $(".stage-count", stage).textContent = `${show.i + 1} / ${show.units.length}`;
+    $(".stage-prev", stage).disabled = show.i === 0;
+    $(".stage-next", stage).disabled = show.i === show.units.length - 1;
+    fitStage();
+  }
+
+  // Shrink the type until the passage fits the screen, so nothing scrolls.
+  function fitStage() {
+    const body = $(".stage-body", stage);
+    const text = $(".stage-text", stage);
+    let size = 7.2 * (show?.scale || 1);
+    text.style.fontSize = size + "vmin";
+    let guard = 24;
+    while (guard-- && (text.scrollHeight > body.clientHeight * 0.92 || text.scrollWidth > body.clientWidth) && size > 2.2) {
+      size *= 0.92;
+      text.style.fontSize = size + "vmin";
+    }
+  }
+
+  function stageStep(delta) {
+    if (!show) return;
+    const n = show.i + delta;
+    if (n < 0 || n >= show.units.length) return;
+    show.i = n;
+    renderStage();
+  }
+  function stageScale(delta) {
+    if (!show) return;
+    show.scale = Math.max(0.6, Math.min(1.8, Math.round((show.scale + delta) * 10) / 10));
+    store.set("stageScale", show.scale);
+    renderStage();
+  }
+
+  $(".stage-prev", stage).addEventListener("click", () => stageStep(-1));
+  $(".stage-next", stage).addEventListener("click", () => stageStep(1));
+  $(".stage-close", stage).addEventListener("click", stopPresenting);
+  $(".stage-smaller", stage).addEventListener("click", () => stageScale(-0.1));
+  $(".stage-larger", stage).addEventListener("click", () => stageScale(0.1));
+  $(".stage-theme", stage).addEventListener("click", () => {
+    const dark = stage.classList.toggle("dark");
+    store.set("stageDark", dark);
+  });
+  if (store.get("stageDark", true)) stage.classList.add("dark");
+  // Tap the right half to advance, the left half to go back; swipe works too.
+  let touchX = null;
+  $(".stage-body", stage).addEventListener("click", (e) => {
+    if (e.target.closest("button")) return;
+    const r = stage.getBoundingClientRect();
+    stageStep(e.clientX - r.left > r.width / 2 ? 1 : -1);
+  });
+  stage.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+  stage.addEventListener("touchend", (e) => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 60) stageStep(dx < 0 ? 1 : -1);
+  }, { passive: true });
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && show) stopPresenting(); });
+  window.addEventListener("resize", () => { if (show) fitStage(); });
+
   // ---------------------------------------------------------- footnotes ----
   const sheet = $("#sheet");
   function showNote(noteId) {
@@ -619,11 +749,21 @@
   $("#fClear").addEventListener("click", () => { state.speaker = state.from = state.to = state.book = ""; state.group = "passages"; syncControls(); runSearch({ typeahead: false }); });
   window.addEventListener("resize", () => { if (!state.ready) return; if (state.docId) showReader(); else showList(); });
   document.addEventListener("keydown", (e) => {
+    if (show) {
+      if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown" || e.key === "ArrowDown") { e.preventDefault(); stageStep(1); }
+      else if (e.key === "ArrowLeft" || e.key === "PageUp" || e.key === "ArrowUp" || e.key === "Backspace") { e.preventDefault(); stageStep(-1); }
+      else if (e.key === "Escape") stopPresenting();
+      else if (e.key === "+" || e.key === "=") stageScale(0.1);
+      else if (e.key === "-") stageScale(-0.1);
+      return;
+    }
     if (e.key === "/" && document.activeElement !== input && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
+    if ((e.key === "p" || e.key === "P") && document.activeElement !== input && currentDoc && !readerPane.hidden && !e.metaKey && !e.ctrlKey) { e.preventDefault(); startPresenting(); }
     if (e.key === "Escape") { if (!sheet.hidden) hideNote(); else input.blur(); }
   });
 
   const ICON_BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+  const ICON_PRESENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
   const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
