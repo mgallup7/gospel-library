@@ -210,7 +210,9 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         const ctx = await api("context", { doc_id: hit.doc_id, pid: hit.pid, before: hit.kind === "verse" ? 1 : 0, after: hit.kind === "verse" ? 1 : 0 });
         if (!ctx || !ctx.paragraphs.length) continue;
         const body = ctx.paragraphs.map((p) => (p.kind === "verse" && p.verse ? `${p.verse} ${p.text}` : p.text)).join(" ");
-        passages.push({ n: passages.length + 1, doc_id: hit.doc_id, pid: hit.pid, citation: ctx.citation, label: sourceLabel(ctx), text: body.slice(0, 1600), kind: hit.kind });
+        const verses = ctx.paragraphs.filter((p) => p.kind === "verse" && p.verse).map((p) => ({ n: p.verse, text: p.text }));
+        passages.push({ n: passages.length + 1, doc_id: hit.doc_id, pid: hit.pid, citation: ctx.citation, label: sourceLabel(ctx), text: body.slice(0, 1600), kind: hit.kind,
+          verses: verses.length ? verses : null, plain: ctx.paragraphs.map((p) => p.text).join(" "), author: ctx.author, title: ctx.title, collection: ctx.collection, conf: ctx.label });
       } catch (_) {}
     }
     return passages;
@@ -272,7 +274,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       }
       toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Present these passages", onclick: () => GL().startPresentingUnits(cited.map((p) => ({ text: p.text.replace(/^\d+ /, ""), where: p.citation || p.label, kind: p.kind === "verse" ? "verse" : "para", doc_id: p.doc_id }))) }));
       toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Add to deck", onclick: (e) => {
-        for (const p of cited) window.Deck?.addPassage({ doc_id: p.doc_id, pid: p.pid, kind: p.kind, text: p.text.replace(/^\d+ /, ""), citation: p.citation, label: p.label, collection: p.citation && /^[A-Z1-4].*\d+:\d+/.test(p.citation) ? "scriptures" : "other" });
+        for (const p of cited) window.Deck?.addPassage({ doc_id: p.doc_id, pid: p.pid, kind: p.kind, text: p.plain || p.text, verses: p.verses, citation: p.citation, label: p.conf || p.label, author: p.author, title: p.title, collection: p.collection });
         GL().toast(`Added ${cited.length} passages to the deck.`);
         e.currentTarget.disabled = true;
       } }));

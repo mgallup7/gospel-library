@@ -21,6 +21,12 @@ not.
   one passage per slide, long passages split at verse or sentence breaks,
   verse numbers set small, the reference above, speaker and talk under a
   quote. Or present the deck straight from the iPad.
+- Scripture chains: on any passage in the deck, Highlight (tap the first and
+  last word of a phrase) and Connect (choose the passage it points to, mark
+  the matching phrase there, and label the arrow: "fulfilled in", "same
+  word", your own words). Each connection becomes a slide with the two
+  excerpts side by side and the arrow between them, and the deck ends with a
+  map of every passage and connection.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
   conference training, a letter). The library is searched on the device, the
   best passages go to Claude with your request, and the answer streams in with

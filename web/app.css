@@ -406,3 +406,33 @@ body.presenting { overflow: hidden; }
 .deck-status { font-size: 13px; color: var(--ink-2); min-height: 1.3em; margin-top: 8px; }
 .deck-hint { font-size: 13px; color: var(--ink-3); line-height: 1.45; margin-top: 10px; }
 .stage-text .vn { font-family: var(--sans); font-size: .5em; vertical-align: super; opacity: .6; margin-right: .1em; }
+
+/* ---- highlights and connections ----------------------------------- */
+.deck-item .preview mark { background: var(--mark); color: var(--mark-ink); }
+.deck-item .marks { display: flex; gap: 6px; padding: 4px 6px 0; }
+.chip.small { padding: 4px 10px; font-size: 13px; }
+.deck-item.link { background: var(--chrome); border-radius: 10px; padding: 10px; border-bottom: 0; margin: 6px 0; }
+.deck-item .link-line { font: 15px/1.4 var(--serif); padding: 2px 6px; }
+.deck-item .link-line .arrow { color: var(--accent); padding: 0 6px; }
+.deck-item.link input { color: var(--ink); font-weight: 400; }
+.mark-text { font: var(--reading-size)/1.9 var(--serif); padding: 8px 6px 16px; user-select: none; -webkit-user-select: none; }
+.mark-text .w { font: inherit; padding: 1px 2px; border-radius: 4px; }
+.mark-text .w.hl { background: var(--mark); color: var(--mark-ink); }
+.mark-text .w.first { outline: 2px solid var(--accent); }
+.mark-text .vn { font: 600 .6em var(--sans); color: var(--ink-3); vertical-align: super; margin: 0 2px 0 6px; }
+.connect h2, .mark h2 { font: 600 13px var(--sans); color: var(--ink-2); margin: 16px 0 6px; }
+.connect .target-list .toc-row { padding: 9px 10px; }
+.connect .target-list .toc-row.on { background: var(--chrome); border-radius: 8px; }
+.stage-text mark { background: transparent; color: #c99a2e; font-weight: 600; }
+.stage:not(.dark) .stage-text mark { color: #8a5a00; }
+.stage-link { display: grid; grid-template-columns: 1fr auto 1fr; gap: 3vmin; align-items: center; width: 100%; max-width: none; }
+.stage-text:has(.stage-link) { max-width: none; width: 100%; }
+.stage-link .side .x { font-size: .62em; line-height: 1.35; }
+.stage-link .side .ref { margin-top: 1.2vmin; font: 2.4vmin var(--sans); opacity: .7; }
+.stage-link .mid { text-align: center; }
+.stage-link .mid .arrow { font-size: 1.4em; color: var(--accent); }
+.stage.dark .stage-link .mid .arrow { color: #e3c27a; }
+.stage-link .mid .lbl { font: 2.4vmin var(--sans); opacity: .8; max-width: 16vmin; }
+.stage-map { width: 100%; max-height: 72vh; display: block; }
+.stage-text:has(.stage-map) { max-width: none; width: 100%; }
+.stage-body.is-wide .stage-text { max-width: none; width: 100%; }
