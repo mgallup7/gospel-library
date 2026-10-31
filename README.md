@@ -35,9 +35,11 @@ not.
   excerpts side by side and the arrow between them, and the deck ends with a
   map of every passage and connection.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
-  conference training, a letter). The library is searched on the device, the
-  best passages go to Claude with your request, and the answer streams in with
-  citations you can open or present. Runs on your own Claude API key (from
+  conference training, a letter). The library is searched on the device and
+  every passage found appears as a card (book and verse, or speaker, talk and
+  conference, with the full text) that you can open, present, or tick and add
+  to the deck; the passages Claude cites are badged and listed first. The
+  answer streams in beside them, citing passages by name. Runs on your own Claude API key (from
   console.anthropic.com), stored on the device and sent only to Anthropic.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it

@@ -439,3 +439,26 @@ body.presenting { overflow: hidden; }
 .smart-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 10px 16px 0; font-size: 13px; color: var(--ink-2); }
 .smart-line .widened, .smart-line .widening { color: var(--ink-3); }
 .text-btn.small { height: 28px; padding: 0 8px; font-size: 13px; }
+
+/* ---- Ask findings (passage cards) ----------------------------------- */
+.findings { padding: 0 0 40px; }
+.findings-head { position: sticky; top: 0; z-index: 3; background: var(--paper); border-bottom: 1px solid var(--rule); }
+.findings-q { padding: 10px 16px 4px; font: 600 14px/1.35 var(--sans); color: var(--ink-2); }
+.findings-bar { display: flex; align-items: center; gap: 6px; padding: 6px 12px 10px; font-family: var(--sans); }
+.findings-bar .n { flex: 1; font-size: 13px; color: var(--ink-2); }
+.findings-bar .primary { height: 34px; padding: 0 12px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 14px; }
+.findings-bar .primary:disabled, .findings-bar .text-btn:disabled { opacity: .4; }
+.finding { display: flex; gap: 10px; padding: 12px 14px 10px 10px; border-bottom: 1px solid var(--rule); }
+.finding.on { background: var(--target); }
+.finding .pick { padding-top: 4px; }
+.finding .pick input { width: 22px; height: 22px; accent-color: var(--accent); }
+.finding .body { flex: 1; min-width: 0; }
+.finding .cite { font: 600 15px var(--sans); color: var(--accent); display: flex; align-items: baseline; gap: 8px; }
+.finding .cite .num { display: inline-block; min-width: 1.5em; text-align: center; padding: 0 5px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); font-size: 12px; line-height: 1.6; }
+.finding .src { font-size: 13px; color: var(--ink-2); margin-top: 1px; }
+.finding .text { font: 16px/1.5 var(--serif); margin: 6px 0 4px; }
+.finding .text .vn { font: 600 .7em var(--sans); color: var(--ink-3); vertical-align: super; margin-right: 2px; }
+.finding .acts { display: flex; gap: 2px; margin-left: -8px; }
+.ask-findings-inline { margin-top: 10px; }
+@media (min-width: 900px) { .ask-findings-inline { display: none; } }
+.cite { font-size: .8em; vertical-align: baseline; line-height: 1.4; padding: 1px 6px; }

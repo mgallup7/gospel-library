@@ -122,7 +122,7 @@
   }
   function showList() {
     listPane.hidden = false;
-    readerPane.hidden = wide() ? !state.docId : true;
+    readerPane.hidden = wide() ? !(state.docId || (panel.lastEl && readerPane.contains(panel.lastEl))) : true;
   }
   function showReader() {
     listPane.hidden = !wide();
@@ -518,6 +518,7 @@
       el("div", { class: "spacer" }),
       el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
       el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
+      panel.lastEl && wide() ? el("button", { class: "text-btn", text: panel.lastTitle || "Back", title: "Back to the passages", onclick: () => panel.restore() }) : null,
       el("button", { class: "icon-btn", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: "Open on churchofjesuschrist.org", "aria-label": "Open on churchofjesuschrist.org", html: ICON_OUT }),
     ]);
@@ -893,8 +894,22 @@
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
 
   // What ask.js needs from the app.
+  // A view that borrows the reader pane on wide screens (Ask's passages, for one).
+  const panel = {
+    lastEl: null, lastTitle: "",
+    show(node, title) {
+      panel.lastEl = node; panel.lastTitle = title || "";
+      if (!wide()) return;
+      currentDoc = null;
+      readerPane.replaceChildren(el("div", { class: "reader-bar" }, [el("div", { class: "crumb", text: title || "" })]), node);
+      readerPane.hidden = false;
+      readerPane.scrollTop = 0;
+    },
+    restore() { if (panel.lastEl) panel.show(panel.lastEl, panel.lastTitle); },
+  };
+
   window.GL = {
-    api, el, esc, store, openDoc, startPresentingUnits, toast,
+    api, el, esc, store, openDoc, startPresentingUnits, toast, panel,
     get ready() { return state.ready; },
     get wide() { return wide(); },
   };
