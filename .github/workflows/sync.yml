@@ -74,8 +74,12 @@ jobs:
         run: |
           mkdir -p site
           cp -R web/. site/
-          python -m gospel_library bundle --out site/data
-          python -m gospel_library stats
+          python -m gospel_library bundle --out site/data | tee bundle.txt
+          python -m gospel_library stats | tee stats.txt
+          # The numbers, where they can be read without opening the log.
+          echo "::notice title=Library built::$(cat bundle.txt)"
+          while IFS= read -r line; do echo "::notice title=Collection::$line"; done < <(grep -E "^  [A-Z].* pages " stats.txt | sed 's/^ *//')
+          { echo "## Library"; echo; echo '```'; cat bundle.txt stats.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the sync log
         if: always()
@@ -90,10 +94,16 @@ jobs:
         if: github.event.repository.private
         run: echo "::warning::This repository is private, so GitHub Pages cannot publish the app. Make it public (Settings, Danger Zone, Change visibility) or move to a paid plan; the library is encrypted either way."
 
-      - uses: actions/configure-pages@v5
+      - id: pages
         if: ${{ !github.event.repository.private }}
-        with:
-          enablement: true
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+
+      - name: Pages is not switched on
+        if: ${{ !github.event.repository.private && steps.pages.outcome == 'failure' }}
+        run: |
+          echo "::error title=GitHub Pages is off::The library was built and saved, but it cannot be published until GitHub Pages is switched on. On github.com open this repository, Settings, Pages, and under Build and deployment set Source to GitHub Actions. Then run this workflow again."
+          exit 1
 
       - uses: actions/upload-pages-artifact@v3
         if: ${{ !github.event.repository.private }}
@@ -103,6 +113,10 @@ jobs:
       - id: deployment
         if: ${{ !github.event.repository.private }}
         uses: actions/deploy-pages@v4
+
+      - name: Published
+        if: ${{ !github.event.repository.private }}
+        run: echo "::notice title=Published::${{ steps.deployment.outputs.page_url }}"
 
       - name: Report a failed sync
         if: steps.sync.outcome == 'failure'
