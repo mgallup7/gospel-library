@@ -8,15 +8,17 @@
   const API_URL = "https://api.anthropic.com/v1/messages";
   const API_VERSION = "2023-06-01";
   const MODELS = [
-    ["claude-sonnet-5-5", "Sonnet 5.5 (recommended)"],
-    ["claude-opus-5-5", "Opus 5.5 (deeper, slower, costs more)"],
+    ["claude-fable-5-1", "Fable 5.1 (the newest and most capable; the model behind Claude's own chat)"],
+    ["claude-opus-5-5", "Opus 5.5 (deep, slower, costs more)"],
+    ["claude-sonnet-5-5", "Sonnet 5.5 (quick and good; the default)"],
     ["claude-haiku-5-5", "Haiku 5.5 (fastest, cheapest)"],
   ];
+  const DEFAULT_MODEL = "claude-sonnet-5-5";
   const PLANNER_MODEL = "claude-haiku-5-5";
   const MAX_PASSAGES = 22;
   const MAX_TURNS = 8;
 
-  const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures). It is searched with the tools below; nothing outside it is available, and nothing should be quoted from memory.`;
+  const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures). It is searched with the tools below. Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly rather than quoting it from memory.`;
 
   const TOOLS_GUIDE = `Tools:
 - search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, handbook, cfm, or helps. Run several searches with different vocabulary (scriptural and modern) before concluding something is not there.
@@ -25,13 +27,13 @@
 
 Search until the question is answered or the list is complete; a dozen tool calls is fine. Every passage a tool returns carries a number like [12]; cite with those numbers and only those. Then write the answer.`;
 
-  const SYSTEM_ASK = `You are a study assistant inside a personal library belonging to an experienced Latter-day Saint leader; speak to him as a peer. ${LIBRARY}
+  const SYSTEM_ASK = `You are Claude, studying inside a personal library that belongs to an experienced Latter-day Saint leader (a mission president); speak to him as a peer and bring your full understanding to the question, the way you would in an ordinary conversation, with the library as your source of quotations. ${LIBRARY}
 
 ${TOOLS_GUIDE}
 
-Writing the answer: open with the answer, not a restatement of the question. Quote scripture exactly as returned. Cite every quotation and every claim a passage supports with [n]. For a list, give every item, grouped by volume or book in canonical order, each with its reference and the exact text or the key clause; do not summarize a list the person asked for in full. Plain prose, short paragraphs, headings only when the answer is long, no bullet lists of one-line fragments, no em dashes. When the library does not settle the question, say so in a sentence.`;
+Writing the answer: open with the answer, not a restatement of the question. Reason in the open where it helps: connections between passages, the original-language sense of a word, what a prophet was responding to, where the texts are in tension. Quote scripture exactly as returned. Cite every quotation and every claim a passage supports with [n]. For a list, give every item, grouped by volume or book in canonical order, each with its reference and the exact text or the key clause; do not summarize a list the person asked for in full. Plain prose, short paragraphs, headings only when the answer is long, no bullet lists of one-line fragments, no em dashes. When the library does not settle the question, say so in a sentence and give your own best judgment, marked as such.`;
 
-  const SYSTEM_DRAFT = `You compose talks, lessons, trainings, letters and outlines for an experienced Latter-day Saint leader. ${LIBRARY}
+  const SYSTEM_DRAFT = `You are Claude, composing talks, lessons, trainings, letters and outlines for an experienced Latter-day Saint leader (a mission president), with the library as your source of quotations. ${LIBRARY}
 
 ${TOOLS_GUIDE}
 
@@ -82,8 +84,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   const settings = {
     get key() { return store.get("apiKey", ""); },
     set key(v) { v ? store.set("apiKey", v) : store.del("apiKey"); },
-    get model() { return store.get("askModel", MODELS[0][0]); },
+    get model() { const m = store.get("askModel", DEFAULT_MODEL); return MODELS.some(([id]) => id === m) ? m : DEFAULT_MODEL; },
     set model(v) { store.set("askModel", v); },
+    get think() { return store.get("askThink", true); },
+    set think(v) { store.set("askThink", !!v); },
     get planner() { return store.get("askPlanner", true); },
     set planner(v) { store.set("askPlanner", !!v); },
   };
@@ -150,14 +154,16 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const model = el("select", { "aria-label": "Model" });
     for (const [id, label] of MODELS) model.append(el("option", { value: id, text: label, selected: id === settings.model }));
     const planner = el("input", { type: "checkbox", checked: settings.planner });
+    const think = el("input", { type: "checkbox", checked: settings.think });
     const key = el("input", { type: "password", value: settings.key, autocomplete: "off", "aria-label": "API key" });
     box.append(
       el("h2", { text: "Ask settings" }),
       el("label", {}, ["Model for answers", model]),
+      el("label", { class: "row-check" }, [think, " Let it think before it answers (you see the thinking as it goes; slower, uses more tokens)"]),
       el("label", { class: "row-check" }, [planner, " Let a fast model plan the searches first (better recall, one extra cheap call)"]),
       el("label", {}, ["API key", key]),
       el("div", { class: "ask-actions" }, [
-        el("button", { type: "button", class: "primary", text: "Save", onclick: () => { settings.model = model.value; settings.planner = planner.checked; settings.key = key.value.trim(); render(container); } }),
+        el("button", { type: "button", class: "primary", text: "Save", onclick: () => { settings.model = model.value; settings.planner = planner.checked; settings.think = think.checked; settings.key = key.value.trim(); render(container); } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => render(container) }),
         el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => { settings.key = ""; thread = []; render(container); } }),
       ]),
@@ -336,10 +342,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     for (let turn = 0; turn < MAX_TOOL_CALLS + 2; turn++) {
       let buffer = "", pending = false;
       const flush = () => { pending = false; answerEl.innerHTML = markdown(buffer, registry.list); };
+      let thought = "";
       const res = await complete({
         model: settings.model, system: mode === "draft" ? SYSTEM_DRAFT : SYSTEM_ASK, messages, tools: calls < MAX_TOOL_CALLS ? TOOLS : undefined,
-        max_tokens: mode === "draft" ? 8000 : 5000, stream: true,
+        max_tokens: mode === "draft" ? 20000 : 16000, stream: true, thinking: settings.think,
         onDelta: (t) => { buffer += t; if (!pending) { pending = true; requestAnimationFrame(flush); } },
+        onThinking: (t) => { thought = (thought + t).slice(-2000); statusEl.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
       });
       finalText = res.text;
       if (res.stop_reason !== "tool_use" || !res.tool_uses.length) { buffer = res.text; flush(); break; }
@@ -552,9 +560,14 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   });
 
   // ------------------------------------------------------------ transport --
-  async function complete({ model, system, messages, max_tokens, stream, onDelta, tools }) {
+  async function complete({ model, system, messages, max_tokens, stream, onDelta, onThinking, tools, thinking }) {
     const body = { model, system, messages, max_tokens, stream: !!stream };
     if (tools) body.tools = tools;
+    // Adaptive thinking: the model reasons before it answers and between tool
+    // calls, as much as the question needs. max_tokens caps thinking and
+    // answer together. Its thinking blocks come back signed and must be
+    // returned unchanged on the next turn of a tool loop.
+    if (thinking) { body.thinking = { type: "adaptive", display: "summarized" }; body.output_config = { effort: "high" }; }
     const r = await fetch(API_URL, {
       method: "POST",
       headers: {
@@ -592,11 +605,16 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         try { evt = JSON.parse(dataLine.slice(5).trim()); } catch (_) { continue; }
         if (evt.type === "content_block_start") {
           const b = evt.content_block || {};
-          blocks[evt.index] = b.type === "tool_use" ? { type: "tool_use", id: b.id, name: b.name, json: "", input: {} } : { type: "text", text: "" };
+          blocks[evt.index] = b.type === "tool_use" ? { type: "tool_use", id: b.id, name: b.name, json: "", input: {} }
+            : b.type === "thinking" ? { type: "thinking", thinking: "", signature: "" }
+            : b.type === "redacted_thinking" ? { type: "redacted_thinking", data: b.data }
+            : { type: "text", text: "" };
         } else if (evt.type === "content_block_delta") {
           const b = blocks[evt.index];
           if (evt.delta?.type === "text_delta") { text += evt.delta.text; if (b) b.text += evt.delta.text; onDelta && onDelta(evt.delta.text); }
           else if (evt.delta?.type === "input_json_delta" && b) b.json += evt.delta.partial_json;
+          else if (evt.delta?.type === "thinking_delta" && b) { b.thinking += evt.delta.thinking; onThinking && onThinking(evt.delta.thinking); }
+          else if (evt.delta?.type === "signature_delta" && b) b.signature += evt.delta.signature;
         } else if (evt.type === "content_block_stop") {
           const b = blocks[evt.index];
           if (b && b.type === "tool_use") { try { b.input = b.json ? JSON.parse(b.json) : {}; } catch (_) { b.input = {}; } delete b.json; }
@@ -605,7 +623,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         } else if (evt.type === "error") throw new Error(evt.error?.message || "stream error");
       }
     }
-    const clean = blocks.filter(Boolean).map((b) => (b.type === "text" ? { type: "text", text: b.text } : { type: "tool_use", id: b.id, name: b.name, input: b.input })).filter((b) => b.type !== "text" || b.text);
+    const clean = blocks.filter(Boolean).map((b) => (
+      b.type === "text" ? { type: "text", text: b.text }
+        : b.type === "thinking" ? { type: "thinking", thinking: b.thinking, signature: b.signature }
+        : b.type === "redacted_thinking" ? { type: "redacted_thinking", data: b.data }
+        : { type: "tool_use", id: b.id, name: b.name, input: b.input }
+    )).filter((b) => b.type !== "text" || b.text);
     if (!tools) return text;
     return { text, blocks: clean, tool_uses: clean.filter((b) => b.type === "tool_use"), stop_reason };
   }

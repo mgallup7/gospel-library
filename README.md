@@ -43,8 +43,10 @@ not.
   One passage per slide, long passages split at verse or sentence breaks,
   speaker and talk under a quote; each connection becomes a slide with the
   two excerpts in panels and the arrow between them, and the deck ends with
-  a map of every passage and connection. Or present the deck straight from
-  the iPad, in the same colors.
+  the chain as one picture: the passages left to right in the order you
+  arranged them, each arrow routed above the row with its label (backward
+  links go under). Or present the deck straight from the iPad, in the same
+  colors.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
   conference training, a letter). Claude searches the library itself, with
   tools that run on the device: ranked search, every verse containing a word
@@ -52,9 +54,12 @@ not.
   keeps searching until it has what it needs, then writes. Every passage found
   appears as a card under the answer (book and verse, or speaker, talk and
   conference, with the full text) that you can open, present, or tick onto
-  the deck; the passages Claude cites are badged and listed first. Runs on
-  your own Claude API key (from console.anthropic.com), stored on the device
-  and sent only to Anthropic.
+  the deck; the passages Claude cites are badged and listed first. It thinks
+  before it answers and between searches (you watch the thinking go by), and
+  reasons with everything it knows while taking its quotations from the
+  library. Pick the model in settings: Fable 5.1, Opus 5.5, Sonnet 5.5 or
+  Haiku 5.5. Runs on your own Claude API key (from console.anthropic.com),
+  stored on the device and sent only to Anthropic.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it
   sees one.

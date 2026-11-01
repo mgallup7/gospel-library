@@ -803,32 +803,94 @@
     return { kind: "link", html, where: "" };
   }
   function mapUnit() {
-    const g = graph();
-    if (!g) return null;
-    const W = 1000, H = 560, cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 70;
-    const pos = {};
-    g.nodes.forEach((n, i) => { const ang = -Math.PI / 2 + (2 * Math.PI * i) / g.nodes.length; pos[n.id] = { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) }; });
-    let svg = `<svg class="stage-map" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>`;
-    for (const e of g.edges) {
-      const a = pos[e.from], b = pos[e.to];
-      const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len, pad = 78;
-      const x1 = a.x + ux * pad, y1 = a.y + uy * pad, x2 = b.x - ux * pad, y2 = b.y - uy * pad;
-      svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="currentColor" stroke-width="2.5" marker-end="url(#ah)" opacity=".8"/>`;
-      if (e.label) svg += `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="18" fill="currentColor" opacity=".85">${esc(e.label)}</text>`;
+    const lay = mapLayout();
+    if (!lay) return null;
+    const S = 100; // slide inches to SVG units
+    const f = (v) => (v * S).toFixed(1);
+    let svg = `<svg class="stage-map" viewBox="0 ${f(lay.top - 0.1)} ${f(lay.W)} ${f(lay.bottom - lay.top + 0.2)}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>`;
+    for (const l of lay.links) {
+      svg += `<polyline points="${l.points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#ah)" opacity=".85"/>`;
+      if (l.label) {
+        const { x, y, above } = l.labelAt;
+        const ty = y * S + (above === null ? 6 : above ? -7 : 19);
+        svg += `<text x="${f(x)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="17" fill="currentColor" opacity=".9">${esc(l.label)}</text>`;
+      }
     }
-    for (const n of g.nodes) {
-      const p = pos[n.id];
-      svg += `<rect x="${p.x - 76}" y="${p.y - 26}" width="152" height="52" rx="10" fill="none" stroke="currentColor" stroke-width="2"/><text x="${p.x}" y="${p.y + 6}" text-anchor="middle" font-size="19" font-weight="600" fill="currentColor">${esc(n.label)}</text>`;
+    for (const nd of lay.nodes) {
+      const size = Math.min(19, Math.max(11, (nd.w * S * 0.9) / Math.max(1, nd.label.length * 0.56)));
+      svg += `<rect x="${f(nd.x - nd.w / 2)}" y="${f(nd.y - nd.h / 2)}" width="${f(nd.w)}" height="${f(nd.h)}" rx="9" fill="rgba(127,127,127,.12)" stroke="currentColor" stroke-width="2"/>` +
+        `<text x="${f(nd.x)}" y="${f(nd.y) + size * 0.36}" text-anchor="middle" font-size="${size.toFixed(1)}" font-weight="600" fill="currentColor">${esc(nd.label)}</text>`;
     }
     svg += "</svg>";
-    return { kind: "map", html: svg, where: deck.title ? `${deck.title}: the connections` : "The connections" };
+    return { kind: "map", html: svg, where: deck.title ? `${deck.title}: the chain` : "The chain" };
+  }
+  // The chain as one picture: passages in deck order, left to right (up to
+  // five a row), each arrow routed above the row (forward) or below it
+  // (back) on its own lane, with the label on the run. Positions are slide
+  // inches; the PowerPoint and the stage both draw from this.
+  function mapLayout() {
+    const g = graph();
+    if (!g) return null;
+    const W = 10, M = 0.75, inner = W - 2 * M, top = 1.05, bottom = 4.9;
+    const n = g.nodes.length;
+    const perRow = Math.min(5, n);
+    const rows = Math.ceil(n / perRow);
+    const gap = 0.35;
+    const bw = Math.min(1.9, (inner - (perRow - 1) * gap) / perRow), bh = 0.52;
+    const x0 = M + (inner - (perRow * bw + (perRow - 1) * gap)) / 2 + bw / 2;
+    const rowY = rows === 1 ? [3.0] : rows === 2 ? [2.15, 3.95] : Array.from({ length: rows }, (_, r) => top + 0.5 + r * ((bottom - top - 1.0) / (rows - 1)));
+    const nodes = g.nodes.map((node, i) => ({ ...node, i, row: Math.floor(i / perRow), x: x0 + (i % perRow) * (bw + gap), y: rowY[Math.floor(i / perRow)], w: bw, h: bh }));
+    const at = Object.fromEntries(nodes.map((nd) => [nd.id, nd]));
+    const links = g.edges.map((e) => ({ label: e.label, a: at[e.from], b: at[e.to] }));
+    const useLanes = rows <= 2;
+    const slots = {};
+    for (const l of links) {
+      l.bracket = useLanes && l.a.row === l.b.row;
+      if (!l.bracket) continue;
+      l.side = rows === 1 ? (l.a.i < l.b.i ? "top" : "bottom") : (l.a.row === 0 ? "top" : "bottom");
+      for (const nd of [l.a, l.b]) (slots[`${nd.id}|${l.side}`] ||= []).push(l);
+    }
+    // Lanes: the shortest spans sit closest to the row; a lane is reused when the spans do not overlap.
+    const lanes = {};
+    for (const l of links.filter((x) => x.bracket).sort((p, q) => Math.abs(p.a.x - p.b.x) - Math.abs(q.a.x - q.b.x))) {
+      const list = (lanes[`${l.a.row}|${l.side}`] ||= []);
+      const x1 = Math.min(l.a.x, l.b.x), x2 = Math.max(l.a.x, l.b.x);
+      let lane = 0;
+      while ((list[lane] || []).some(([u1, u2]) => x1 < u2 + 0.15 && x2 > u1 - 0.15)) lane++;
+      (list[lane] ||= []).push([x1, x2]);
+      l.lane = lane;
+    }
+    // Where an arrow meets a box: spread the arrows on one side so they do not pile onto one point.
+    const attach = (l, nd) => {
+      const list = slots[`${nd.id}|${l.side}`].slice().sort((p, q) => (p.a === nd ? p.b.x : p.a.x) - (q.a === nd ? q.b.x : q.a.x));
+      const k = list.indexOf(l), m = list.length;
+      return nd.x + (k - (m - 1) / 2) * Math.min(0.22, (nd.w - 0.3) / Math.max(1, m - 1));
+    };
+    for (const l of links) {
+      if (l.bracket) {
+        const up = l.side === "top";
+        const edge = (nd) => (up ? nd.y - nd.h / 2 : nd.y + nd.h / 2);
+        const laneY = Math.max(top, Math.min(bottom, up ? edge(l.a) - 0.26 - l.lane * 0.3 : edge(l.a) + 0.26 + l.lane * 0.3));
+        const ax = attach(l, l.a), bx = attach(l, l.b);
+        l.points = [[ax, edge(l.a)], [ax, laneY], [bx, laneY], [bx, edge(l.b)]];
+        l.labelAt = { x: (ax + bx) / 2, y: laneY, above: up };
+      } else {
+        const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+        const trim = (nd) => Math.min(nd.w / 2 / Math.max(Math.abs(ux), 1e-6), nd.h / 2 / Math.max(Math.abs(uy), 1e-6)) + 0.04;
+        const x1 = l.a.x + ux * trim(l.a), y1 = l.a.y + uy * trim(l.a), x2 = l.b.x - ux * trim(l.b), y2 = l.b.y - uy * trim(l.b);
+        l.points = [[x1, y1], [x2, y2]];
+        l.labelAt = { x: (x1 + x2) / 2 - uy * 0.22, y: (y1 + y2) / 2 + ux * 0.22, above: null };
+      }
+    }
+    return { nodes, links, W, H: 5.625, top, bottom };
   }
   // Nodes and edges for the map: every passage that takes part in a connection.
   function graph() {
     const edges = deck.links.filter((l) => byId(l.from.id) && byId(l.to.id)).map((l) => ({ from: l.from.id, to: l.to.id, label: l.label || "" }));
     if (!edges.length) return null;
-    const ids = [...new Set(edges.flatMap((e) => [e.from, e.to]))];
-    const nodes = ids.map((id) => ({ id, label: shortCitation(byId(id)) }));
+    const ids = new Set(edges.flatMap((e) => [e.from, e.to]));
+    // in deck order, so the picture reads the way the slides were presented
+    const nodes = deck.items.filter((it) => ids.has(it.id)).map((it) => ({ id: it.id, label: shortCitation(it) }));
     return { nodes, edges };
   }
   function shortCitation(it) {
@@ -1027,30 +1089,24 @@
       }
     }
 
-    // The web of connections, one slide at the end.
-    const g = graph();
-    if (g) {
+    // The chain as one picture, one slide at the end.
+    const lay = mapLayout();
+    if (lay) {
       n++;
       const s = slide();
-      kicker(s, deck.title ? `${deck.title}: the connections` : "The connections");
-      const cx = W / 2, cy = 2.85, R = Math.min(2.0, 1.1 + g.nodes.length * 0.12), bw = 1.9, bh = 0.6;
-      const pos = {};
-      g.nodes.forEach((node, i) => { const ang = -Math.PI / 2 + (2 * Math.PI * i) / g.nodes.length; pos[node.id] = { x: cx + R * 1.35 * Math.cos(ang), y: cy + R * 0.78 * Math.sin(ang) }; });
-      for (const e of g.edges) {
-        const a = pos[e.from], b = pos[e.to];
-        const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
-        // trim the segment so it starts and ends at the box edges (roughly)
-        const trim = Math.min(bw / 2 / Math.max(Math.abs(ux), 1e-6), bh / 2 / Math.max(Math.abs(uy), 1e-6)) + 0.05;
-        const x1 = a.x + ux * trim, y1 = a.y + uy * trim, x2 = b.x - ux * trim, y2 = b.y - uy * trim;
-        addSegment(pptx, s, x1, y1, x2, y2, { color: t.accent, width: 1.75, endArrowType: "triangle" });
-        if (e.label) {
-          const px = -uy, py = ux; // perpendicular, so the label sits beside the arrow rather than on it
-          s.addText(e.label, { x: (x1 + x2) / 2 + px * 0.2 - 0.9, y: (y1 + y2) / 2 + py * 0.2 - 0.15, w: 1.8, h: 0.3, fontFace: SANS, fontSize: 11, color: t.accent, align: "center", valign: "middle", margin: 0, fit: "shrink" });
+      kicker(s, deck.title ? `${deck.title}: the chain` : "The chain");
+      for (const l of lay.links) {
+        for (let i = 1; i < l.points.length; i++) {
+          const [x1, y1] = l.points[i - 1], [x2, y2] = l.points[i];
+          addSegment(pptx, s, x1, y1, x2, y2, { color: t.accent, width: 1.75, ...(i === l.points.length - 1 ? { endArrowType: "triangle" } : {}) });
+        }
+        if (l.label) {
+          const { x, y, above } = l.labelAt;
+          s.addText(l.label, { x: x - 1.0, y: above === null ? y - 0.14 : above ? y - 0.3 : y + 0.02, w: 2.0, h: 0.28, fontFace: SANS, fontSize: 10, color: t.accent, align: "center", valign: above === null ? "middle" : above ? "bottom" : "top", margin: 0, fit: "shrink" });
         }
       }
-      for (const node of g.nodes) {
-        const p = pos[node.id];
-        s.addText(node.label, { x: p.x - bw / 2, y: p.y - bh / 2, w: bw, h: bh, fontFace: SANS, fontSize: 13, bold: true, color: t.text, align: "center", valign: "middle", margin: 4, fit: "shrink",
+      for (const nd of lay.nodes) {
+        s.addText(nd.label, { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, fontFace: SANS, fontSize: 12, bold: true, color: t.text, align: "center", valign: "middle", margin: 4, fit: "shrink",
           fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.08, shape: pptx.ShapeType.roundRect });
       }
       footer(s, n);
