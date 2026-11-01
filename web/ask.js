@@ -21,8 +21,10 @@
   const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Missionary Standards for Disciples of Jesus Christ (the booklet, its supplement, and the service missionary edition), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures). It is searched with the tools below. Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly rather than quoting it from memory.`;
 
   const TOOLS_GUIDE = `Tools:
-- search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, standards (Missionary Standards), handbook, cfm, or helps; speaker and years narrow conference talks.
-- find_all: every passage in a scope that contains a word family (prefix-matched) or an exact phrase, in reading order, with the total and a count per chapter or talk. Scope is scriptures, ot, nt, bofm, dc, pgp, pmg, standards, conference, handbook, cfm, helps, or all.
+- search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, standards (Missionary Standards), handbook, cfm, or helps; speaker and years narrow conference talks; edition and exclude_edition keep to, or keep out, one edition or volume by words in its title.
+- find_all: every passage in a scope that contains a word family (prefix-matched) or an exact phrase, in reading order, with the total and a count per chapter or talk. Scope is scriptures, ot, nt, bofm, dc, pgp, pmg, standards, conference, handbook, cfm, helps, or all; edition and exclude_edition as above.
+
+Editions. Some shelves hold several editions or volumes, and every passage's label names the one it is from: the Missionary Standards shelf holds the booklet for full-time missionaries ("Missionary Standards for Disciples of Jesus Christ"), its supplement, and the service missionary edition (its title says "Service Missionaries"); Come, Follow Me has a volume per year; the study helps are the Topical Guide, the Bible Dictionary and the Guide to the Scriptures. When the person includes or excludes one, search with edition or exclude_edition, and before writing check the label of every passage you use against what was asked. A passage from an excluded edition is never quoted, cited, or summarized, not even to say it was set aside.
 - read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11", a talk title).
 
 How to search. Work the way a careful researcher works in a library, not the way a search box works:
@@ -33,7 +35,7 @@ How to search. Work the way a careful researcher works in a library, not the way
 5. Follow the thread. A passage that names another, a scripture a speaker quotes, a doctrine a verse assumes, is a lead; look it up.
 6. Prefer the primary source: for what a prophet said, his own talk and not a manual's summary; for doctrine, the scripture first, then the prophets' teaching about it.
 7. Check your memory against the library. If you recall a passage the tools have not returned, search for it before using it; if it is not there, say so rather than quoting it.
-8. Stop when further searches return nothing new, then write. Before writing, make sure every quotation you will use is on the list of passages returned, word for word.
+8. Stop when further searches return nothing new, then write. Before writing, read the question once more for its conditions (what to include, what to exclude, "exact quotes", "all", a scope, a speaker, a date) and check the answer against each one; then make sure every quotation you will use is on the list of passages returned, word for word.
 
 Every passage a tool returns carries a number like [12]; cite with those numbers and only those.`;
 
@@ -56,6 +58,8 @@ Build the piece from passages the tools returned. Quotation marks are a promise:
         scope: { type: "string", enum: ["all", "scriptures", "conference", "pmg", "standards", "handbook", "cfm", "helps"], description: "Where to look. Default all." },
         speaker: { type: "string", description: "Surname of a conference speaker, to limit to their talks." },
         year_from: { type: "integer" }, year_to: { type: "integer" },
+        edition: { type: "string", description: "Only the edition or volume whose title contains these words, e.g. 'Service Missionaries', 'Supplement', 'Old Testament 2026', 'Topical Guide'." },
+        exclude_edition: { type: "string", description: "Leave out the edition or volume whose title contains these words." },
         limit: { type: "integer", description: "How many passages, 5 to 30. Default 12." },
       }, required: ["query"] } },
     { name: "find_all", description: "Every passage in a scope containing a word family or an exact phrase, in reading order, with the total and counts per chapter or talk. For complete lists.",
@@ -63,6 +67,8 @@ Build the piece from passages the tools returned. Quotation marks are a promise:
         words: { type: "string", description: "A word family, space-separated, each prefix-matched: 'redeem redeemed redemption redeemer'. Use this or phrase." },
         phrase: { type: "string", description: "An exact phrase, words in order: 'Holy Ghost', 'Spirit of God'." },
         scope: { type: "string", enum: ["all", "scriptures", "ot", "nt", "bofm", "dc", "pgp", "pmg", "standards", "conference", "handbook", "cfm", "helps"], description: "Where to look. Default all." },
+        edition: { type: "string", description: "Only the edition or volume whose title contains these words." },
+        exclude_edition: { type: "string", description: "Leave out the edition or volume whose title contains these words." },
         limit: { type: "integer", description: "Up to 600. Default 400." },
       } } },
     { name: "read", description: "Read in context: either the paragraphs around a passage you have (by its number), or a chapter or talk by reference.",
@@ -276,9 +282,9 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       return this.add({ doc_id: hit.doc_id, pid: hit.pid, kind: hit.kind, citation: ctx.citation, label: sourceLabel(ctx), text: plain.slice(0, 1800), plain,
         verses: verses.length ? verses : null, author: ctx.author, title: ctx.title, collection: ctx.collection, conf: ctx.label });
     }
-    async search({ query, scope = "all", speaker, year_from, year_to, limit = 12 }) {
+    async search({ query, scope = "all", speaker, year_from, year_to, edition, exclude_edition, limit = 12 }) {
       const api = GL().api;
-      const r = await api("search", { q: query, scope: scope && scope !== "all" ? scope : null, limit: Math.max(5, Math.min(30, limit || 12)), speaker: speaker || null, from: year_from || null, to: year_to || null });
+      const r = await api("search", { q: query, scope: scope && scope !== "all" ? scope : null, limit: Math.max(5, Math.min(30, limit || 12)), speaker: speaker || null, from: year_from || null, to: year_to || null, edition: edition || null, exclude_edition: exclude_edition || null });
       const out = [];
       for (const h of r.hits) {
         const p = await this.fromHit(h, { before: h.kind === "verse" ? 1 : 0, after: h.kind === "verse" ? 1 : 0 });
@@ -290,8 +296,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       }
       return out;
     }
-    async matches({ words, phrase, scope = "all", limit = 400 }) {
-      const r = await GL().api("matches", { words, phrase, scope, limit });
+    async matches({ words, phrase, scope = "all", limit = 400, edition, exclude_edition }) {
+      const r = await GL().api("matches", { words, phrase, scope, limit, edition: edition || null, exclude_edition: exclude_edition || null });
       const out = (r.passages || []).map((v) => this.add({ doc_id: v.doc_id, pid: v.pid, kind: v.kind, citation: v.citation, label: v.collection === "scriptures" ? v.citation : sourceLabel({ ...v, citation: v.citation }), text: v.text, plain: v.text,
         verses: v.kind === "verse" && v.verse ? [{ n: v.verse, text: v.text }] : null, author: v.author, title: v.title, collection: v.collection, conf: v.label, volume: v.volume }));
       return { total: r.total, out, query: r.query, error: r.error, by_document: r.by_document || [] };
@@ -420,7 +426,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         trail.push(step);
         try {
           if (tu.name === "search") {
-            step.what = `${tu.input.query}${tu.input.scope && tu.input.scope !== "all" ? ` (${tu.input.scope})` : ""}${tu.input.speaker ? `, ${tu.input.speaker}` : ""}${tu.input.year_from || tu.input.year_to ? `, ${tu.input.year_from || ""}–${tu.input.year_to || ""}` : ""}`;
+            step.what = `${tu.input.query}${tu.input.scope && tu.input.scope !== "all" ? ` (${tu.input.scope})` : ""}${tu.input.speaker ? `, ${tu.input.speaker}` : ""}${tu.input.year_from || tu.input.year_to ? `, ${tu.input.year_from || ""}–${tu.input.year_to || ""}` : ""}${tu.input.edition ? `, in “${tu.input.edition}”` : ""}${tu.input.exclude_edition ? `, not “${tu.input.exclude_edition}”` : ""}`;
             statusEl.textContent = `Searching: ${step.what}…`;
             const out = await registry.search(tu.input);
             step.found = out.length;
@@ -429,9 +435,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
             const what = tu.input.phrase ? `“${tu.input.phrase}”` : tu.input.words;
             step.what = `every passage with ${what}${tu.input.scope && tu.input.scope !== "all" ? ` in ${tu.input.scope}` : ""}`;
             statusEl.textContent = `Finding ${step.what}…`;
-            const r = await registry.matches({ words: tu.input.words, phrase: tu.input.phrase, scope: tu.input.scope || tu.input.volume || "all", limit: tu.input.limit });
+            step.what += `${tu.input.edition ? `, in “${tu.input.edition}”` : ""}${tu.input.exclude_edition ? `, not “${tu.input.exclude_edition}”` : ""}`;
+            const r = await registry.matches({ words: tu.input.words, phrase: tu.input.phrase, scope: tu.input.scope || tu.input.volume || "all", limit: tu.input.limit, edition: tu.input.edition, exclude_edition: tu.input.exclude_edition });
             step.found = r.total;
-            const where = r.by_document.map((d) => `${d.title}${d.volume ? ` (${d.volume})` : ""} ${d.n}`).join("; ");
+            const where = r.by_document.map((d) => `${d.title}${d.book_title ? ` [${d.book_title}]` : d.volume ? ` (${d.volume})` : ""} ${d.n}`).join("; ");
             content = r.error ? `Error: ${r.error}` : `${r.total} passages match${where ? ` (${where})` : ""}${r.out.length < r.total ? `; showing the first ${r.out.length}. Narrow the scope or the wording for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.label}: ${p.text}`).join("\n");
           } else if (tu.name === "read") {
             step.what = `read ${tu.input.reference || `passage [${tu.input.passage}] in context`}`;

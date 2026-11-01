@@ -64,7 +64,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   tools that run on the device: ranked search, every passage in any part of
   the library containing a word family or an exact phrase (for complete
   lists: "all the references to the Holy Ghost in Preach My Gospel"), and
-  reading a chapter or talk in context. It
+  reading a chapter or talk in context. Every passage names its edition or
+  volume (the service missionary edition of the Missionary Standards, this
+  year's Come, Follow Me, the Topical Guide), and the tools can keep to one
+  or leave one out, so "exclude the service missionary edition" is honored. It
   keeps searching until it has what it needs, then writes. Every passage found
   appears as a card under the answer (book and verse, or speaker, talk and
   conference, with the full text) that you can open, present, or tick onto

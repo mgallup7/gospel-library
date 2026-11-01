@@ -265,6 +265,10 @@ function docLabel(r) {
   const coll = r.collection;
   if (coll === "general-conference" && r.year) return `${r.month === 4 ? "April" : "October"} ${r.year} General Conference`;
   if (r.volume) return r.volume;
+  // A manual's own title names the edition or volume (the service missionary
+  // edition of the Missionary Standards, this year's Come, Follow Me, the
+  // Topical Guide), which the collection name alone would hide.
+  if (r.book_title && coll !== "scriptures") return r.book_title;
   return LABELS[coll] || coll || "";
 }
 function citation(r, verse = null) {
@@ -286,7 +290,7 @@ function summary(r) {
   return {
     doc_id: r.id ?? r.document_id, uri: r.uri, title: r.title, author: r.author, year: r.year, month: r.month,
     session: r.session, collection: r.collection, book_slug: r.book_slug, book_name: r.book_name,
-    chapter: r.chapter, volume: r.volume, label: docLabel(r),
+    chapter: r.chapter, volume: r.volume, book_title: r.book_title || null, label: docLabel(r),
   };
 }
 function highlight(snip) { return esc(snip).replaceAll(HL_OPEN, "<mark>").replaceAll(HL_CLOSE, "</mark>"); }
@@ -316,11 +320,11 @@ function speakersBySurname() {
   return speakerIndex;
 }
 
-function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, group = "passages" }) {
+function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, edition = null, exclude_edition = null, group = "passages" }) {
   const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [] };
   const t0 = performance.now();
   if (isNatural(q) && group === "passages") {
-    const r = naturalSearch(q, { scope, limit, offset, speaker, from, to, book });
+    const r = naturalSearch(q, { scope, limit, offset, speaker, from, to, book, edition, exclude_edition });
     if (r) { r.ms = Math.round((performance.now() - t0) * 10) / 10; return r; }
   }
   const cq = compileQuery(q, { typeahead, scope });
@@ -328,6 +332,8 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
   if (from) cq.yearFrom = Number(from);
   if (to) cq.yearTo = Number(to);
   if (book) { const ref = S.parseReference(book); if (ref) cq.bookSlug = ref.book.slug; }
+  if (edition) cq.edition = edition;
+  if (exclude_edition) cq.excludeEdition = exclude_edition;
 
   if (!(cq.speaker || cq.yearFrom || cq.collections.length)) {
     const ref = S.parseReference(q);
@@ -345,12 +351,14 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
   if (cq.yearFrom) { where.push("d.year >= ?"); params.push(cq.yearFrom); }
   if (cq.yearTo) { where.push("d.year <= ?"); params.push(cq.yearTo); }
   if (cq.bookSlug) { where.push("d.book_slug = ?"); params.push(cq.bookSlug); }
-  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id WHERE ${where.join(" AND ")}`;
+  if (cq.edition) { where.push("b.title LIKE ?"); params.push(`%${cq.edition}%`); }
+  if (cq.excludeEdition) { where.push("(b.title IS NULL OR b.title NOT LIKE ?)"); params.push(`%${cq.excludeEdition}%`); }
+  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id WHERE ${where.join(" AND ")}`;
 
   try {
     if (group === "documents") {
       const rs = rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume,
-                              c.slug AS collection, COUNT(*) AS hits, MIN(p.rank) AS best ${base} GROUP BY d.id ORDER BY best LIMIT ? OFFSET ?`,
+                              c.slug AS collection, b.title AS book_title, COUNT(*) AS hits, MIN(p.rank) AS best ${base} GROUP BY d.id ORDER BY best LIMIT ? OFFSET ?`,
         [...params, limit, offset]);
       out.documents = rs.map((r) => ({ ...summary(r), hits: r.hits }));
       out.total = value(`SELECT COUNT(DISTINCT d.id) ${base}`, params);
@@ -360,7 +368,7 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
     const rs = rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
                             snippet(paragraphs, 0, ?, ?, ' … ', 48) AS snip, bm25(paragraphs) AS rank,
                             d.uri, d.title, d.author, d.author_role, d.year, d.month, d.session, d.date,
-                            d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection
+                            d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title
                      ${base} ORDER BY rank LIMIT ? OFFSET ?`,
       [HL_OPEN, HL_CLOSE, ...params, limit, offset]);
     out.total = value(`SELECT COUNT(*) ${base}`, params);
@@ -395,11 +403,11 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
 
 // A question, answered in tiers: the exact phrase first, then passages with
 // every idea, then passages with any of them, best matches first within each.
-function naturalSearch(q, { scope, limit, offset, speaker, from, to, book }) {
+function naturalSearch(q, { scope, limit, offset, speaker, from, to, book, edition, exclude_edition }) {
   const fixed = correctTypos(q);
   const n = naturalQuery(fixed.text, speakersBySurname());
   if (!n.terms.length) return null;
-  const cq = { collections: scopeCollections(n.scope || scope || "all"), speaker: speaker || n.speaker, yearFrom: from ? Number(from) : n.yearFrom, yearTo: to ? Number(to) : n.yearTo, bookSlug: n.bookSlug, terms: n.terms };
+  const cq = { collections: scopeCollections(n.scope || scope || "all"), speaker: speaker || n.speaker, yearFrom: from ? Number(from) : n.yearFrom, yearTo: to ? Number(to) : n.yearTo, bookSlug: n.bookSlug, terms: n.terms, edition: edition || null, excludeEdition: exclude_edition || null };
   if (book) { const ref = S.parseReference(book); if (ref) cq.bookSlug = ref.book.slug; }
   const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], smart: { terms: n.terms, speaker: cq.speaker, scope: n.scope, book: cq.bookSlug, years: n.yearFrom ? [n.yearFrom, n.yearTo] : null, corrected: fixed.changes } };
   const seen = new Set();
@@ -505,18 +513,21 @@ function whereParts(cq) {
   if (cq.yearFrom) { where.push("d.year >= ?"); params.push(cq.yearFrom); }
   if (cq.yearTo) { where.push("d.year <= ?"); params.push(cq.yearTo); }
   if (cq.bookSlug) { where.push("d.book_slug = ?"); params.push(cq.bookSlug); }
+  // An edition or volume by words in its title ("Service Missionaries", "Supplement", "Old Testament 2026").
+  if (cq.edition) { where.push("b.title LIKE ?"); params.push(`%${cq.edition}%`); }
+  if (cq.excludeEdition) { where.push("(b.title IS NULL OR b.title NOT LIKE ?)"); params.push(`%${cq.excludeEdition}%`); }
   return { where, params };
 }
 function whereParams(cq) { return whereParts(cq).params; }
 function baseSql(cq) {
   const { where } = whereParts(cq);
-  return ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id WHERE ${["paragraphs MATCH ?", ...where].join(" AND ")}`;
+  return ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id WHERE ${["paragraphs MATCH ?", ...where].join(" AND ")}`;
 }
 function passageRows(match, cq, limit, offset) {
   return rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
                       snippet(paragraphs, 0, ?, ?, ' \u2026 ', 48) AS snip, bm25(paragraphs) AS rank,
                       d.uri, d.title, d.author, d.author_role, d.year, d.month, d.session, d.date,
-                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection
+                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title
                ${baseSql(cq)} ORDER BY rank LIMIT ? OFFSET ?`, [HL_OPEN, HL_CLOSE, match, ...whereParams(cq), limit, offset]);
 }
 function titleMatches(terms, cq) {
@@ -524,8 +535,8 @@ function titleMatches(terms, cq) {
   if (!titleMatch) return [];
   const { where, params } = whereParts(cq);
   try {
-    return rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection
-                   FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN collections c ON c.id=d.collection_id
+    return rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title
+                   FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN collections c ON c.id=d.collection_id LEFT JOIN books b ON b.id = d.book_id
                   WHERE ${["documents_fts MATCH ?", ...where].join(" AND ")} ORDER BY bm25(documents_fts) LIMIT 6`, [`title : (${titleMatch})`, ...params]).map(summary);
   } catch (_) { return []; }
 }
@@ -561,7 +572,7 @@ async function document(id, uri) {
 const VOLUMES = { ot: "Old Testament", nt: "New Testament", bofm: "Book of Mormon", dc: "Doctrine and Covenants", pgp: "Pearl of Great Price" };
 // Every passage in a scope with a word family or an exact phrase, in reading
 // order: the tool for "all the references to…" in any part of the library.
-function allMatches({ words, phrase, scope = "all", limit = 400 }) {
+function allMatches({ words, phrase, scope = "all", limit = 400, edition = null, exclude_edition = null }) {
   let match;
   if (phrase && String(phrase).trim()) match = `"${String(phrase).trim().replace(/"/g, " ")}"`;
   else {
@@ -574,13 +585,15 @@ function allMatches({ words, phrase, scope = "all", limit = 400 }) {
   if (VOLUMES[scope]) { where.push("c.slug = 'scriptures'", "d.volume = ?"); params.push(VOLUMES[scope]); }
   else if (scope === "scriptures") where.push("c.slug = 'scriptures'");
   else { const colls = scopeCollections(scope); if (colls.length) { where.push(`c.slug IN (${colls.map(() => "?").join(",")})`); params.push(...colls); } }
-  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id WHERE ${where.join(" AND ")}`;
+  if (edition) { where.push("b.title LIKE ?"); params.push(`%${edition}%`); }
+  if (exclude_edition) { where.push("(b.title IS NULL OR b.title NOT LIKE ?)"); params.push(`%${exclude_edition}%`); }
+  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id WHERE ${where.join(" AND ")}`;
   let total = 0, rs = [], byDoc = [];
   try {
     total = value(`SELECT COUNT(*) ${base}`, params);
-    byDoc = rows(`SELECT d.title AS title, d.volume AS volume, c.slug AS collection, COUNT(*) AS n ${base} GROUP BY d.id ORDER BY d.sort_key`, params);
+    byDoc = rows(`SELECT d.title AS title, d.volume AS volume, b.title AS book_title, c.slug AS collection, COUNT(*) AS n ${base} GROUP BY d.id ORDER BY d.sort_key`, params);
     rs = rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text, d.uri, d.title, d.author, d.year, d.month, d.session,
-                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection ${base} ORDER BY d.sort_key, p.seq LIMIT ?`, [...params, Math.min(limit, 600)]);
+                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title ${base} ORDER BY d.sort_key, p.seq LIMIT ?`, [...params, Math.min(limit, 600)]);
   } catch (err) {
     return { total: 0, passages: [], query: match, error: err.message };
   }
@@ -608,7 +621,7 @@ function allVerses(words, volume, limit) {
 
 // The paragraphs around one hit, for giving Claude a little more than a verse.
 function context(docId, pid, before, after) {
-  const d = row("SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, d.par_first, d.par_last, c.slug AS collection FROM documents d JOIN collections c ON c.id=d.collection_id WHERE d.id=?", [docId]);
+  const d = row("SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, d.par_first, d.par_last, c.slug AS collection, b.title AS book_title FROM documents d JOIN collections c ON c.id=d.collection_id LEFT JOIN books b ON b.id = d.book_id WHERE d.id=?", [docId]);
   if (!d || d.par_first === null) return null;
   const anchor = row("SELECT seq FROM paragraphs WHERE rowid BETWEEN ? AND ? AND pid=?", [d.par_first, d.par_last, pid]);
   if (!anchor) return null;
