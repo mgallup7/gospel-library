@@ -102,9 +102,11 @@ mark { background: var(--mark); color: var(--mark-ink); border-radius: 2px; padd
   grid-area: scopes;
   display: flex; gap: 2px;
   background: var(--chrome-2); border-radius: 9px; padding: 2px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
+.scopes::-webkit-scrollbar { display: none; }
 .scopes button {
-  flex: 1; height: 30px; border-radius: 7px; font-size: 14px; color: var(--ink-2);
+  flex: 1 0 auto; height: 30px; padding: 0 12px; border-radius: 7px; font-size: 14px; color: var(--ink-2); white-space: nowrap;
 }
 .scopes button.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
 

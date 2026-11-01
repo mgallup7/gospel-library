@@ -18,11 +18,11 @@
   const MAX_PASSAGES = 22;
   const MAX_TURNS = 8;
 
-  const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures). It is searched with the tools below. Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly rather than quoting it from memory.`;
+  const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Missionary Standards for Disciples of Jesus Christ (the booklet, its supplement, and the service missionary edition), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures). It is searched with the tools below. Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly rather than quoting it from memory.`;
 
   const TOOLS_GUIDE = `Tools:
-- search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, handbook, cfm, or helps; speaker and years narrow conference talks.
-- find_all: every passage in a scope that contains a word family (prefix-matched) or an exact phrase, in reading order, with the total and a count per chapter or talk. Scope is scriptures, ot, nt, bofm, dc, pgp, pmg, conference, handbook, cfm, helps, or all.
+- search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, standards (Missionary Standards), handbook, cfm, or helps; speaker and years narrow conference talks.
+- find_all: every passage in a scope that contains a word family (prefix-matched) or an exact phrase, in reading order, with the total and a count per chapter or talk. Scope is scriptures, ot, nt, bofm, dc, pgp, pmg, standards, conference, handbook, cfm, helps, or all.
 - read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11", a talk title).
 
 How to search. Work the way a careful researcher works in a library, not the way a search box works:
@@ -53,7 +53,7 @@ Build the piece from passages the tools returned. Quotation marks are a promise:
     { name: "search", description: "Ranked full-text search of the whole library. Returns the best passages with their numbers for citing.",
       input_schema: { type: "object", properties: {
         query: { type: "string", description: "Words to search. Exact phrases in double quotes. OR between true synonyms." },
-        scope: { type: "string", enum: ["all", "scriptures", "conference", "pmg", "handbook", "cfm", "helps"], description: "Where to look. Default all." },
+        scope: { type: "string", enum: ["all", "scriptures", "conference", "pmg", "standards", "handbook", "cfm", "helps"], description: "Where to look. Default all." },
         speaker: { type: "string", description: "Surname of a conference speaker, to limit to their talks." },
         year_from: { type: "integer" }, year_to: { type: "integer" },
         limit: { type: "integer", description: "How many passages, 5 to 30. Default 12." },
@@ -62,7 +62,7 @@ Build the piece from passages the tools returned. Quotation marks are a promise:
       input_schema: { type: "object", properties: {
         words: { type: "string", description: "A word family, space-separated, each prefix-matched: 'redeem redeemed redemption redeemer'. Use this or phrase." },
         phrase: { type: "string", description: "An exact phrase, words in order: 'Holy Ghost', 'Spirit of God'." },
-        scope: { type: "string", enum: ["all", "scriptures", "ot", "nt", "bofm", "dc", "pgp", "pmg", "conference", "handbook", "cfm", "helps"], description: "Where to look. Default all." },
+        scope: { type: "string", enum: ["all", "scriptures", "ot", "nt", "bofm", "dc", "pgp", "pmg", "standards", "conference", "handbook", "cfm", "helps"], description: "Where to look. Default all." },
         limit: { type: "integer", description: "Up to 600. Default 400." },
       } } },
     { name: "read", description: "Read in context: either the paragraphs around a passage you have (by its number), or a chapter or talk by reference.",

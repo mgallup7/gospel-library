@@ -1,9 +1,9 @@
 # Gospel Library, personal edition
 
 A private copy of the scriptures, every General Conference talk since 1971,
-Come, Follow Me, the General Handbook, and selected manuals, downloaded onto
-your own iPhone and iPad and searched there in a few milliseconds, online or
-not.
+Preach My Gospel, Missionary Standards for Disciples of Jesus Christ, Come,
+Follow Me, the General Handbook, and selected manuals, downloaded onto your
+own iPhone and iPad and searched there in a few milliseconds, online or not.
 
 - Search as you type, in plain language: "what did Nelson say about covenants
   and identity" becomes a search for covenant and identity (and their
@@ -12,7 +12,10 @@ not.
   in PMG" searches each wording as the phrase it is; an exact phrase such as
   "plan of happiness" wins when it exists. A word the library has never seen
   ("spirt") is swapped for the nearest word it has. The results say how the
-  question was read, with an "Exact words" switch. With a Claude API key set, pressing return
+  question was read, with an "Exact words" switch. Open a shelf on the home
+  screen (Handbook, Missionary Standards, Preach My Gospel…) and the search
+  box searches only that shelf until you choose All again; the shelf names
+  under the search box show where you are. With a Claude API key set, pressing return
   also has Claude propose a few more searches and folds their results in.
   Power syntax still works: quotes, `-word`, `speaker:nelson`,
   `year:2015-2020`, `book:alma`, `in:conference`.

@@ -97,6 +97,18 @@ COLLECTIONS: list[dict] = [
         "roots": ["/manual/preach-my-gospel-2023"],
     },
     {
+        "slug": "missionary-standards",
+        "title": "Missionary Standards",
+        "kind": "books",
+        # The booklet, its supplement, and the service missionary edition
+        # (which numbers its sections differently).
+        "roots": [
+            "/manual/missionary-standards-for-disciples-of-jesus-christ-2023",
+            "/manual/missionary-standards-for-disciples-of-jesus-christ-supplement-2023",
+            "/manual/missionary-standards-service-missionaries-2025",
+        ],
+    },
+    {
         "slug": "manuals",
         "title": "Manuals",
         "kind": "books",

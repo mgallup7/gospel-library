@@ -101,9 +101,15 @@
   }
   window.addEventListener("popstate", () => { if (!state.ready) return; readUrl(); syncControls(); render(); });
 
+  // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
+  const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps" };
+  const SCOPE_NAME = { scriptures: "the scriptures", conference: "general conference", pmg: "Preach My Gospel", standards: "Missionary Standards", handbook: "the handbook", cfm: "Come, Follow Me", manuals: "the manuals", helps: "the study helps" };
   function syncControls() {
     input.value = state.q;
     for (const b of document.querySelectorAll(".scopes button")) b.classList.toggle("on", b.dataset.scope === state.scope);
+    const on = $(".scopes button.on");
+    if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {} }
+    input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : "Search, or type a reference like Alma 32:21";
     $("#fSpeaker").value = state.speaker;
     $("#fFrom").value = state.from;
     $("#fTo").value = state.to;
@@ -321,7 +327,7 @@
       if (data.smart.terms?.length) bits.push(data.smart.terms.join(", "));
       if (data.smart.speaker) bits.push(`by ${data.smart.speaker}`);
       if (data.smart.book) bits.push(`in ${data.smart.book.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace("Sections", "D&C")}`);
-      if (data.smart.scope) bits.push(`in ${{ conference: "conference", scriptures: "the scriptures", handbook: "the handbook", pmg: "Preach My Gospel", cfm: "Come, Follow Me", helps: "study helps" }[data.smart.scope] || data.smart.scope}`);
+      if (data.smart.scope) bits.push(`in ${SCOPE_NAME[data.smart.scope] || data.smart.scope}`);
       if (data.smart.years) bits.push(data.smart.years[0] === data.smart.years[1] ? String(data.smart.years[0]) : `${data.smart.years[0]} to ${data.smart.years[1]}`);
       if (data.smart.corrected?.length) bits.push(data.smart.corrected.map((c) => `${c.from} → ${c.to}`).join(", "));
       const line = el("div", { class: "smart-line" }, [
@@ -354,7 +360,7 @@
     listPane.scrollTop = 0;
     markActive();
   }
-  function scopeLabel() { return state.scope === "all" ? "" : ` in ${{ conference: "general conference", pmg: "Preach My Gospel" }[state.scope] || state.scope}`; }
+  function scopeLabel() { return state.scope === "all" ? "" : ` in ${SCOPE_NAME[state.scope] || state.scope}`; }
 
   function hitRow(h) {
     const row = el("div", { class: "hit-row" }, [
@@ -404,9 +410,13 @@
     const frag = document.createDocumentFragment();
     frag.append(el("div", { class: "status", id: "homeStatus", text: "" }));
     const tabs = el("div", { class: "shelf", id: "homeTabs" });
-    const sections = [["ask", "Ask"], ["deck", "Deck"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
+    const sections = [["ask", "Ask"], ["deck", "Deck"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["missionary-standards", "Missionary Standards"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
     for (const [key, label] of sections) {
-      tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => { state.browse = { tab: key }; renderHome(); } }));
+      tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => {
+        state.browse = { tab: key };
+        if (TAB_SCOPE[key]) { state.scope = TAB_SCOPE[key]; syncControls(); }
+        renderHome();
+      } }));
     }
     frag.append(tabs);
     const body = el("div", { id: "homeBody" });
@@ -889,7 +899,7 @@
   for (const b of document.querySelectorAll(".scopes button")) {
     b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
   }
-  $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.docId = null; state.pid = null; state.browse = null; syncControls(); renderHome(); showList(); push(); });
+  $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.docId = null; state.pid = null; state.browse = null; state.scope = "all"; syncControls(); renderHome(); showList(); push(); });
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
   $("#askBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.browse = { tab: "ask" }; syncControls(); renderHome(); showList(); push(); });
   $("#deckBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.browse = { tab: "deck" }; syncControls(); renderHome(); showList(); push(); });
