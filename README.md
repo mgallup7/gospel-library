@@ -52,7 +52,10 @@ not.
   unlabeled arrows, connections worth drawing that you have not drawn (with
   the exact phrases), a key phrase for any passage you have not highlighted,
   a caption for the chain slide, and speaker notes; accept each one or all.
-  Or present the deck straight from the iPad, in the same colors.
+  Or present the deck straight from the iPad, in the same colors. "Markdown"
+  gives the same deck as a note for Bear or any notes app (copy, or save a
+  .md file): the passages as quotes with the highlights in bold, each
+  connection, and the chain with its caption and notes.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
   conference training, a letter). Claude searches the library itself, with
   tools that run on the device: ranked search, every passage in any part of

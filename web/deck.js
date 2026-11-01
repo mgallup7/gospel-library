@@ -244,7 +244,7 @@
     let a = s, b = e;
     while (a > 0 && !boundary(words[a - 1].w) && s - a < maxWords / 2) a--;
     while (b < words.length - 1 && !boundary(words[b].w) && b - e < maxWords / 2) b++;
-    return { words: words.slice(a, b + 1), s: s - a, e: e - a, before: a > 0, after: b < words.length - 1 };
+    return { words: words.slice(a, b + 1), s: s - a, e: e - a, before: a > 0, after: b < words.length - 1, start: a };
   }
 
   // ---------------------------------------------------------------- board --
@@ -300,6 +300,7 @@
     const download = el("button", { type: "button", class: "primary", text: "Download PowerPoint", onclick: () => downloadFile() });
     const present = el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => presentDeck() });
     const think = el("button", { type: "button", class: "text-btn", text: "Think it through", title: "Claude studies the chain: labels, connections, a caption", onclick: () => thinkChain() });
+    const md = el("button", { type: "button", class: "text-btn", text: "Markdown", title: "The deck as Markdown, for Bear or any notes app", onclick: () => exportMarkdown() });
     const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); } });
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
@@ -313,7 +314,7 @@
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
     const thinkBox = el("div", { class: "board-think", hidden: true });
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, think, more]), moreRow, banner, thinkBox]);
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, think, md, more]), moreRow, banner, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -323,7 +324,7 @@
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
     board.append(head, canvas, saved, status, hint);
-    ui = { title, subtitle, themes, download, present, think, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { title, subtitle, themes, download, present, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
@@ -350,6 +351,7 @@
     const empty = !deck.items.length;
     ui.download.disabled = empty; ui.present.disabled = empty;
     ui.think.disabled = count() < 2;
+    ui.md.disabled = empty;
     if (linking) {
       const from = endOf(linking);
       ui.banner.hidden = false;
@@ -709,6 +711,93 @@
       document.body.append(scrim, sheet);
     });
     return asking;
+  }
+
+  // ------------------------------------------------------------ markdown --
+  // The deck as a Markdown note (Bear, Obsidian, Notes): the title as the
+  // heading, sections, each passage as a quote with the highlights in bold
+  // and the attribution under it, each connection as a quote pair, and the
+  // chain at the end with its caption and notes.
+  function mdWords(it, s, e, highlightFrom = null) {
+    // words s..e of the passage, highlighted runs wrapped in **…**
+    const words = wordsOf(it);
+    const parts = [];
+    let open = false;
+    for (let i = s; i <= e && i < words.length; i++) {
+      const hl = highlightFrom ? (i >= highlightFrom.s && i <= highlightFrom.e) : inHl(it, i);
+      if (words[i].n !== null && words[i].n !== undefined && !highlightFrom) { if (open) { parts[parts.length - 1] += "**"; open = false; } parts.push(`**${words[i].n}**`); }
+      if (words[i].first && words[i].para > 0 && i > s) { if (open) { parts[parts.length - 1] += "**"; open = false; } parts.push("\n>\n> "); }
+      let w = words[i].w;
+      if (hl && !open) { w = "**" + w; open = true; }
+      if (!hl && open) { parts[parts.length - 1] += "**"; open = false; }
+      parts.push(w);
+    }
+    if (open) parts[parts.length - 1] += "**";
+    return parts.join(" ").replace(/ *\n>\n> */g, "\n>\n> ").replace(/\*\* \*\*/g, " ");
+  }
+  function excerptMd(it, hl) {
+    const ex = excerpt(it, hl);
+    const s0 = ex.start || 0;
+    const body = hl ? mdWords(it, s0, s0 + ex.words.length - 1, { s: s0 + ex.s, e: s0 + ex.e }) : ex.words.map((x) => x.w).join(" ");
+    return (ex.before ? "… " : "") + body + (ex.after ? " …" : "");
+  }
+  function markdownOf() {
+    const out = [`# ${deck.title || "Scriptures"}`];
+    if (deck.subtitle) out.push(deck.subtitle);
+    out.push("");
+    for (const it of sequence()) {
+      if (it.type === "section") { out.push(`## ${it.title || "—"}`, ""); continue; }
+      if (it.type === "link") {
+        const a = endOf(it.from), b = endOf(it.to);
+        if (!a || !b) continue;
+        out.push(`### ${a.item.citation} → ${b.item.citation}${it.label ? `: ${it.label}` : ""}`);
+        out.push(`> ${excerptMd(a.item, a.hl)}`, `>`, `> → ${excerptMd(b.item, b.hl)}`, "");
+        continue;
+      }
+      out.push(`### ${it.citation}`);
+      out.push(`> ${mdWords(it, 0, wordsOf(it).length - 1)}`);
+      if (it.where || it.label) out.push(`>`, `> ${[it.where, it.label].filter(Boolean).join(", ")}`);
+      out.push("");
+    }
+    if (deck.links.length) {
+      out.push("## The chain", "");
+      for (const l of deck.links) {
+        const a = endOf(l.from), b = endOf(l.to);
+        if (!a || !b) continue;
+        out.push(`- ${a.item.citation}${a.hl ? ` “${phraseOf(a.item, a.hl)}”` : ""} → ${b.item.citation}${b.hl ? ` “${phraseOf(b.item, b.hl)}”` : ""}${l.label ? ` (${l.label})` : ""}`);
+      }
+      if (deck.chain && deck.chain.caption) out.push("", `*${deck.chain.caption}*`);
+      if (deck.chain && deck.chain.notes) out.push("", "### Notes", "", deck.chain.notes);
+      out.push("");
+    }
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  }
+  function exportMarkdown() {
+    const text = markdownOf();
+    const name = `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.md`;
+    const scrim = el("div", { class: "dscrim" });
+    const sheet = el("div", { class: "dsheet", role: "dialog", "aria-label": "Markdown" });
+    const close = () => { scrim.remove(); sheet.remove(); };
+    const msg = el("p", { class: "lede", text: `${text.split("\n").length} lines. Copy it and paste into a new Bear note, or save the file and share it to Bear.` });
+    sheet.append(
+      el("h2", { text: "The deck as Markdown" }),
+      msg,
+      el("button", { type: "button", class: "primary", text: "Copy", onclick: async () => {
+        try { await navigator.clipboard.writeText(text); msg.textContent = "Copied. Paste it into a new note."; }
+        catch (_) { const ta = el("textarea", { class: "ask-input", rows: 8 }); ta.value = text; sheet.insertBefore(ta, msg.nextSibling); ta.select(); msg.textContent = "Select all and copy from the box."; }
+      } }),
+      el("button", { type: "button", class: "text-btn", text: "Save .md file", onclick: async () => {
+        const file = new File([text], name, { type: "text/markdown" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); close(); return; } catch (err) { if (err.name === "AbortError") return; } }
+        const url = URL.createObjectURL(file);
+        const a = el("a", { href: url, download: name }); document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        msg.textContent = `Saved ${name}.`;
+      } }),
+      el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
+    );
+    scrim.addEventListener("click", close);
+    document.body.append(scrim, sheet);
   }
 
   // ------------------------------------------------------------ thinking --
@@ -1336,7 +1425,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     render, board: boardEl, showBoard, addFromDoc, addPassage, has, remove, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES,
     // for tests and scripts
-    get state() { return deck; }, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
+    get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
   };
   updateBadge();
 })();
