@@ -1,37 +1,99 @@
-/* Deck: collect passages, arrange them, and turn them into a PowerPoint file
-   (or present them straight from the device). Everything runs here; the
-   .pptx is written in the browser by PptxGenJS. */
+/* Deck: the passages picked for a presentation, laid out on a board where
+   phrases are highlighted and linked with arrows, then written out as a
+   PowerPoint file (or presented straight from the device). Everything runs
+   here; the .pptx is written in the browser by PptxGenJS. */
 (() => {
   "use strict";
 
   const { el, esc, store } = window.GL || {};
   const GL = () => window.GL;
   const $ = (sel, root = document) => root.querySelector(sel);
+  const SVG = "http://www.w3.org/2000/svg";
+  const raf = (fn) => (window.requestAnimationFrame ? window.requestAnimationFrame(fn) : setTimeout(fn, 0));
 
   // ------------------------------------------------------------- themes --
   // Hex colors without "#", as PptxGenJS wants them. Fonts are ones that ship
-  // with PowerPoint and Keynote on Mac, Windows and iPad.
+  // with PowerPoint and Keynote on Mac, Windows and iPad. "panel" is the tone
+  // for cards on connection and map slides; "gradient" paints the background
+  // of every slide when the device can draw it (a slide master holds it once).
   const THEMES = {
-    paper: { name: "Paper", bg: "FBFAF7", text: "1D1F23", accent: "1F4E79", muted: "7A7F88", rule: "D9D6CF", bar: null },
-    night: { name: "Night", bg: "0E1013", text: "F2EFE8", accent: "E3C27A", muted: "9AA0A8", rule: "2A2E34", bar: null },
-    linen: { name: "Linen", bg: "F1EDE4", text: "2A2622", accent: "7A4E2D", muted: "8C847B", rule: "DCD5C8", bar: "7A4E2D" },
-    slate: { name: "Slate", bg: "1F2A37", text: "FFFFFF", accent: "9ECAE1", muted: "AEB8C4", rule: "33404F", bar: null },
+    royal: { name: "Royal", bg: "0F2D52", text: "FFFFFF", accent: "F2C75C", muted: "B9C8DC", rule: "2E527F", panel: "1B4273", gradient: ["173E6E", "0F2D52", "0A2140"], bar: null },
+    paper: { name: "Paper", bg: "FBFAF7", text: "1D1F23", accent: "1F4E79", muted: "7A7F88", rule: "D9D6CF", panel: "F0EEE8", gradient: null, bar: null },
+    night: { name: "Night", bg: "0E1013", text: "F2EFE8", accent: "E3C27A", muted: "9AA0A8", rule: "2A2E34", panel: "1A1E24", gradient: null, bar: null },
+    linen: { name: "Linen", bg: "F1EDE4", text: "2A2622", accent: "7A4E2D", muted: "8C847B", rule: "DCD5C8", panel: "E7E1D5", gradient: null, bar: "7A4E2D" },
+    slate: { name: "Slate", bg: "1F2A37", text: "FFFFFF", accent: "9ECAE1", muted: "AEB8C4", rule: "33404F", panel: "2B3849", gradient: null, bar: null },
   };
+  const DEFAULT_THEME = "royal";
   const SERIF = "Georgia";
   const SANS = "Calibri";
   const MAX_CHARS = 430;
+  const QUICK_LABELS = ["fulfilled in", "same word", "echoes", "defines", "explains", "contrast", "promise and keeping"];
 
   // ---------------------------------------------------------------- model --
+  // deck.items: passages and sections in slide order. deck.links: arrows
+  // between a highlighted phrase (or whole passage) and another; a connection
+  // slide follows the later of its two passages.
   const uid = () => Math.random().toString(36).slice(2, 10);
-  const blank = () => ({ id: uid(), title: "", subtitle: "", theme: "paper", items: [], updated: Date.now() });
-  let deck = store.get("deck") || blank();
-  if (!deck.id) deck.id = uid();
-  const save = () => { deck.updated = Date.now(); store.set("deck", deck); updateBadge(); };
+  const blank = () => ({ id: uid(), title: "", subtitle: "", theme: DEFAULT_THEME, themeSet: true, items: [], links: [], updated: Date.now() });
+  let deck = migrate(store.get("deck")) || blank();
+
+  function migrate(d) {
+    if (!d || typeof d !== "object") return null;
+    if (!d.id) d.id = uid();
+    d.items = Array.isArray(d.items) ? d.items : [];
+    d.links = Array.isArray(d.links) ? d.links : [];
+    // Earlier decks kept connections among the items and highlights without ids.
+    const inline = d.items.filter((i) => i.type === "link");
+    d.items = d.items.filter((i) => i.type !== "link");
+    for (const it of d.items) if (it.type === "passage") it.hl = (it.hl || []).map((h) => (h.id ? h : { ...h, id: uid() }));
+    const links = [...inline, ...d.links];
+    for (const l of links) {
+      l.type = "link";
+      if (!l.id) l.id = uid();
+      for (const end of [l.from, l.to]) {
+        if (!end || !end.hl || typeof end.hl !== "object") continue;
+        const it = d.items.find((i) => i.id === end.id);
+        const found = it && (it.hl || []).find((h) => h.s === end.hl.s && h.e === end.hl.e);
+        if (found) end.hl = found.id;
+        else if (it) { const h = { id: uid(), s: end.hl.s, e: end.hl.e }; it.hl.push(h); it.hl.sort((p, q) => p.s - q.s); end.hl = h.id; }
+        else end.hl = null;
+      }
+    }
+    d.links = links.filter((l) => l.from && l.to && d.items.some((i) => i.id === l.from.id) && d.items.some((i) => i.id === l.to.id));
+    if (!d.themeSet) { d.theme = DEFAULT_THEME; d.themeSet = true; }
+    if (!THEMES[d.theme]) d.theme = DEFAULT_THEME;
+    return d;
+  }
+
+  function save({ redraw = true } = {}) {
+    deck.updated = Date.now();
+    store.set("deck", deck);
+    updateBadge();
+    if (redraw) draw();
+    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+  }
 
   function count() { return deck.items.filter((i) => i.type === "passage").length; }
   function updateBadge() {
     const b = $("#deckBtn");
     if (b) b.textContent = count() ? `Deck ${count()}` : "Deck";
+  }
+  const byId = (id) => deck.items.find((i) => i.id === id) || null;
+  function find(doc_id, pid) { return deck.items.find((i) => i.type === "passage" && i.doc_id === doc_id && i.pid === pid) || null; }
+  function has(doc_id, pid) { return !!find(doc_id, pid); }
+  function remove(doc_id, pid) { const it = find(doc_id, pid); if (it) removeItem(it); return !!it; }
+  function removeItem(it) {
+    deck.items = deck.items.filter((i) => i !== it);
+    deck.links = deck.links.filter((l) => l.from.id !== it.id && l.to.id !== it.id);
+    if (pending && pending.id === it.id) pending = null;
+    if (active && active.id === it.id) active = null;
+    save();
+  }
+  /** Put a passage on the deck or take it off. Returns true when it was added. */
+  function toggle(p) {
+    if (has(p.doc_id, p.pid)) { remove(p.doc_id, p.pid); return false; }
+    addPassage(p);
+    return true;
   }
 
   /** Add passages from a document. units: [{pid, kind, verse, text}] in reading order. */
@@ -46,25 +108,30 @@
         runs.push(run);
       }
     }
+    let added = 0;
     for (const r of runs) {
       const verses = r.kind === "verse" ? r.units.map((u) => ({ n: u.verse, text: u.text })) : null;
       const text = verses ? verses.map((v) => v.text).join(" ") : r.units.map((u) => u.text).join("\n\n");
+      if (has(doc.id, r.units[0].pid)) continue;
       deck.items.push({
         id: uid(), type: "passage", kind: r.kind === "verse" ? "verse" : "para",
-        text, verses, doc_id: doc.id, pid: r.units[0].pid,
+        text, verses, doc_id: doc.id, pid: r.units[0].pid, hl: [],
         ...citationFor(doc, verses),
       });
+      added++;
     }
     save();
-    return runs.length;
+    return added;
   }
 
-  /** Add one search hit or Ask passage: {doc_id, pid, kind, text, citation, author, title, label, collection, verse}. */
-  function addPassage(p) {
+  /** Add one search hit or Ask passage: {doc_id, pid, kind, text, verses, citation, author, title, label, collection, verse}. */
+  function addPassage(p, { show = false } = {}) {
+    const existing = find(p.doc_id, p.pid);
+    if (existing) { if (show) showBoard(); return existing; }
     const verses = p.verses && p.verses.length ? p.verses.map((v) => ({ n: v.n, text: v.text })) : (p.kind === "verse" && p.verse ? [{ n: p.verse, text: p.text }] : null);
     const item = {
       id: uid(), type: "passage", kind: p.kind === "verse" ? "verse" : "para",
-      text: verses ? verses.map((v) => v.text).join(" ") : p.text, verses, doc_id: p.doc_id, pid: p.pid,
+      text: verses ? verses.map((v) => v.text).join(" ") : p.text, verses, doc_id: p.doc_id, pid: p.pid, hl: [],
       citation: p.citation || p.label || "", where: p.where || "",
     };
     if (p.collection === "general-conference" && p.author) {
@@ -84,6 +151,8 @@
     }
     deck.items.push(item);
     save();
+    if (show) showBoard();
+    return item;
   }
 
   function citationFor(doc, verses) {
@@ -98,94 +167,10 @@
     return { citation: doc.title, where: doc.label !== doc.title ? doc.label : "" };
   }
 
-  // ------------------------------------------------------------------ ui --
-  let view = null;
-  function render(container) {
-    view = container;
-    container.replaceChildren();
-    const box = el("div", { class: "deck" });
-    const title = el("input", { class: "deck-title", value: deck.title, placeholder: "Deck title (first slide)", "aria-label": "Deck title" });
-    const subtitle = el("input", { class: "deck-subtitle", value: deck.subtitle, placeholder: "Subtitle, date, or audience", "aria-label": "Subtitle" });
-    title.addEventListener("input", () => { deck.title = title.value; save(); });
-    subtitle.addEventListener("input", () => { deck.subtitle = subtitle.value; save(); });
-
-    const themes = el("div", { class: "themes" });
-    for (const [key, t] of Object.entries(THEMES)) {
-      const sw = el("button", { type: "button", class: "theme" + (deck.theme === key ? " on" : ""), title: t.name, "aria-label": `${t.name} theme`, onclick: () => { deck.theme = key; save(); render(container); } }, [
-        el("span", { class: "swatch", style: `background:#${t.bg};color:#${t.text};border-color:#${t.rule}` }, [el("b", { text: "Aa", style: `color:#${t.text}` }), el("i", { style: `background:#${t.accent}` })]),
-        el("span", { class: "theme-name", text: t.name }),
-      ]);
-      themes.append(sw);
-    }
-
-    const list = el("div", { class: "deck-list" });
-    renderList(list, container);
-
-    const actions = el("div", { class: "deck-actions" }, [
-      el("button", { type: "button", class: "primary", text: "Download PowerPoint", disabled: !deck.items.length, onclick: () => download(container) }),
-      el("button", { type: "button", class: "text-btn", text: "Present", disabled: !deck.items.length, onclick: () => present() }),
-      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); render(container); } }),
-    ]);
-    const more = el("div", { class: "deck-actions secondary" }, [
-      el("button", { type: "button", class: "text-btn", text: "Save to my decks", disabled: !deck.items.length, onclick: () => { saveNamed(); render(container); } }),
-      el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => renderSaved(container) }),
-      el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", disabled: !deck.items.length && !deck.title, onclick: () => { if (deck.items.length && !confirm("Start a new, empty deck? The current one is kept only if you saved it.")) return; deck = blank(); save(); render(container); } }),
-    ]);
-    const hint = el("p", { class: "deck-hint", text: deck.items.length ? "" : "Tap verses or paragraphs while reading to select them, then “Add to deck”. The + on a search result adds it directly. Ask can add every passage it cites." });
-    const status = el("div", { class: "deck-status", id: "deckStatus" });
-    box.append(title, subtitle, themes, list, actions, more, status, hint);
-    container.append(box);
-  }
-
-  function renderList(list, container) {
-    list.replaceChildren();
-    deck.items.forEach((it, idx) => {
-      const row = el("div", { class: "deck-item" + (it.type === "section" ? " section" : "") });
-      if (it.type === "section") {
-        const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
-        inp.addEventListener("input", () => { it.title = inp.value; save(); });
-        row.append(el("div", { class: "body" }, [el("div", { class: "kind", text: "Section" }), inp]));
-      } else if (it.type === "link") {
-        const a = byId(it.from.id), b = byId(it.to.id);
-        if (!a || !b) { deck.items.splice(idx, 1); save(); return; }
-        const label = el("input", { value: it.label || "", placeholder: "What the arrow says (fulfilled in, same word, echoes…)", "aria-label": "Connection label" });
-        label.addEventListener("input", () => { it.label = label.value; save(); });
-        row.classList.add("link");
-        row.append(el("div", { class: "body" }, [
-          el("div", { class: "kind", text: "Connection" }),
-          el("div", { class: "link-line", html: `<b>${esc(phraseOf(a, it.from.hl) || a.citation)}</b> <span class="arrow">→</span> <b>${esc(phraseOf(b, it.to.hl) || b.citation)}</b>` }),
-          el("div", { class: "where", text: `${a.citation} → ${b.citation}` }),
-          label,
-        ]));
-      } else {
-        const cite = el("input", { value: it.citation, "aria-label": "Citation", class: "cite-edit" });
-        cite.addEventListener("input", () => { it.citation = cite.value; save(); });
-        const preview = el("button", { type: "button", class: "preview", html: previewHtml(it), onclick: () => it.doc_id && GL().openDoc(it.doc_id, it.pid) });
-        const marks = el("div", { class: "marks" }, [
-          el("button", { type: "button", class: "chip small", text: it.hl?.length ? `Highlight (${it.hl.length})` : "Highlight", onclick: () => renderMark(container, it) }),
-          el("button", { type: "button", class: "chip small", text: "Connect", onclick: () => renderConnect(container, it, null) }),
-        ]);
-        row.append(el("div", { class: "body" }, [cite, it.where || it.label ? el("div", { class: "where", text: [it.where, it.label].filter(Boolean).join(", ") }) : null, preview, marks]));
-      }
-      row.append(el("div", { class: "tools" }, [
-        el("button", { type: "button", "aria-label": "Move up", text: "↑", disabled: idx === 0, onclick: () => { move(idx, -1); renderList(list, container); } }),
-        el("button", { type: "button", "aria-label": "Move down", text: "↓", disabled: idx === deck.items.length - 1, onclick: () => { move(idx, 1); renderList(list, container); } }),
-        el("button", { type: "button", "aria-label": "Remove", text: "×", onclick: () => { deck.items.splice(idx, 1); save(); render(container); } }),
-      ]));
-      list.append(row);
-    });
-  }
-  function move(i, d) {
-    const j = i + d;
-    if (j < 0 || j >= deck.items.length) return;
-    [deck.items[i], deck.items[j]] = [deck.items[j], deck.items[i]];
-    save();
-  }
-
   // ------------------------------------------------------- highlights --
   // A highlight is a range of word indexes over the passage's words, so it
-  // survives re-rendering and never depends on text selection.
-  function byId(id) { return deck.items.find((i) => i.id === id) || null; }
+  // survives re-rendering and never depends on text selection. Links point
+  // at highlights by id (or at a whole passage with hl: null).
   function wordsOf(it) {
     if (it.verses && it.verses.length) {
       const out = [];
@@ -197,20 +182,57 @@
     return out;
   }
   function inHl(it, i) { return (it.hl || []).some((h) => i >= h.s && i <= h.e); }
+  function hlAt(it, i) { return (it.hl || []).find((h) => i >= h.s && i <= h.e) || null; }
+  function hlById(it, id) { return (it.hl || []).find((h) => h.id === id) || null; }
   function phraseOf(it, hl) {
     if (!hl) return "";
     return wordsOf(it).slice(hl.s, hl.e + 1).map((x) => x.w).join(" ");
   }
-  function previewHtml(it) {
-    const words = wordsOf(it);
-    let html = "", len = 0;
-    for (let i = 0; i < words.length; i++) {
-      const piece = esc(words[i].w) + " ";
-      html += inHl(it, i) ? `<mark>${piece}</mark>` : piece;
-      len += words[i].w.length + 1;
-      if (len > 170 && !inHl(it, i)) { html += "…"; break; }
+  /** Highlight words a..b; highlights it overlaps are replaced and their links follow. */
+  function setHighlight(it, a, b) {
+    const s = Math.min(a, b), e = Math.max(a, b);
+    const replaced = (it.hl || []).filter((h) => !(h.e < s || h.s > e));
+    const h = { id: uid(), s, e };
+    it.hl = (it.hl || []).filter((x) => !replaced.includes(x));
+    it.hl.push(h); it.hl.sort((p, q) => p.s - q.s);
+    const gone = new Set(replaced.map((x) => x.id));
+    for (const l of deck.links) for (const end of [l.from, l.to]) if (end.id === it.id && gone.has(end.hl)) end.hl = h.id;
+    return h;
+  }
+  function removeHighlight(it, h) {
+    it.hl = (it.hl || []).filter((x) => x !== h);
+    deck.links = deck.links.filter((l) => !((l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)));
+  }
+  /** {id, hl} → {item, hl: highlight object or null}, or null when the passage is gone. */
+  function endOf(end) {
+    const item = byId(end.id);
+    if (!item) return null;
+    return { item, hl: end.hl ? hlById(item, end.hl) : null };
+  }
+  function addLink(from, to, label = "") {
+    if (from.id === to.id) return null;
+    const dup = deck.links.find((l) => l.from.id === from.id && l.from.hl === from.hl && l.to.id === to.id && l.to.hl === to.hl);
+    if (dup) return dup;
+    const l = { id: uid(), type: "link", from: { id: from.id, hl: from.hl || null }, to: { id: to.id, hl: to.hl || null }, label };
+    deck.links.push(l);
+    return l;
+  }
+  /** Slide order: items as arranged, each connection right after the later of its two passages. */
+  function sequence() {
+    const order = new Map(deck.items.map((it, i) => [it.id, i]));
+    const out = [];
+    const placed = new Set();
+    for (const it of deck.items) {
+      out.push(it);
+      if (it.type !== "passage") continue;
+      for (const l of deck.links) {
+        if (placed.has(l.id)) continue;
+        const a = order.get(l.from.id), b = order.get(l.to.id);
+        if (a === undefined || b === undefined) continue;
+        if (Math.max(a, b) === order.get(it.id)) { out.push(l); placed.add(l.id); }
+      }
     }
-    return html;
+    return out;
   }
   // The sentence(s) around a highlighted phrase, for a connection slide.
   function excerpt(it, hl, maxWords = 48) {
@@ -224,125 +246,421 @@
     return { words: words.slice(a, b + 1), s: s - a, e: e - a, before: a > 0, after: b < words.length - 1 };
   }
 
-  // Mark a phrase: tap the first word, then the last.
-  function renderMark(container, it) {
-    let first = null;
-    const box = el("div", { class: "deck mark" }, [
-      el("div", { class: "crumbs" }, [el("button", { text: "Back to deck", onclick: () => render(container) }), el("span", { text: it.citation })]),
-      el("p", { class: "deck-hint", text: "Tap the first word of a phrase, then the last word. Tap a highlighted phrase to remove it." }),
-    ]);
-    const text = el("div", { class: "mark-text" });
-    const draw = () => {
-      text.replaceChildren();
-      wordsOf(it).forEach((x, i) => {
-        if (x.first && x.para > 0) text.append(el("br"), el("br"));
-        if (x.n !== null && x.n !== undefined) text.append(el("span", { class: "vn", text: String(x.n) }));
-        const span = el("button", { type: "button", class: "w" + (inHl(it, i) ? " hl" : "") + (first === i ? " first" : ""), text: x.w, onclick: () => {
-          const existing = (it.hl || []).findIndex((h) => i >= h.s && i <= h.e);
-          if (existing >= 0 && first === null) { it.hl.splice(existing, 1); save(); draw(); return; }
-          if (first === null) { first = i; draw(); return; }
-          const [a, b] = first <= i ? [first, i] : [i, first];
-          it.hl = (it.hl || []).filter((h) => h.e < a || h.s > b);
-          it.hl.push({ s: a, e: b }); it.hl.sort((p, q) => p.s - q.s);
-          first = null; save(); draw();
-        } });
-        text.append(span, " ");
-      });
-    };
-    draw();
-    const acts = el("div", { class: "deck-actions" }, [
-      el("button", { type: "button", class: "primary", text: "Done", onclick: () => {
-        if (pendingConnect && pendingConnect.to === it) { const pc = pendingConnect; pendingConnect = null; renderConnect(container, pc.from, pc.hl); return; }
-        render(container);
-      } }),
-      el("button", { type: "button", class: "text-btn", text: "Connect a highlighted phrase…", onclick: () => renderConnect(container, it, (it.hl || [])[it.hl ? it.hl.length - 1 : 0] || null) }),
-    ]);
-    box.append(text, acts);
-    container.replaceChildren(box);
+  // ---------------------------------------------------------------- board --
+  // One board element for the whole app. On a wide screen it borrows the
+  // right-hand pane while the left pane keeps finding passages; on a phone
+  // it is the Deck tab.
+  let board = null, ui = null;
+  let pending = null;   // {id, i}: first word of a phrase being marked
+  let active = null;    // {id, hl}: a highlight whose tools are showing
+  let linking = null;   // {id, hl}: tap-to-link in progress
+  let drag = null;      // a port being dragged
+  let editing = null;   // the link whose label editor is open
+  let hintShown = false;
+
+  function boardEl() { if (!board) buildBoard(); return board; }
+  function showBoard() {
+    if (GL().wide) { GL().panel.show(boardEl(), "Deck"); draw(); }
+    else $("#deckBtn")?.click();
   }
 
-  // Connect: pick the phrase, the target passage, its phrase, and the arrow's label.
-  function renderConnect(container, from, hl) {
-    const state = { hl: hl || (from.hl || [])[0] || null, to: null, toHl: null, label: "" };
-    const box = el("div", { class: "deck connect" }, [
-      el("div", { class: "crumbs" }, [el("button", { text: "Back to deck", onclick: () => render(container) }), el("span", { text: "Connect" })]),
+  /** The Deck tab. Wide screens: a summary here, the board on the right. */
+  function render(container) {
+    container.replaceChildren();
+    if (GL().wide) {
+      container.append(el("div", { class: "deck-summary" }, [
+        el("h2", { text: deck.title || "Deck" }),
+        el("p", { text: summaryText() }),
+        el("div", { class: "deck-actions" }, [
+          el("button", { type: "button", class: "primary", text: "Show the deck", onclick: () => showBoard() }),
+          el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => renderSaved(container) }),
+        ]),
+        el("p", { class: "deck-hint", text: "Find passages on this side: search, browse, or Ask. Tick a card or tap + to put one on the deck. The deck on the right is where you highlight phrases, draw the arrows between them, and download the PowerPoint." }),
+      ]));
+      showBoard();
+    } else {
+      container.append(boardEl());
+      draw();
+    }
+  }
+  function summaryText() {
+    const n = count(), l = deck.links.length;
+    if (!n) return "Nothing on the deck yet.";
+    return `${n} ${n === 1 ? "passage" : "passages"}${l ? `, ${l} ${l === 1 ? "connection" : "connections"}` : ""}.`;
+  }
+
+  function buildBoard() {
+    board = el("div", { class: "board" });
+    const title = el("input", { class: "deck-title", placeholder: "Deck title (first slide)", "aria-label": "Deck title" });
+    const subtitle = el("input", { class: "deck-subtitle", placeholder: "Subtitle, date, or audience", "aria-label": "Subtitle" });
+    title.addEventListener("input", () => { deck.title = title.value; save({ redraw: false }); });
+    subtitle.addEventListener("input", () => { deck.subtitle = subtitle.value; save({ redraw: false }); });
+    const themes = el("div", { class: "themes" });
+    const download = el("button", { type: "button", class: "primary", text: "Download PowerPoint", onclick: () => downloadFile() });
+    const present = el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => presentDeck() });
+    const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); } });
+    const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
+      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
+      el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
+      el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
+      el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => {
+        if (deck.items.length && !confirm("Start a new, empty deck? The current one is kept only if you saved it.")) return;
+        deck = blank(); pending = active = linking = null; save();
+      } }),
     ]);
-    const body = el("div");
-    box.append(body);
-    container.replaceChildren(box);
+    const banner = el("div", { class: "board-banner", hidden: true });
+    const hint = el("p", { class: "deck-hint" });
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, more]), moreRow, banner, hint]);
+    const cards = el("div", { class: "board-cards" });
+    const svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("class", "board-lines");
+    svg.setAttribute("aria-hidden", "true");
+    const labels = el("div", { class: "board-labels" });
+    const canvas = el("div", { class: "board-canvas" }, [cards, svg, labels]);
+    const saved = el("div", { class: "board-saved", hidden: true });
+    const status = el("div", { class: "deck-status" });
+    board.append(head, canvas, saved, status);
+    ui = { title, subtitle, themes, download, present, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
-    const step = () => {
-      body.replaceChildren();
-      // 1. phrase in the source
-      body.append(el("h2", { text: `From ${from.citation}` }));
-      const phrases = el("div", { class: "shelf" });
-      for (const h of from.hl || []) phrases.append(el("button", { type: "button", class: "chip" + (state.hl === h ? " on" : ""), text: phraseOf(from, h), onclick: () => { state.hl = h; step(); } }));
-      phrases.append(el("button", { type: "button", class: "chip" + (state.hl === null ? " on" : ""), text: "Whole passage", onclick: () => { state.hl = null; step(); } }));
-      phrases.append(el("button", { type: "button", class: "chip", text: "Mark a new phrase…", onclick: () => renderMark(container, from) }));
-      body.append(phrases);
+    cards.addEventListener("click", onCardClick);
+    cards.addEventListener("pointerdown", onPortDown);
+    window.addEventListener("resize", () => { if (board.isConnected) drawLines(); });
+    if (window.ResizeObserver) new ResizeObserver(() => drawLines()).observe(cards);
+  }
 
-      // 2. target
-      body.append(el("h2", { text: "Points to" }));
-      const targets = el("div", { class: "target-list" });
-      const candidates = deck.items.filter((i) => i.type === "passage" && i.id !== from.id);
-      if (!candidates.length) targets.append(el("div", { class: "deck-hint", text: "No other passages in the deck yet. Search below to add one." }));
-      for (const c of candidates) {
-        targets.append(el("button", { type: "button", class: "toc-row" + (state.to === c ? " on" : ""), onclick: () => { state.to = c; state.toHl = (c.hl || [])[0] || null; step(); } }, [
-          el("div", { class: "t", text: c.citation }), el("div", { class: "s", text: c.text.slice(0, 60) + "…" })]));
+  function draw() {
+    if (!ui) return;
+    syncHead();
+    drawCards();
+    raf(drawLines);
+  }
+  function syncHead() {
+    if (document.activeElement !== ui.title) ui.title.value = deck.title || "";
+    if (document.activeElement !== ui.subtitle) ui.subtitle.value = deck.subtitle || "";
+    ui.themes.replaceChildren();
+    for (const [key, t] of Object.entries(THEMES)) {
+      ui.themes.append(el("button", { type: "button", class: "theme" + (deck.theme === key ? " on" : ""), title: t.name, "aria-label": `${t.name} theme`, "aria-pressed": String(deck.theme === key), onclick: () => { deck.theme = key; deck.themeSet = true; save({ redraw: false }); syncHead(); } }, [
+        el("span", { class: "swatch", style: `background:#${t.bg};color:#${t.text};border-color:#${t.rule}` }, [el("b", { text: "Aa", style: `color:#${t.text}` }), el("i", { style: `background:#${t.accent}` })]),
+        el("span", { class: "theme-name", text: t.name }),
+      ]));
+    }
+    const empty = !deck.items.length;
+    ui.download.disabled = empty; ui.present.disabled = empty;
+    if (linking) {
+      const from = endOf(linking);
+      ui.banner.hidden = false;
+      ui.banner.replaceChildren(
+        el("span", { html: `Tap a phrase or a passage to link <b>${esc(from && from.hl ? `“${phraseOf(from.item, from.hl)}”` : from ? from.item.citation : "")}</b> to it.` }),
+        el("button", { type: "button", class: "text-btn small", text: "Cancel", onclick: () => { linking = null; draw(); } }),
+      );
+    } else ui.banner.hidden = true;
+    ui.hint.textContent = empty
+      ? "Nothing here yet. Tick a passage under an Ask answer, tap + on a search result, or select verses while reading and choose Add to deck."
+      : count() === 1 ? "Tap the first and last word of a phrase to highlight it. Add a second passage and drag the dot at the end of a highlight onto a phrase there to draw the arrow."
+      : "Tap the first and last word of a phrase to highlight it. Drag the dot at the end of a highlight onto a phrase in another passage to link them; tap the number on the arrow, or the chip under the card, to name the connection.";
+  }
+
+  function drawCards() {
+    const cards = ui.cards;
+    cards.replaceChildren();
+    deck.items.forEach((it, idx) => {
+      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : ""), "data-id": it.id, "data-type": it.type });
+      const tools = el("div", { class: "bc-tools" }, [
+        el("button", { type: "button", "aria-label": "Move up", title: "Move up", text: "↑", disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
+        el("button", { type: "button", "aria-label": "Move down", title: "Move down", text: "↓", disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
+        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", text: "×", onclick: (e) => { e.stopPropagation(); removeItem(it); } }),
+      ]);
+      if (it.type === "section") {
+        const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
+        inp.addEventListener("input", () => { it.title = inp.value; save({ redraw: false }); });
+        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
+        cards.append(card);
+        return;
       }
-      body.append(targets);
-      const search = el("input", { class: "deck-subtitle", placeholder: "Or search for a passage to add (Alma 32:21, or words)", "aria-label": "Search" });
-      const results = el("div");
-      let timer = null;
-      search.addEventListener("input", () => {
-        clearTimeout(timer);
-        timer = setTimeout(async () => {
-          results.replaceChildren();
-          const q = search.value.trim();
-          if (q.length < 2) return;
-          const r = await GL().api("search", { q, typeahead: true, limit: 8 });
-          const add = (p) => { addPassage(p); state.to = deck.items[deck.items.length - 1]; state.toHl = null; step(); };
-          if (r.jump?.doc_id && r.jump.pid) {
-            const ctx = await GL().api("context", { doc_id: r.jump.doc_id, pid: r.jump.pid, before: 0, after: (r.jump.verse_end || 0) ? Math.max(0, r.jump.verse_end - parseInt(r.jump.pid.slice(1), 10)) : 0 });
-            if (ctx) results.append(el("button", { type: "button", class: "toc-row", onclick: () => add({ doc_id: r.jump.doc_id, pid: r.jump.pid, kind: "verse", verse: ctx.paragraphs[0]?.verse, text: ctx.paragraphs.map((x) => x.text).join(" "), citation: ctx.citation, collection: "scriptures", verses: ctx.paragraphs.map((x) => ({ n: x.verse, text: x.text })) }) }, [el("div", { class: "t", text: ctx.citation }), el("div", { class: "s", text: "add" })]));
-          }
-          for (const h of r.hits.slice(0, 6)) {
-            results.append(el("button", { type: "button", class: "toc-row", onclick: () => add({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text: el("div", { html: h.snippet }).textContent, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }) }, [
-              el("div", { class: "t", text: h.citation }), el("div", { class: "s", text: "add" })]));
-          }
-        }, 200);
-      });
-      body.append(search, results);
-
-      // 3. phrase in the target + label
-      if (state.to) {
-        body.append(el("h2", { text: `Phrase in ${state.to.citation}` }));
-        const tp = el("div", { class: "shelf" });
-        for (const h of state.to.hl || []) tp.append(el("button", { type: "button", class: "chip" + (state.toHl === h ? " on" : ""), text: phraseOf(state.to, h), onclick: () => { state.toHl = h; step(); } }));
-        tp.append(el("button", { type: "button", class: "chip" + (state.toHl === null ? " on" : ""), text: "Whole passage", onclick: () => { state.toHl = null; step(); } }));
-        tp.append(el("button", { type: "button", class: "chip", text: "Mark a phrase…", onclick: () => { pendingConnect = { from, hl: state.hl, to: state.to }; renderMark(container, state.to); } }));
-        body.append(tp);
-        body.append(el("h2", { text: "The arrow says" }));
-        const quick = el("div", { class: "shelf" });
-        for (const l of ["fulfilled in", "same word", "echoes", "defines", "explains", "contrast", "promise and keeping"]) quick.append(el("button", { type: "button", class: "chip" + (state.label === l ? " on" : ""), text: l, onclick: () => { state.label = l; labelInput.value = l; } }));
-        const labelInput = el("input", { class: "deck-subtitle", placeholder: "Your own words for the connection", value: state.label });
-        labelInput.addEventListener("input", () => { state.label = labelInput.value; });
-        body.append(quick, labelInput);
-        body.append(el("div", { class: "deck-actions" }, [
-          el("button", { type: "button", class: "primary", text: "Add connection slide", onclick: () => {
-            const link = { id: uid(), type: "link", from: { id: from.id, hl: state.hl ? { ...state.hl } : null }, to: { id: state.to.id, hl: state.toHl ? { ...state.toHl } : null }, label: state.label.trim() };
-            // Place it right after the later of the two passages so the story reads in order.
-            const idx = Math.max(deck.items.indexOf(from), deck.items.indexOf(state.to));
-            deck.items.splice(idx + 1, 0, link);
-            save(); render(container);
-            GL().toast("Connection added.");
-          } }),
+      const meta = el("div", { class: "bc-meta" }, [
+        el("div", { class: "bc-cite", text: it.citation }),
+        it.where || it.label ? el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }) : null,
+      ]);
+      const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
+      card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
+      card.append(textEl(it));
+      if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint", text: "Now tap the last word of the phrase." }));
+      if (active && active.id === it.id) {
+        const h = hlById(it, active.hl);
+        if (h) card.append(el("div", { class: "hl-tools" }, [
+          el("span", { class: "ph", text: `“${phraseOf(it, h)}”` }),
+          el("button", { type: "button", class: "chip small", text: "Link to…", onclick: (e) => { e.stopPropagation(); linking = { id: it.id, hl: h.id }; active = null; draw(); } }),
+          el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => { e.stopPropagation(); removeHighlight(it, h); active = null; save(); } }),
+          el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
         ]));
       }
-    };
-    step();
+      const mine = deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id);
+      if (mine.length) {
+        const row = el("div", { class: "bc-links" });
+        for (const l of mine) {
+          const out = l.from.id === it.id;
+          const other = endOf(out ? l.to : l.from);
+          if (!other) continue;
+          const otherText = other.hl ? `: “${phraseOf(other.item, other.hl)}”` : "";
+          row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this connection", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
+            el("b", { text: String(linkNumber(l)) }),
+            ` ${out ? "→" : "←"} ${shortCitation(other.item)}${otherText}`,
+            el("i", { text: l.label ? `, ${l.label}` : ", add a label" }),
+          ]));
+        }
+        card.append(row);
+      }
+      cards.append(card);
+    });
+    if (!deck.items.length) cards.append(el("div", { class: "board-empty", text: "The deck is empty." }));
   }
-  let pendingConnect = null;
+  // A passage as tappable words, with verse numbers, highlights and a port after each highlight.
+  function textEl(it) {
+    const text = el("div", { class: "bc-text" });
+    const words = wordsOf(it);
+    words.forEach((x, i) => {
+      if (x.first && x.para > 0) text.append(el("br"), el("br"));
+      if (x.n !== null && x.n !== undefined) text.append(el("span", { class: "vn", text: String(x.n) }));
+      const h = hlAt(it, i);
+      const cls = ["w"];
+      if (h) { cls.push("hl"); if (h.s === i) cls.push("hl-s"); if (h.e === i) cls.push("hl-e"); if (active && active.id === it.id && active.hl === h.id) cls.push("active"); }
+      if (pending && pending.id === it.id && pending.i === i) cls.push("first");
+      text.append(el("span", { class: cls.join(" "), "data-i": String(i), text: x.w }));
+      if (h && h.e === i) text.append(el("button", { type: "button", class: "port", "data-item": it.id, "data-hl": h.id, "aria-label": `Link “${phraseOf(it, h)}” to another passage`, title: "Drag onto a phrase in another passage to link them" }));
+      text.append(" ");
+    });
+    return text;
+  }
+  function move(i, d) {
+    const j = i + d;
+    if (j < 0 || j >= deck.items.length) return;
+    [deck.items[i], deck.items[j]] = [deck.items[j], deck.items[i]];
+    save();
+  }
+
+  // Taps: mark phrases (first word, then last), pick a highlight, or finish a tap-to-link.
+  function onCardClick(e) {
+    if (drag) return;
+    const port = e.target.closest(".port");
+    const card = e.target.closest(".bcard");
+    if (!card || card.dataset.type !== "passage") return;
+    const item = byId(card.dataset.id);
+    if (!item) return;
+    const w = e.target.closest(".w");
+    if (linking) {
+      if (item.id === linking.id) return;
+      const i = w ? Number(w.dataset.i) : null;
+      const h = port ? hlById(item, port.dataset.hl) : i !== null ? hlAt(item, i) : null;
+      const from = linking; linking = null;
+      finishLink(from, { item, hl: h ? h.id : null, word: !h && i !== null ? i : null });
+      return;
+    }
+    if (port) {
+      if (!hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
+      return;
+    }
+    if (!w) { if (pending || active) { pending = null; active = null; draw(); } return; }
+    const i = Number(w.dataset.i);
+    if (pending && pending.id === item.id) {
+      const h = setHighlight(item, pending.i, i);
+      pending = null; active = { id: item.id, hl: h.id };
+      save();
+      return;
+    }
+    const h = hlAt(item, i);
+    if (h) { active = active && active.hl === h.id ? null : { id: item.id, hl: h.id }; pending = null; draw(); return; }
+    pending = { id: item.id, i }; active = null;
+    draw();
+  }
+
+  // Drag a port onto a phrase, a port, or a card in another passage.
+  function onPortDown(e) {
+    const port = e.target.closest(".port");
+    if (!port || (e.button !== undefined && e.button > 0)) return;
+    e.preventDefault();
+    const from = { id: port.dataset.item, hl: port.dataset.hl || null };
+    const start = portPoint(from, ui.canvas.getBoundingClientRect());
+    if (!start) return;
+    const temp = document.createElementNS(SVG, "path");
+    temp.setAttribute("class", "blink temp");
+    temp.setAttribute("marker-end", "url(#bArrow)");
+    ui.svg.append(temp);
+    board.classList.add("dragging");
+    port.classList.add("src");
+    try { port.setPointerCapture(e.pointerId); } catch (_) {}
+    closeEditor();
+    drag = { from, port, temp, start, target: null, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false, loop: null };
+    const update = () => {
+      if (!drag) return;
+      const c = ui.canvas.getBoundingClientRect();
+      const px = drag.x - c.left, py = drag.y - c.top;
+      temp.setAttribute("d", `M ${start.x} ${start.y} C ${start.x + 70} ${start.y}, ${px - 70} ${py}, ${px} ${py}`);
+      setDropTarget(resolveAt(drag.x, drag.y, from));
+    };
+    const onMove = (ev) => {
+      drag.x = ev.clientX; drag.y = ev.clientY;
+      if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) > 6) drag.moved = true;
+      update();
+    };
+    const onEnd = (ev) => {
+      port.removeEventListener("pointermove", onMove);
+      port.removeEventListener("pointerup", onEnd);
+      port.removeEventListener("pointercancel", onEnd);
+      try { port.releasePointerCapture(ev.pointerId); } catch (_) {}
+      if (drag.loop) cancelAnimationFrame(drag.loop);
+      temp.remove();
+      board.classList.remove("dragging");
+      port.classList.remove("src");
+      const target = ev.type === "pointerup" && drag.moved ? resolveAt(ev.clientX, ev.clientY, from) : null;
+      setDropTarget(null);
+      const moved = drag.moved;
+      drag = null;
+      if (target) finishLink(from, target);
+      else if (!moved && !hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
+    };
+    port.addEventListener("pointermove", onMove);
+    port.addEventListener("pointerup", onEnd);
+    port.addEventListener("pointercancel", onEnd);
+    // Scroll the pane when the finger nears its edge, so far-away passages can be reached.
+    const scroller = scrollerOf(ui.canvas);
+    const step = () => {
+      if (!drag) return;
+      const r = scroller === document.scrollingElement || scroller === document.documentElement ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      let dy = 0;
+      if (drag.y < r.top + 60) dy = -Math.min(18, Math.ceil((r.top + 60 - drag.y) / 3));
+      else if (drag.y > r.bottom - 60) dy = Math.min(18, Math.ceil((drag.y - (r.bottom - 60)) / 3));
+      if (dy && scroller.scrollBy) { scroller.scrollBy(0, dy); update(); }
+      drag.loop = requestAnimationFrame(step);
+    };
+    if (window.requestAnimationFrame) drag.loop = requestAnimationFrame(step);
+  }
+  function scrollerOf(node) {
+    for (let n = node.parentElement; n; n = n.parentElement) {
+      const o = getComputedStyle(n).overflowY;
+      if ((o === "auto" || o === "scroll") && n.scrollHeight > n.clientHeight) return n;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+  /** What is under the pointer: a port, a word (or the nearest one), or a whole card. */
+  function resolveAt(x, y, from) {
+    const node = document.elementFromPoint(x, y);
+    if (!node || !node.closest) return null;
+    const card = node.closest(".bcard");
+    if (!card || card.dataset.type !== "passage" || card.dataset.id === from.id) return null;
+    const item = byId(card.dataset.id);
+    if (!item) return null;
+    const port = node.closest(".port");
+    if (port) return { item, hl: port.dataset.hl || null, word: null, el: port };
+    let w = node.closest(".w");
+    const text = node.closest(".bc-text");
+    if (!w && text) w = nearestWord(text, x, y);
+    if (w) { const i = Number(w.dataset.i); const h = hlAt(item, i); return { item, hl: h ? h.id : null, word: h ? null : i, el: w }; }
+    return { item, hl: null, word: null, el: card };
+  }
+  function nearestWord(text, x, y) {
+    let best = null, bestD = Infinity;
+    for (const w of text.querySelectorAll(".w")) {
+      const r = w.getBoundingClientRect();
+      const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+      const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+      const d = dy * 4 + dx;
+      if (d < bestD) { bestD = d; best = w; }
+    }
+    return bestD < 80 ? best : null;
+  }
+  function setDropTarget(t) {
+    if (drag && drag.target && drag.target.el) drag.target.el.classList.remove("drop");
+    if (drag) drag.target = t;
+    if (t && t.el) t.el.classList.add("drop");
+  }
+  function finishLink(from, t) {
+    let hl = t.hl;
+    if (!hl && t.word !== null && t.word !== undefined) hl = setHighlight(t.item, t.word, t.word).id;
+    const link = addLink(from, { id: t.item.id, hl });
+    if (!link) return;
+    active = null; pending = null;
+    save();
+    GL().toast("Linked.");
+    raf(() => raf(() => { const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) openLabelEditor(link, pill); }));
+  }
+
+  // The arrows: from the port at the end of one highlight, out through the
+  // right-hand gutter, into the port of the other. Positions are measured
+  // from the live layout, so they follow scrolling, wrapping and reordering.
+  function drawLines() {
+    if (!ui || !board.isConnected) return;
+    const cr = ui.canvas.getBoundingClientRect();
+    const W = Math.max(1, cr.width), H = Math.max(1, cr.height);
+    ui.svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const defs = document.createElementNS(SVG, "defs");
+    defs.innerHTML = `<marker id="bArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>`;
+    ui.svg.replaceChildren(defs);
+    ui.labels.replaceChildren();
+    let k = 0;
+    for (const l of deck.links) {
+      const a = portPoint(l.from, cr), b = portPoint(l.to, cr);
+      if (!a || !b) continue;
+      const gx = W - 15 - (k % 3) * 4;
+      const bx = b.x + 10;
+      const path = document.createElementNS(SVG, "path");
+      path.setAttribute("d", `M ${a.x} ${a.y} C ${gx} ${a.y}, ${gx} ${b.y}, ${bx} ${b.y}`);
+      path.setAttribute("class", "blink" + (editing === l ? " on" : ""));
+      path.setAttribute("marker-end", "url(#bArrow)");
+      ui.svg.append(path);
+      // A numbered badge on the arrow's run down the gutter; the label itself
+      // is read on the chip under each card, where there is room for it.
+      ui.labels.append(el("button", { type: "button", class: "blabel" + (l.label ? "" : " empty") + (editing === l ? " on" : ""), "data-link": l.id, text: String(linkNumber(l)), title: l.label ? `${l.label} (edit)` : "Name this connection",
+        "aria-label": `Connection ${linkNumber(l)}${l.label ? `: ${l.label}` : ""}`, style: `left:${gx}px;top:${(a.y + b.y) / 2}px`, onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }));
+      k++;
+    }
+  }
+  const linkNumber = (l) => deck.links.indexOf(l) + 1;
+  function portPoint(end, cr) {
+    const p = ui.cards.querySelector(`.port[data-item="${end.id}"][data-hl="${end.hl || ""}"]`);
+    if (!p) return null;
+    const r = p.getBoundingClientRect();
+    return { x: r.left + r.width / 2 - cr.left, y: r.top + r.height / 2 - cr.top };
+  }
+
+  // The label editor: what the arrow says, its direction, or remove it.
+  let outside = null;
+  function openLabelEditor(link, anchor) {
+    closeEditor();
+    editing = link;
+    const a = endOf(link.from), b = endOf(link.to);
+    const name = (end) => (end ? (end.hl ? `“${phraseOf(end.item, end.hl)}”` : end.item.citation) : "");
+    const input = el("input", { class: "deck-subtitle", placeholder: "What the arrow says", value: link.label || "", "aria-label": "Connection label", autocapitalize: "off" });
+    const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) { pill.classList.toggle("empty", !v); pill.title = v ? `${v} (edit)` : "Name this connection"; } };
+    input.addEventListener("input", () => setLabel(input.value));
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); closeEditor(); draw(); } });
+    const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Connection" }, [
+      el("div", { class: "bpop-t", html: `<b class="num">${linkNumber(link)}</b> ${esc(name(a))} <span class="arrow">→</span> ${esc(name(b))}` }),
+      el("div", { class: "bpop-s", text: `${a ? a.item.citation : ""} → ${b ? b.item.citation : ""}` }),
+      input,
+      el("div", { class: "shelf" }, QUICK_LABELS.map((q) => el("button", { type: "button", class: "chip small" + (link.label === q ? " on" : ""), text: q, onclick: () => { setLabel(q); closeEditor(); draw(); } }))),
+      el("div", { class: "deck-actions" }, [
+        el("button", { type: "button", class: "primary", text: "Done", onclick: () => { closeEditor(); draw(); } }),
+        el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { deck.links = deck.links.filter((x) => x !== link); closeEditor(); save(); GL().toast("Connection removed."); } }),
+      ]),
+    ]);
+    const cr = ui.canvas.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
+    const width = Math.min(380, cr.width - 16);
+    pop.style.width = `${width}px`;
+    pop.style.left = `${Math.max(8, Math.min(ar.left - cr.left - width / 2 + ar.width / 2, cr.width - width - 8))}px`;
+    pop.style.top = `${ar.bottom - cr.top + 8}px`;
+    ui.canvas.append(pop);
+    ui.pop = pop;
+    drawLines();
+    outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor) { closeEditor(); draw(); } };
+    setTimeout(() => document.addEventListener("pointerdown", outside, true), 0);
+    if (GL().wide) input.focus();
+  }
+  function closeEditor() {
+    if (outside) { document.removeEventListener("pointerdown", outside, true); outside = null; }
+    if (ui && ui.pop) { ui.pop.remove(); ui.pop = null; }
+    editing = null;
+  }
 
   // Saved decks
   function saveNamed() {
@@ -354,50 +672,60 @@
     store.set("decks", all.slice(0, 50));
     flash(`Saved “${name}”.`);
   }
-  function renderSaved(container) {
+  function savedList(onBack, onPick) {
     const all = store.get("decks", []);
-    const box = el("div", { class: "deck" }, [
-      el("div", { class: "crumbs" }, [el("button", { text: "Back", onclick: () => render(container) }), el("span", { text: "My decks" })]),
+    const box = el("div", { class: "deck saved" }, [
+      el("div", { class: "crumbs" }, [el("button", { type: "button", text: "Back", onclick: onBack }), el("span", { text: "My decks" })]),
     ]);
-    if (!all.length) box.append(el("div", { class: "empty", text: "No saved decks yet. Build one and tap “Save to my decks”." }));
+    if (!all.length) box.append(el("div", { class: "empty", text: "No saved decks yet. Build one and choose “Save to my decks” under More." }));
     for (const d of all) {
+      const n = (d.deck.items || []).filter((i) => i.type === "passage").length;
       box.append(el("div", { class: "deck-item" }, [
-        el("button", { type: "button", class: "body preview", onclick: () => { deck = JSON.parse(JSON.stringify(d.deck)); save(); render(container); } }, [
+        el("button", { type: "button", class: "body preview", onclick: () => { deck = migrate(JSON.parse(JSON.stringify(d.deck))) || blank(); pending = active = linking = null; save(); onPick(); } }, [
           el("div", { class: "cite-edit", text: d.title }),
-          el("div", { class: "where", text: `${d.deck.items.filter((i) => i.type === "passage").length} passages, ${new Date(d.updated).toLocaleDateString()}` }),
+          el("div", { class: "where", text: `${n} ${n === 1 ? "passage" : "passages"}, ${new Date(d.updated).toLocaleDateString()}` }),
         ]),
-        el("div", { class: "tools" }, [el("button", { type: "button", "aria-label": "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; store.set("decks", all.filter((x) => x.id !== d.id)); renderSaved(container); } })]),
+        el("div", { class: "tools" }, [el("button", { type: "button", "aria-label": "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; store.set("decks", all.filter((x) => x.id !== d.id)); box.replaceWith(savedList(onBack, onPick)); } })]),
       ]));
     }
-    container.replaceChildren(box);
+    return box;
+  }
+  function showSaved() {
+    ui.canvas.hidden = true;
+    ui.saved.hidden = false;
+    const back = () => { ui.saved.hidden = true; ui.canvas.hidden = false; ui.saved.replaceChildren(); draw(); };
+    ui.saved.replaceChildren(savedList(back, back));
+  }
+  function renderSaved(container) {
+    const back = () => render(container);
+    container.replaceChildren(savedList(back, back));
   }
   function flash(text) {
-    const s = $("#deckStatus");
+    const s = ui ? ui.status : null;
     if (s) { s.textContent = text; setTimeout(() => { if (s.textContent === text) s.textContent = ""; }, 4000); }
+    else GL().toast(text);
   }
 
   // --------------------------------------------------------------- present --
-  function present() {
+  function presentDeck() {
+    const t = THEMES[deck.theme] || THEMES[DEFAULT_THEME];
     const units = [];
     if (deck.title) units.push({ kind: "title", html: esc(deck.title), where: deck.subtitle || "" });
-    for (const it of deck.items) {
+    for (const it of sequence()) {
       if (it.type === "section") { units.push({ kind: "title", html: esc(it.title || "—"), where: "" }); continue; }
       if (it.type === "link") { const u = linkUnit(it); if (u) units.push(u); continue; }
       for (const chunk of chunksOf(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
     }
     const map = mapUnit();
     if (map) units.push(map);
-    GL().startPresentingUnits(units);
+    GL().startPresentingUnits(units, { theme: { bg: `#${t.bg}`, fg: `#${t.text}`, accent: `#${t.accent}`, muted: `#${t.muted}` } });
   }
   // Chunk text with verse numbers and highlights, as HTML for the stage.
   function chunkHtml(it, chunk) {
-    const words = wordsOf(it);
-    let offset = 0;
     if (chunk.verses && it.verses) {
-      // word offset of this chunk within the passage
       const firstN = chunk.verses.find((v) => v.n !== null)?.n;
       const idx = it.verses.findIndex((v) => v.n === firstN);
-      offset = it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
+      const offset = it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
       const parts = [];
       let i = offset;
       for (const v of chunk.verses) {
@@ -406,12 +734,12 @@
       }
       return parts.join(" ").replace(/<\/mark> <mark>/g, " ");
     }
-    // paragraphs: find where this chunk starts in the full text
-    const startWord = it.text.slice(0, it.text.indexOf(chunk.text)).split(/\s+/).filter(Boolean).length;
+    const startWord = it.text.slice(0, Math.max(0, it.text.indexOf(chunk.text))).split(/\s+/).filter(Boolean).length;
     const parts = [];
+    let i = startWord;
     chunk.text.split(/\n\n+/).forEach((para, pi) => {
       if (pi) parts.push("<br><br>");
-      para.split(/\s+/).filter(Boolean).forEach((w) => { parts.push(inHl(it, startWord + parts.filter((x) => x !== "<br><br>").length) ? `<mark>${esc(w)}</mark>` : esc(w)); });
+      para.split(/\s+/).filter(Boolean).forEach((w) => { parts.push(inHl(it, i) ? `<mark>${esc(w)}</mark>` : esc(w)); i++; });
     });
     return parts.join(" ").replace(/<\/mark> <mark>/g, " ");
   }
@@ -420,12 +748,12 @@
     const parts = ex.words.map((x, i) => (i >= ex.s && i <= ex.e && hl ? `<mark>${esc(x.w)}</mark>` : esc(x.w)));
     return (ex.before ? "… " : "") + parts.join(" ").replace(/<\/mark> <mark>/g, " ") + (ex.after ? " …" : "");
   }
-  function linkUnit(it) {
-    const a = byId(it.from.id), b = byId(it.to.id);
+  function linkUnit(l) {
+    const a = endOf(l.from), b = endOf(l.to);
     if (!a || !b) return null;
-    const html = `<div class="stage-link"><div class="side"><div class="x">${excerptHtml(a, it.from.hl)}</div><div class="ref">${esc(a.citation)}</div></div>` +
-      `<div class="mid"><div class="arrow">→</div><div class="lbl">${esc(it.label || "")}</div></div>` +
-      `<div class="side"><div class="x">${excerptHtml(b, it.to.hl)}</div><div class="ref">${esc(b.citation)}</div></div></div>`;
+    const html = `<div class="stage-link"><div class="side"><div class="x">${excerptHtml(a.item, a.hl)}</div><div class="ref">${esc(a.item.citation)}</div></div>` +
+      `<div class="mid"><div class="arrow">→</div><div class="lbl">${esc(l.label || "")}</div></div>` +
+      `<div class="side"><div class="x">${excerptHtml(b.item, b.hl)}</div><div class="ref">${esc(b.item.citation)}</div></div></div>`;
     return { kind: "link", html, where: "" };
   }
   function mapUnit() {
@@ -451,7 +779,7 @@
   }
   // Nodes and edges for the map: every passage that takes part in a connection.
   function graph() {
-    const edges = deck.items.filter((i) => i.type === "link" && byId(i.from.id) && byId(i.to.id)).map((i) => ({ from: i.from.id, to: i.to.id, label: i.label || "" }));
+    const edges = deck.links.filter((l) => byId(l.from.id) && byId(l.to.id)).map((l) => ({ from: l.from.id, to: l.to.id, label: l.label || "" }));
     if (!edges.length) return null;
     const ids = [...new Set(edges.flatMap((e) => [e.from, e.to]))];
     const nodes = ids.map((id) => ({ id, label: shortCitation(byId(id)) }));
@@ -542,76 +870,107 @@
     return lib;
   }
 
-  async function build() {
+  // The slide background for themes that have a gradient: drawn once on a
+  // canvas, stored once in the file's slide master. Flat color when the
+  // device cannot draw it.
+  function backgroundImage(t) {
+    if (!t.gradient || typeof document === "undefined") return null;
+    try {
+      const c = document.createElement("canvas");
+      c.width = 1600; c.height = 900;
+      const g = c.getContext && c.getContext("2d");
+      if (!g) return null;
+      const lin = g.createLinearGradient(0, 0, 1600, 900);
+      t.gradient.forEach((col, i) => lin.addColorStop(i / (t.gradient.length - 1), `#${col}`));
+      g.fillStyle = lin; g.fillRect(0, 0, 1600, 900);
+      const glow = g.createRadialGradient(260, 140, 0, 260, 140, 1150);
+      glow.addColorStop(0, "rgba(255,255,255,0.075)"); glow.addColorStop(1, "rgba(255,255,255,0)");
+      g.fillStyle = glow; g.fillRect(0, 0, 1600, 900);
+      const data = c.toDataURL("image/png");
+      return data.startsWith("data:image/png") ? data.slice(5) : null;
+    } catch (_) { return null; }
+  }
+
+  async function build(opts = {}) {
     const PptxGenJS = await loadLib();
-    const t = THEMES[deck.theme] || THEMES.paper;
+    const t = THEMES[deck.theme] || THEMES[DEFAULT_THEME];
     const pptx = new PptxGenJS();
     pptx.layout = "LAYOUT_16x9"; // 10 x 5.625 in
     pptx.title = deck.title || "Scriptures";
     const W = 10, H = 5.625, M = 0.75, inner = W - 2 * M;
-    const total = deck.items.length;
+    const bg = opts.background !== undefined ? opts.background : backgroundImage(t);
+    const ext = bg ? (/^image\/(\w+)/.exec(bg) || [])[1] || "png" : "png";
+    pptx.defineSlideMaster({ title: "DECK", background: bg ? { data: bg, path: `background.${ext}` } : { color: t.bg } });
     let n = 0;
 
-    const base = (slide) => {
-      slide.background = { color: t.bg };
-      if (t.bar) slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.14, h: H, fill: { color: t.bar }, line: { color: t.bar, width: 0 } });
+    const slide = () => {
+      const s = pptx.addSlide({ masterName: "DECK" });
+      if (t.bar) s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.14, h: H, fill: { color: t.bar }, line: { color: t.bar, width: 0 } });
+      return s;
     };
-    const footer = (slide, idx) => {
-      slide.addShape(pptx.ShapeType.line, { x: M, y: H - 0.58, w: inner, h: 0, line: { color: t.rule, width: 0.75 } });
-      if (deck.title) slide.addText(deck.title, { x: M, y: H - 0.52, w: inner - 1, h: 0.3, fontFace: SANS, fontSize: 10, color: t.muted, margin: 0 });
-      slide.addText(String(idx), { x: W - M - 1, y: H - 0.52, w: 1, h: 0.3, fontFace: SANS, fontSize: 10, color: t.muted, align: "right", margin: 0 });
+    const rule = (s, x, y, w) => s.addShape(pptx.ShapeType.rect, { x, y, w, h: 0.035, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
+    const kicker = (s, text) => {
+      s.addText(String(text || "").toUpperCase(), { x: M, y: 0.46, w: inner, h: 0.34, fontFace: SANS, fontSize: 12, color: t.accent, charSpacing: 2, margin: 0, valign: "top", fit: "shrink" });
+      rule(s, M, 0.86, 0.55);
+    };
+    const footer = (s, idx) => {
+      s.addShape(pptx.ShapeType.line, { x: M, y: H - 0.58, w: inner, h: 0, line: { color: t.rule, width: 0.75 } });
+      if (deck.title) s.addText(deck.title, { x: M, y: H - 0.52, w: inner - 1, h: 0.3, fontFace: SANS, fontSize: 10, color: t.muted, margin: 0 });
+      s.addText(String(idx), { x: W - M - 1, y: H - 0.52, w: 1, h: 0.3, fontFace: SANS, fontSize: 10, color: t.muted, align: "right", margin: 0 });
     };
 
     // Title slide
     if (deck.title || deck.subtitle) {
-      const s = pptx.addSlide(); base(s);
-      s.addShape(pptx.ShapeType.rect, { x: M, y: 1.55, w: 0.9, h: 0.045, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
+      const s = slide();
+      rule(s, M, 1.55, 0.9);
       s.addText(deck.title || "", { x: M, y: 1.7, w: inner, h: 1.7, fontFace: SERIF, fontSize: 40, bold: true, color: t.text, valign: "top", margin: 0, fit: "shrink" });
       if (deck.subtitle) s.addText(deck.subtitle, { x: M, y: 3.45, w: inner, h: 0.6, fontFace: SANS, fontSize: 18, color: t.muted, valign: "top", margin: 0 });
     }
 
-    for (const it of deck.items) {
+    for (const it of sequence()) {
       if (it.type === "section") {
         n++;
-        const s = pptx.addSlide(); base(s);
+        const s = slide();
         s.addText(it.title || "", { x: M, y: 1.9, w: inner, h: 1.4, fontFace: SERIF, fontSize: 40, bold: true, color: t.text, align: "center", valign: "middle", margin: 0, fit: "shrink" });
-        s.addShape(pptx.ShapeType.rect, { x: W / 2 - 0.45, y: 3.42, w: 0.9, h: 0.045, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
+        rule(s, W / 2 - 0.45, 3.42, 0.9);
         footer(s, n);
         continue;
       }
       if (it.type === "link") {
-        const a = byId(it.from.id), b = byId(it.to.id);
+        const a = endOf(it.from), b = endOf(it.to);
         if (!a || !b) continue;
         n++;
-        const s = pptx.addSlide(); base(s);
-        const colW = 3.75, gap = inner - 2 * colW; // 1.0in middle for the arrow
-        const side = (item, hl, x) => {
+        const s = slide();
+        kicker(s, it.label ? `Connection: ${it.label}` : "Connection");
+        const colW = 3.75, gap = inner - 2 * colW, top = 1.12, panelH = 3.3, pad = 0.22;
+        const side = (end, x) => {
+          const { item, hl } = end;
+          s.addShape(pptx.ShapeType.roundRect, { x, y: top, w: colW, h: panelH, fill: { color: t.panel }, line: { color: t.panel, width: 0 }, rectRadius: 0.1 });
           const ex = excerpt(item, hl);
           const runs = ex.words.map((w, i) => ({ text: w.w + (i < ex.words.length - 1 ? " " : ""), options: hl && i >= ex.s && i <= ex.e ? { color: t.accent, bold: true } : { color: t.text } }));
           if (ex.before) runs.unshift({ text: "… ", options: { color: t.muted } });
           if (ex.after) runs.push({ text: " …", options: { color: t.muted } });
           const len = ex.words.reduce((a2, w) => a2 + w.w.length + 1, 0);
-          s.addText(runs, { x, y: 1.0, w: colW, h: 2.9, fontFace: SERIF, fontSize: len > 300 ? 16 : len > 200 ? 18 : len > 120 ? 20 : 24, valign: "middle", align: "left", lineSpacingMultiple: 1.12, margin: 0, fit: "shrink" });
-          s.addText(item.citation + (item.kind !== "verse" && item.where ? `, ${item.where}` : ""), { x, y: 3.95, w: colW, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, valign: "top", margin: 0 });
+          s.addText(runs, { x: x + pad, y: top + pad, w: colW - 2 * pad, h: panelH - 0.95, fontFace: SERIF, fontSize: len > 300 ? 15 : len > 200 ? 17 : len > 120 ? 19 : 22, valign: "middle", align: "left", lineSpacingMultiple: 1.12, margin: 0, fit: "shrink" });
+          s.addText(item.citation + (item.kind !== "verse" && item.where ? `, ${item.where}` : ""), { x: x + pad, y: top + panelH - 0.62, w: colW - 2 * pad, h: 0.45, fontFace: SANS, fontSize: 12, color: t.accent, valign: "bottom", margin: 0, fit: "shrink" });
         };
-        side(a, it.from.hl, M);
-        side(b, it.to.hl, M + colW + gap);
-        // the arrow and its label
-        const ax = M + colW + 0.12, aw = gap - 0.24;
-        s.addShape(pptx.ShapeType.line, { x: ax, y: 2.45, w: aw, h: 0, line: { color: t.accent, width: 2.75, endArrowType: "triangle" } });
-        if (it.label) s.addText(it.label, { x: M + colW - 0.35, y: 1.9, w: gap + 0.7, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, align: "center", valign: "bottom", margin: 0, fit: "shrink" });
+        side(a, M);
+        side(b, M + colW + gap);
+        const ax = M + colW + 0.14, aw = gap - 0.28, ay = top + panelH / 2;
+        s.addShape(pptx.ShapeType.line, { x: ax, y: ay, w: aw, h: 0, line: { color: t.accent, width: 2.5, endArrowType: "triangle" } });
+        if (it.label) s.addText(it.label, { x: M + colW - 0.3, y: ay - 0.62, w: gap + 0.6, h: 0.5, fontFace: SANS, fontSize: 12, color: t.accent, align: "center", valign: "bottom", margin: 0, fit: "shrink" });
         footer(s, n);
         continue;
       }
       for (const chunk of chunksOf(it)) {
         n++;
-        const s = pptx.addSlide(); base(s);
+        const s = slide();
         const isTalk = it.kind !== "verse";
-        s.addText(chunk.label, { x: M, y: 0.5, w: inner, h: 0.4, fontFace: SANS, fontSize: 14, color: t.accent, margin: 0, valign: "top" });
+        kicker(s, chunk.label);
         const runs = passageRuns(it, chunk, t);
         const len = chunk.verses ? chunk.verses.reduce((a, v) => a + v.text.length, 0) : chunk.text.length;
-        const boxH = isTalk && it.where ? 3.15 : 3.55;
-        s.addText(runs, { x: M, y: 1.0, w: inner, h: boxH, fontFace: SERIF, fontSize: fontSize(len), color: t.text, valign: "middle", align: "left", lineSpacingMultiple: 1.12, margin: 0, fit: "shrink" });
+        const boxH = isTalk && (it.citation || it.where) ? 3.05 : 3.5;
+        s.addText(runs, { x: M, y: 1.08, w: inner, h: boxH, fontFace: SERIF, fontSize: fontSize(len), color: t.text, valign: "middle", align: "left", lineSpacingMultiple: 1.15, margin: 0, fit: "shrink" });
         if (isTalk && (it.citation || it.where)) {
           s.addText([
             { text: it.citation || "", options: { bold: true, fontSize: 15, color: t.text, breakLine: !!it.where } },
@@ -626,18 +985,17 @@
     const g = graph();
     if (g) {
       n++;
-      const s = pptx.addSlide(); base(s);
-      s.addText(deck.title ? `${deck.title}: the connections` : "The connections", { x: M, y: 0.45, w: inner, h: 0.4, fontFace: SANS, fontSize: 14, color: t.accent, margin: 0 });
-      const cx = W / 2, cy = 2.75, R = Math.min(2.0, 1.1 + g.nodes.length * 0.12), bw = 1.9, bh = 0.6;
+      const s = slide();
+      kicker(s, deck.title ? `${deck.title}: the connections` : "The connections");
+      const cx = W / 2, cy = 2.85, R = Math.min(2.0, 1.1 + g.nodes.length * 0.12), bw = 1.9, bh = 0.6;
       const pos = {};
       g.nodes.forEach((node, i) => { const ang = -Math.PI / 2 + (2 * Math.PI * i) / g.nodes.length; pos[node.id] = { x: cx + R * 1.35 * Math.cos(ang), y: cy + R * 0.78 * Math.sin(ang) }; });
       for (const e of g.edges) {
         const a = pos[e.from], b = pos[e.to];
         const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
         // trim the segment so it starts and ends at the box edges (roughly)
-        const trimA = Math.min(bw / 2 / Math.max(Math.abs(ux), 1e-6), bh / 2 / Math.max(Math.abs(uy), 1e-6)) + 0.05;
-        const trimB = trimA;
-        const x1 = a.x + ux * trimA, y1 = a.y + uy * trimA, x2 = b.x - ux * trimB, y2 = b.y - uy * trimB;
+        const trim = Math.min(bw / 2 / Math.max(Math.abs(ux), 1e-6), bh / 2 / Math.max(Math.abs(uy), 1e-6)) + 0.05;
+        const x1 = a.x + ux * trim, y1 = a.y + uy * trim, x2 = b.x - ux * trim, y2 = b.y - uy * trim;
         addSegment(pptx, s, x1, y1, x2, y2, { color: t.accent, width: 1.75, endArrowType: "triangle" });
         if (e.label) {
           const px = -uy, py = ux; // perpendicular, so the label sits beside the arrow rather than on it
@@ -647,7 +1005,7 @@
       for (const node of g.nodes) {
         const p = pos[node.id];
         s.addText(node.label, { x: p.x - bw / 2, y: p.y - bh / 2, w: bw, h: bh, fontFace: SANS, fontSize: 13, bold: true, color: t.text, align: "center", valign: "middle", margin: 4, fit: "shrink",
-          fill: { color: t.bg }, line: { color: t.text, width: 1 }, rectRadius: 0.08, shape: pptx.ShapeType.roundRect });
+          fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.08, shape: pptx.ShapeType.roundRect });
       }
       footer(s, n);
     }
@@ -701,28 +1059,34 @@
     return merged;
   }
 
-  async function download(container) {
-    const status = $("#deckStatus");
+  async function downloadFile() {
+    const status = ui ? ui.status : null;
+    const say = (s) => { if (status) status.textContent = s; };
     try {
-      status.textContent = "Building the PowerPoint file…";
+      say("Building the PowerPoint file…");
       const pptx = await build();
       const blob = await pptx.write({ outputType: "blob" });
       const name = `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.pptx`;
       const file = new File([blob], name, { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], title: name }); status.textContent = ""; return; }
-        catch (err) { if (err.name === "AbortError") { status.textContent = ""; return; } }
+        try { await navigator.share({ files: [file], title: name }); say(""); return; }
+        catch (err) { if (err.name === "AbortError") { say(""); return; } }
       }
       const url = URL.createObjectURL(blob);
       const a = el("a", { href: url, download: name });
       document.body.append(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-      status.textContent = `Saved ${name}.`;
+      say(`Saved ${name}.`);
     } catch (err) {
-      status.textContent = `Could not build the file: ${err.message}`;
+      say(`Could not build the file: ${err.message}`);
     }
   }
 
-  window.Deck = { render, addFromDoc, addPassage, count, updateBadge, present, chunksOf, build, THEMES };
+  window.Deck = {
+    render, board: boardEl, showBoard, addFromDoc, addPassage, has, remove, toggle, count, updateBadge,
+    present: presentDeck, chunksOf, build, THEMES,
+    // for tests and scripts
+    get state() { return deck; }, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
+  };
   updateBadge();
 })();

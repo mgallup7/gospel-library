@@ -362,12 +362,23 @@
         el("div", { class: "snip", html: h.snippet }),
         el("div", { class: "where", text: h.collection === "general-conference" ? [h.session, h.label].filter(Boolean).join(", ") : h.label }),
       ]),
-      el("button", { class: "add", "aria-label": "Add to deck", title: "Add to deck", text: "+", onclick: (e) => {
+      el("button", { class: "add", "aria-label": "Add to deck", title: "Add to deck", text: window.Deck?.has(h.doc_id, h.pid) ? "\u2713" : "+", onclick: async (e) => {
         e.stopPropagation();
-        const text = el("div", { html: h.snippet }).textContent;
-        window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection });
-        e.currentTarget.textContent = "\u2713";
-        setTimeout(() => { e.currentTarget && (e.currentTarget.textContent = "+"); }, 1200);
+        const btn = e.currentTarget;
+        if (window.Deck?.has(h.doc_id, h.pid)) { window.Deck.remove(h.doc_id, h.pid); btn.textContent = "+"; toast("Taken off the deck."); return; }
+        // The snippet is a search excerpt; the deck wants the whole verse or paragraph.
+        let text = el("div", { html: h.snippet }).textContent, verses = null;
+        try {
+          const ctx = await api("context", { doc_id: h.doc_id, pid: h.pid, before: 0, after: 0 });
+          if (ctx?.paragraphs?.length) {
+            text = ctx.paragraphs.map((x) => x.text).join(" ");
+            const vs = ctx.paragraphs.filter((x) => x.kind === "verse" && x.verse);
+            if (vs.length) verses = vs.map((x) => ({ n: x.verse, text: x.text }));
+          }
+        } catch (_) { /* the snippet will do */ }
+        window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: true });
+        btn.textContent = "\u2713";
+        if (!wide()) toast("On the deck.");
       } }),
     ]);
     return row;
@@ -579,7 +590,7 @@
         el("button", { type: "button", class: "primary", text: "Add to deck", onclick: () => {
           const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
           clearSelection();
-          toast(added === 1 ? "Added to the deck." : `Added ${added} passages to the deck.`);
+          toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }),
         el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
         el("button", { type: "button", class: "text-btn", text: "Clear", onclick: clearSelection }),
@@ -715,15 +726,18 @@
     openStage({ units, i, doc: currentDoc });
   }
 
-  // A hand-picked list of passages (from Ask, for instance), each with its own citation.
-  function startPresentingUnits(units) {
+  // A hand-picked list of passages (from Ask or the deck), each with its own
+  // citation. opts.theme = {bg, fg, accent, muted} colors the stage like the deck.
+  function startPresentingUnits(units, opts = {}) {
     if (!units || !units.length) return;
-    openStage({ units: units.map((u) => ({ kind: u.kind || "para", html: u.html || esc(u.text || ""), text: u.text || "", where: u.where || "", pid: null, doc_id: u.doc_id || null })), i: 0, doc: null });
+    openStage({ units: units.map((u) => ({ kind: u.kind || "para", html: u.html || esc(u.text || ""), text: u.text || "", where: u.where || "", pid: null, doc_id: u.doc_id || null })), i: 0, doc: null, theme: opts.theme || null });
   }
 
   function openStage(next) {
     show = { ...next, scale: store.get("stageScale", 1) };
     document.body.classList.add("presenting");
+    stage.classList.toggle("themed", !!next.theme);
+    for (const k of ["bg", "fg", "accent", "muted"]) stage.style.setProperty(`--stage-${k}`, next.theme?.[k] || "");
     stage.hidden = false;
     renderStage();
     if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().catch(() => {});
@@ -736,6 +750,7 @@
     show.lock?.release?.();
     show = null;
     stage.hidden = true;
+    stage.classList.remove("themed");
     document.body.classList.remove("presenting");
     if (document.fullscreenElement) document.exitFullscreen?.().catch?.(() => {});
     if (atPid) focusParagraph(atPid);
@@ -795,6 +810,8 @@
   $(".stage-smaller", stage).addEventListener("click", () => stageScale(-0.1));
   $(".stage-larger", stage).addEventListener("click", () => stageScale(0.1));
   $(".stage-theme", stage).addEventListener("click", () => {
+    // From a deck's own colors, the first tap goes to plain light or dark.
+    if (stage.classList.contains("themed")) { stage.classList.remove("themed"); return; }
     const dark = stage.classList.toggle("dark");
     store.set("stageDark", dark);
   });

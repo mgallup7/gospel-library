@@ -22,28 +22,37 @@ not.
   a projector, a TV over AirPlay, or a tablet turned toward the room. Tap the
   screen icon in the reader (or press P, or double-tap a paragraph). Arrow
   keys, space, taps and swipes move through the text; Esc returns to reading.
-- Deck: tap verses or paragraphs while reading (or the + on a search result,
-  or "Add to deck" under an Ask answer) to collect passages. Give the deck a
-  title, pick a theme, and download a PowerPoint file written on the device:
-  one passage per slide, long passages split at verse or sentence breaks,
-  verse numbers set small, the reference above, speaker and talk under a
-  quote. Or present the deck straight from the iPad.
-- Scripture chains: on any passage in the deck, Highlight (tap the first and
-  last word of a phrase) and Connect (choose the passage it points to, mark
-  the matching phrase there, and label the arrow: "fulfilled in", "same
-  word", your own words). Each connection becomes a slide with the two
-  excerpts side by side and the arrow between them, and the deck ends with a
-  map of every passage and connection.
+- Deck: the passages you pick for a presentation. Tick a card under an Ask
+  answer, tap + on a search result, or select verses while reading and choose
+  Add to deck. On an iPad in landscape or a Mac the deck is a board on the
+  right while you keep finding passages on the left; on a phone it is the
+  Deck tab.
+- The board: each passage is a card. Tap the first and last word of a phrase
+  to highlight it. Every highlight ends in a dot; drag the dot onto a phrase
+  in another passage (or onto the passage itself) and an arrow is drawn
+  between them, routed down the margin, with a numbered badge; name the
+  connection ("fulfilled in", "same word", "defines", your own words) from
+  the badge or the chip under the card. Arrows follow the cards as you scroll,
+  reorder and re-wrap. Tap a highlight for Link to… (without dragging) or
+  Remove.
+- PowerPoint: give the deck a title, pick a theme, and download a .pptx
+  written on the device. Royal is the default: a deep blue background, white
+  Georgia type, gold for verse numbers, references and highlighted phrases.
+  One passage per slide, long passages split at verse or sentence breaks,
+  speaker and talk under a quote; each connection becomes a slide with the
+  two excerpts in panels and the arrow between them, and the deck ends with
+  a map of every passage and connection. Or present the deck straight from
+  the iPad, in the same colors.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
   conference training, a letter). Claude searches the library itself, with
   tools that run on the device: ranked search, every verse containing a word
   family (for complete lists), and reading a chapter or talk in context. It
   keeps searching until it has what it needs, then writes. Every passage found
-  appears as a card (book and verse, or speaker, talk and
-  conference, with the full text) that you can open, present, or tick and add
-  to the deck; the passages Claude cites are badged and listed first. The
-  answer streams in beside them, citing passages by name. Runs on your own Claude API key (from
-  console.anthropic.com), stored on the device and sent only to Anthropic.
+  appears as a card under the answer (book and verse, or speaker, talk and
+  conference, with the full text) that you can open, present, or tick onto
+  the deck; the passages Claude cites are badged and listed first. Runs on
+  your own Claude API key (from console.anthropic.com), stored on the device
+  and sent only to Anthropic.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it
   sees one.

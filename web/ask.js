@@ -76,6 +76,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   let view = null;     // container element
   let busy = false;
   let lastPassages = []; // passages shown with the latest answer
+  let log = null;      // the answers so far; kept when the tab is left and returned to
 
   // ------------------------------------------------------------ settings --
   const settings = {
@@ -100,8 +101,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const input = el("textarea", { class: "ask-input", rows: 3, placeholder: "What have the prophets said about covenants and identity?", "aria-label": "Your question or request" });
     const go = el("button", { type: "button", class: "primary ask-go", text: "Ask" });
     const gear = el("button", { type: "button", class: "icon-btn", "aria-label": "Settings", title: "Settings", html: "&#9881;" });
-    const hint = el("div", { class: "ask-hint", text: "Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). Answers come from your library with tappable citations." });
-    const log = el("div", { class: "ask-log" });
+    const hint = el("div", { class: "ask-hint", text: "Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). Claude searches your library; every passage it finds becomes a card you can tick onto the deck." });
+    if (!log) log = el("div", { class: "ask-log" });
     for (const b of modes.querySelectorAll("button")) {
       b.addEventListener("click", () => {
         for (const x of modes.querySelectorAll("button")) x.classList.toggle("on", x === b);
@@ -374,30 +375,47 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
 
   function finish(answerEl, sourcesEl, toolsEl, reply, passages) {
     toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Copy answer", onclick: () => navigator.clipboard?.writeText(plainText(reply, passages)).catch(() => {}) }));
-    if (GL().wide && passages.length) toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Show passages", onclick: () => GL().panel.restore() }));
   }
 
   // ------------------------------------------------------------ findings --
-  // The passages behind an answer, as cards you can read, pick, and send to
-  // the deck or the screen. On a wide screen they take the right-hand pane.
+  // The passages behind an answer, as cards under it. Ticking a card puts the
+  // passage on the deck (the board on the right of a wide screen, the Deck
+  // tab on a phone), where phrases are highlighted and linked.
   class Findings {
     constructor(passages, question) {
       this.passages = passages;
       this.question = question;
-      this.selected = new Set();
       this.cited = [];
       this.root = el("div", { class: "findings" });
+      this.onDeck = () => this.sync();
+      window.addEventListener("deck:change", this.onDeck);
     }
     mount(inlineHost) {
       this.inlineHost = inlineHost;
       this.draw();
-      if (GL().wide) GL().panel.show(this.root, "Passages");
-      else inlineHost.replaceChildren(this.root);
+      inlineHost.replaceChildren(this.root);
+      if (GL().wide && window.Deck?.count()) window.Deck.showBoard();
     }
     refresh() { this.draw(); }
     setCited(nums) {
       this.cited = nums;
       this.draw();
+    }
+    inDeck(p) { return !!window.Deck?.has(p.doc_id, p.pid); }
+    forDeck(p) { return { doc_id: p.doc_id, pid: p.pid, kind: p.kind, text: p.plain || p.text, verses: p.verses, citation: p.citation, label: p.conf || p.label, author: p.author, title: p.title, collection: p.collection }; }
+    // The deck changed somewhere: keep the ticks honest without rebuilding the cards.
+    sync() {
+      if (!this.root.isConnected) { window.removeEventListener("deck:change", this.onDeck); return; }
+      for (const card of this.root.querySelectorAll(".finding")) {
+        const p = this.passages.find((x) => x.n === Number(card.dataset.n));
+        if (!p) continue;
+        const on = this.inDeck(p);
+        card.classList.toggle("on", on);
+        const cb = card.querySelector("input[type=checkbox]");
+        if (cb) cb.checked = on;
+      }
+      const bar = this.root.querySelector(".findings-bar");
+      if (bar) bar.replaceWith(this.bar());
     }
     order() {
       const cited = this.cited.map((n) => this.passages.find((p) => p.n === n)).filter(Boolean);
@@ -425,37 +443,43 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       if (!this.passages.length) root.append(el("div", { class: "empty", text: "Nothing in the library matched. Try other words, or name a book or a speaker." }));
     }
     bar() {
-      const n = this.selected.size;
+      const mine = this.passages.filter((p) => this.inDeck(p));
+      const n = mine.length;
+      const total = window.Deck?.count() || 0;
       const bar = el("div", { class: "findings-bar" }, [
-        el("span", { class: "n", text: n ? `${n} selected` : "Select passages, or act on one card" }),
-        el("button", { type: "button", class: "primary", text: "Add to deck", disabled: !n, onclick: () => { this.toDeck([...this.selected].map((id) => this.passages.find((p) => p.n === id))); } }),
-        el("button", { type: "button", class: "text-btn", text: "Present", disabled: !n, onclick: () => this.present([...this.selected].map((id) => this.passages.find((p) => p.n === id))) }),
-        el("button", { type: "button", class: "text-btn", text: n ? "Clear" : "Select all", onclick: () => { if (n) this.selected.clear(); else for (const p of this.passages) this.selected.add(p.n); this.draw(); } }),
+        el("span", { class: "n", text: n ? `${n} of these on the deck` : "Tick a passage to put it on the deck" }),
+        el("button", { type: "button", class: "primary", text: total ? `Deck ${total}` : "Deck", disabled: !total, title: "Highlight and link the passages on the deck", onclick: () => window.Deck?.showBoard() }),
+        el("button", { type: "button", class: "text-btn", text: "Present", disabled: !n, onclick: () => this.present(mine) }),
+        el("button", { type: "button", class: "text-btn", text: n ? "Clear" : "Add all", onclick: () => {
+          if (n) { for (const p of mine) window.Deck.remove(p.doc_id, p.pid); return; }
+          const list = this.passages.slice(0, 40);
+          for (const p of list) if (!this.inDeck(p)) window.Deck?.addPassage(this.forDeck(p));
+          if (this.passages.length > list.length) GL().toast(`The first ${list.length} are on the deck; tick any others you want.`);
+          if (GL().wide) window.Deck?.showBoard();
+        } }),
       ]);
       return bar;
     }
     card(p, isCited) {
-      const on = this.selected.has(p.n);
+      const on = this.inDeck(p);
       const text = p.verses && p.verses.length
         ? p.verses.map((v) => `<span class="vn">${v.n}</span> ${esc(v.text)}`).join(" ")
         : esc(p.plain || p.text);
-      return el("div", { class: "finding" + (on ? " on" : "") }, [
-        el("label", { class: "pick" }, [el("input", { type: "checkbox", checked: on, "aria-label": `Select ${p.label}`, onchange: (e) => { if (e.target.checked) this.selected.add(p.n); else this.selected.delete(p.n); this.draw(); } })]),
+      return el("div", { class: "finding" + (on ? " on" : ""), "data-n": String(p.n) }, [
+        el("label", { class: "pick", title: "On the deck" }, [el("input", { type: "checkbox", checked: on, "aria-label": `On the deck: ${p.label}`, onchange: () => {
+          const added = window.Deck?.toggle(this.forDeck(p));
+          if (added && GL().wide) window.Deck.showBoard();
+        } })]),
         el("div", { class: "body" }, [
           el("div", { class: "cite" }, [isCited ? el("b", { class: "num", text: String(p.n) }) : null, el("span", { text: p.collection === "general-conference" ? (p.author || "") : p.citation })]),
           p.collection === "general-conference" ? el("div", { class: "src", text: [p.title ? `“${p.title}”` : "", p.conf || p.label].filter(Boolean).join(", ") }) : (p.label && p.label !== p.citation ? el("div", { class: "src", text: p.label }) : null),
           el("div", { class: "text", html: text }),
           el("div", { class: "acts" }, [
             el("button", { type: "button", class: "text-btn small", text: "Open", onclick: () => GL().openDoc(p.doc_id, p.pid) }),
-            el("button", { type: "button", class: "text-btn small", text: "Add to deck", onclick: (e) => { this.toDeck([p]); e.currentTarget.textContent = "Added"; } }),
             el("button", { type: "button", class: "text-btn small", text: "Present", onclick: () => this.present([p]) }),
           ]),
         ]),
       ]);
-    }
-    toDeck(list) {
-      for (const p of list) window.Deck?.addPassage({ doc_id: p.doc_id, pid: p.pid, kind: p.kind, text: p.plain || p.text, verses: p.verses, citation: p.citation, label: p.conf || p.label, author: p.author, title: p.title, collection: p.collection });
-      GL().toast(list.length === 1 ? "Added to the deck." : `Added ${list.length} passages to the deck.`);
     }
     present(list) {
       GL().startPresentingUnits(list.map((p) => ({
