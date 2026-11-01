@@ -392,12 +392,14 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const first = (lead ? lead + "\n\n" : "") + `${mode === "ask" ? "Question" : "Request"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
     const messages = [...thread.map((m) => ({ role: m.role, content: m.content })), { role: "user", content: first }];
     let calls = 0, finalText = "";
-    for (let turn = 0; turn < MAX_TOOL_CALLS + 2; turn++) {
+    for (let turn = 0; turn < MAX_TOOL_CALLS + 4; turn++) {
       let buffer = "", pending = false;
       const flush = () => { pending = false; answerEl.innerHTML = markdown(buffer, registry.list); };
       let thought = "";
       const res = await complete({
-        model: settings.model, system: systemFor(mode), messages, tools: calls < MAX_TOOL_CALLS ? TOOLS : undefined,
+        // The tools list must be the same on every request of a turn: a thinking
+        // block is bound to the tools it was made with, and a changed list is a 400.
+        model: settings.model, system: systemFor(mode), messages, tools: TOOLS,
         max_tokens: mode === "ask" ? 16000 : 20000, stream: true, thinking: settings.think,
         onDelta: (t) => { buffer += t; if (!pending) { pending = true; requestAnimationFrame(flush); } },
         onThinking: (t) => { thought = (thought + t).slice(-2000); statusEl.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
@@ -408,6 +410,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       messages.push({ role: "assistant", content: res.blocks });
       const results = [];
       for (const tu of res.tool_uses) {
+        if (calls >= MAX_TOOL_CALLS) {
+          results.push({ type: "tool_result", tool_use_id: tu.id, content: "The search budget for this question is spent. Write the answer now from the passages already found, and do not call a tool again." });
+          continue;
+        }
         calls++;
         let content = "";
         const step = { tool: tu.name, what: "", found: null };
@@ -440,7 +446,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         results.push({ type: "tool_result", tool_use_id: tu.id, content });
         findings.refresh();
       }
-      if (calls >= MAX_TOOL_CALLS) results.push({ type: "text", text: "That is the last search available; write the answer from what has been found." });
+      if (calls >= MAX_TOOL_CALLS) results.push({ type: "text", text: "That was the last search available for this question; write the answer from what has been found." });
       messages.push({ role: "user", content: results });
       statusEl.textContent = `${registry.list.length} passages so far. Claude is thinking…`;
     }
