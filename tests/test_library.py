@@ -256,8 +256,16 @@ def test_bundle_round_trip(tmp_path, monkeypatch):
     store.close()
 
     out = tmp_path / "site"
-    manifest = bundle.build(out, "a long passphrase", db_path=config.DB_PATH)
+    skills = tmp_path / "skills.json"
+    skills.write_text('{"voice": "warm", "skills": [{"id": "weekly-letter", "name": "Letter", "kind": "mode", "text": "Write the letter."}]}', encoding="utf-8")
+    manifest = bundle.build(out, "a long passphrase", db_path=config.DB_PATH, skills_path=skills)
     assert (out / "library.bin").exists() and manifest["documents"] == 1 and manifest["verses"] == 2
+    assert manifest["skills"]["file"] == "skills.bin" and (out / "skills.bin").exists()
+    back = tmp_path / "skills-back.json"
+    bundle.decrypt_file(out / "skills.bin", back, "a long passphrase")
+    assert back.read_text(encoding="utf-8") == skills.read_text(encoding="utf-8")
+    nos = bundle.build(tmp_path / "site2", "a long passphrase", db_path=config.DB_PATH, skills_path=tmp_path / "none.json")
+    assert "skills" not in nos
     header = bundle.read_header(out / "library.bin")
     assert header["version"] == manifest["version"] and header["chunks"] >= 1
 

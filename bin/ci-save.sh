@@ -8,6 +8,9 @@ python -m gospel_library seal "$GOSPEL_LIBRARY_DATA/library.sqlite" "$out/librar
 if [ -f "$GOSPEL_LIBRARY_DATA/raw.sqlite" ]; then
   python -m gospel_library seal "$GOSPEL_LIBRARY_DATA/raw.sqlite" "$out/raw.bin" --no-compress
 fi
+if [ -f "$GOSPEL_LIBRARY_DATA/skills.json" ]; then
+  python -m gospel_library seal "$GOSPEL_LIBRARY_DATA/skills.json" "$out/skills.bin"
+fi
 if ! gh release view state >/dev/null 2>&1; then
   gh release create state --prerelease --title "Nightly sync state (encrypted)" \
     --notes "Working state for the nightly library sync. Encrypted with the library passphrase. Nothing here is meant to be downloaded by hand."

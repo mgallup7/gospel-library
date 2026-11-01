@@ -925,6 +925,24 @@
 
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
 
+  // The owner's private writing skills, published sealed beside the library
+  // and unlocked with the same passphrase; kept on the device until the
+  // published copy changes.
+  async function loadSkills() {
+    try {
+      const m = await (await fetch(MANIFEST_URL, { cache: "no-store" })).json();
+      const entry = m.skills;
+      const cached = store.get("skills");
+      if (!entry) { if (cached) store.del("skills"); return; }
+      if (cached && cached.sha256 === entry.sha256) return;
+      const passphrase = store.get("passphrase");
+      if (!passphrase) return;
+      const text = await call("unseal", { url: new URL("data/" + entry.file + "?v=" + entry.sha256.slice(0, 12), BASE).href, passphrase });
+      store.set("skills", { sha256: entry.sha256, data: JSON.parse(text) });
+      window.dispatchEvent(new CustomEvent("skills:change"));
+    } catch (_) { /* offline, or none published: whatever is on the device stands */ }
+  }
+
   // What ask.js needs from the app.
   // A view that borrows the reader pane on wide screens (Ask's passages, for one).
   const panel = {
@@ -943,6 +961,7 @@
   window.GL = {
     api, el, esc, store, openDoc, startPresentingUnits, toast, panel,
     get ready() { return state.ready; },
+    get skills() { return store.get("skills")?.data || null; },
     get wide() { return wide(); },
   };
 
@@ -957,5 +976,6 @@
     await render();
     if (!state.q && !state.docId && wide()) input.focus();
     setTimeout(checkForUpdate, 1500);
+    setTimeout(loadSkills, 400);
   })();
 })();

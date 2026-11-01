@@ -13,6 +13,10 @@ on:
         description: "Re-fetch every page, not just what is missing"
         type: boolean
         default: false
+      skills:
+        description: "Private writing skills for Ask (gzip, base64). Kept encrypted with the nightly state; sealed into the library for the devices."
+        required: false
+        default: ""
 
 concurrency:
   group: library-sync
@@ -55,6 +59,15 @@ jobs:
 
       - name: Restore previous state
         run: bin/ci-restore.sh
+
+      - name: Take in private skills
+        if: ${{ inputs.skills != '' }}
+        env:
+          SKILLS_BLOB: ${{ inputs.skills }}
+        run: |
+          echo "::add-mask::$SKILLS_BLOB"
+          printf '%s' "$SKILLS_BLOB" | base64 -d | gunzip > "$GOSPEL_LIBRARY_DATA/skills.json"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get("skills", [])), "skills taken in")' "$GOSPEL_LIBRARY_DATA/skills.json"
 
       - name: Sync with churchofjesuschrist.org
         id: sync

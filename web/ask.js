@@ -31,7 +31,7 @@ Search until the question is answered or the list is complete; a dozen tool call
 
 ${TOOLS_GUIDE}
 
-Writing the answer: open with the answer, not a restatement of the question. Reason in the open where it helps: connections between passages, the original-language sense of a word, what a prophet was responding to, where the texts are in tension. Quotation marks are a promise: anything inside them must be word for word from a passage the tools returned in this conversation, followed by its [n]. Never quote from memory, never smooth or modernize the wording, never run two verses together as one quotation. If you want to bring in a passage that has not been returned, search for it first; if it cannot be found, name it without quotation marks and say it was not in the library. Cite every claim a passage supports with [n]. For a list, give every item, grouped by volume or book in canonical order, each with its reference and the exact text or the key clause; do not summarize a list the person asked for in full. Plain prose, short paragraphs, headings only when the answer is long, no bullet lists of one-line fragments, no em dashes. When the library does not settle the question, say so in a sentence and give your own best judgment, marked as such.`;
+Writing the answer: open with the answer, not a restatement of the question. Reason in the open where it helps: connections between passages, what a prophet was responding to, where the texts are in tension. When a question turns on what a word or verse means, start from the original-language text (Hebrew, Greek, Aramaic) and the KJV rendering, then bring in the Restoration scriptures and the prophets. Quotation marks are a promise: anything inside them must be word for word from a passage the tools returned in this conversation, followed by its [n]. Never quote from memory, never smooth or modernize the wording, never run two verses together as one quotation. If you want to bring in a passage that has not been returned, search for it first; if it cannot be found, name it without quotation marks and say it was not in the library. Cite every claim a passage supports with [n]. For a list, give every item, grouped by volume or book in canonical order, each with its reference and the exact text or the key clause; do not summarize a list the person asked for in full. Plain prose, short paragraphs, headings only when the answer is long, no bullet lists of one-line fragments, no em dashes. When the library does not settle the question, say so in a sentence and give your own best judgment, marked as such.`;
 
   const SYSTEM_DRAFT = `You are Claude, composing talks, lessons, trainings, letters and outlines for an experienced Latter-day Saint leader (a mission president), with the library as your source of quotations. ${LIBRARY}
 
@@ -101,20 +101,23 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const modes = el("div", { class: "seg ask-mode" }, [
       el("button", { type: "button", "data-mode": "ask", class: "on", text: "Ask" }),
       el("button", { type: "button", "data-mode": "draft", text: "Draft" }),
+      ...modeSkills().map((k) => el("button", { type: "button", "data-mode": `skill:${k.id}`, text: k.name, title: k.description || "" })),
     ]);
     const input = el("textarea", { class: "ask-input", rows: 3, placeholder: "What have the prophets said about covenants and identity?", "aria-label": "Your question or request" });
     const go = el("button", { type: "button", class: "primary ask-go", text: "Ask" });
     const gear = el("button", { type: "button", class: "icon-btn", "aria-label": "Settings", title: "Settings", html: "&#9881;" });
-    const hint = el("div", { class: "ask-hint", text: "Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). Claude searches your library; every passage it finds becomes a card you can tick onto the deck." });
+    const hint = el("div", { class: "ask-hint", text: "Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). Claude searches your library; every passage it finds becomes a card you can tick onto the deck." + (GL().skills?.voice ? " Drafts are written in your voice." : "") });
     if (!log) log = el("div", { class: "ask-log" });
     for (const b of modes.querySelectorAll("button")) {
       b.addEventListener("click", () => {
         for (const x of modes.querySelectorAll("button")) x.classList.toggle("on", x === b);
-        const draft = b.dataset.mode === "draft";
-        go.textContent = draft ? "Draft" : "Ask";
-        input.placeholder = draft ? "A 10-minute zone conference training on obedience, with four scriptures and two conference quotes" : "What have the prophets said about covenants and identity?";
+        const m = b.dataset.mode;
+        const k = m.startsWith("skill:") ? modeSkills().find((x) => `skill:${x.id}` === m) : null;
+        go.textContent = m === "ask" ? "Ask" : k ? "Write" : "Draft";
+        input.placeholder = k ? (k.placeholder || `What to write: ${k.description || k.name}`) : m === "draft" ? "A 10-minute zone conference training on obedience, with four scriptures and two conference quotes" : "What have the prophets said about covenants and identity?";
       });
     }
+    window.addEventListener("skills:change", () => { if (view === container && container.isConnected) render(container); }, { once: true });
     go.addEventListener("click", () => submit(input, modes, log));
     input.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(input, modes, log); } });
     gear.addEventListener("click", () => renderSettings(container));
@@ -179,7 +182,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     if (!navigator.onLine) { log.prepend(el("div", { class: "status error", text: "Ask needs an internet connection. Search and reading work offline." })); return; }
     // A deck in progress: ask what this question should do with it first.
     if (window.Deck?.shouldAsk()) {
-      const choice = await window.Deck.askAboutDeck({ kind: mode === "draft" ? "request" : "question" });
+      const choice = await window.Deck.askAboutDeck({ kind: mode === "ask" ? "question" : "request" });
       if (choice === "cancel" || busy) return;
     }
     busy = true;
@@ -333,12 +336,46 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return `[${p.n}] ${p.label}\n${t.length > max ? t.slice(0, max) + " […]" : t}`;
   }
 
+  // The owner's private skills (published sealed with the library, unlocked
+  // on the device): a voice to write every draft in, a house style for
+  // answers, and whole pieces to write (a weekly letter) as modes of their own.
+  function modeSkills() { return (GL().skills?.skills || []).filter((k) => k && k.kind === "mode" && k.id && k.text); }
+  function modeSkill(mode) { return mode.startsWith("skill:") ? modeSkills().find((k) => `skill:${k.id}` === mode) || null : null; }
+  function systemFor(mode) {
+    const sk = GL().skills || {};
+    const blocks = [];
+    if (mode === "ask") {
+      blocks.push(SYSTEM_ASK);
+      if (sk.style) blocks.push(`House style for answers, from the person you are writing for:\n\n${sk.style}`);
+    } else {
+      blocks.push(SYSTEM_DRAFT);
+      if (sk.voice) blocks.push(`The voice to write in. These rules were written by the person you write for, from his own edits; they outrank anything a draft could do:\n\n${sk.voice}`);
+      const k = modeSkill(mode);
+      if (k) blocks.push(`The piece to write, and how:\n\n${k.text}`);
+    }
+    // The last block carries the cache marker, so the tool loop and the next
+    // question reuse the prompt instead of paying for it each turn.
+    return blocks.map((text, i) => ({ type: "text", text, ...(i === blocks.length - 1 ? { cache_control: { type: "ephemeral" } } : {}) }));
+  }
+  // The week and date a weekly piece is for, from the skill's first week.
+  function weekLine(k) {
+    if (!k || !k.week1) return "";
+    const today = new Date();
+    const sunday = new Date(today); sunday.setDate(today.getDate() - today.getDay());
+    const first = new Date(k.week1 + "T12:00:00");
+    const n = Math.round((sunday - first) / (7 * 86400000)) + 1;
+    const fmt = (d) => d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    return `Today is ${fmt(today)}. Unless the request says otherwise this is Week ${n}, dated Sunday ${fmt(sunday)}.`;
+  }
+
   // ------------------------------------------------------------------ agent --
   // Claude searches the library with tools until it is ready to answer; the
   // final text streams into the answer box.
   async function agent(text, mode, registry, findings, statusEl, answerEl) {
     const head = registry.list.map((p) => passageLine(p)).join("\n\n");
-    const first = `${mode === "draft" ? "Request" : "Question"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
+    const k = modeSkill(mode);
+    const lead = [weekLine(k)].filter(Boolean).join(" ");
+    const first = (lead ? lead + "\n\n" : "") + `${mode === "ask" ? "Question" : "Request"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
     const messages = [...thread.map((m) => ({ role: m.role, content: m.content })), { role: "user", content: first }];
     let calls = 0, finalText = "";
     for (let turn = 0; turn < MAX_TOOL_CALLS + 2; turn++) {
@@ -346,8 +383,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       const flush = () => { pending = false; answerEl.innerHTML = markdown(buffer, registry.list); };
       let thought = "";
       const res = await complete({
-        model: settings.model, system: mode === "draft" ? SYSTEM_DRAFT : SYSTEM_ASK, messages, tools: calls < MAX_TOOL_CALLS ? TOOLS : undefined,
-        max_tokens: mode === "draft" ? 20000 : 16000, stream: true, thinking: settings.think,
+        model: settings.model, system: systemFor(mode), messages, tools: calls < MAX_TOOL_CALLS ? TOOLS : undefined,
+        max_tokens: mode === "ask" ? 16000 : 20000, stream: true, thinking: settings.think,
         onDelta: (t) => { buffer += t; if (!pending) { pending = true; requestAnimationFrame(flush); } },
         onThinking: (t) => { thought = (thought + t).slice(-2000); statusEl.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
       });

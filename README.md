@@ -60,6 +60,13 @@ not.
   library. Pick the model in settings: Fable 5.1, Opus 5.5, Sonnet 5.5 or
   Haiku 5.5. Runs on your own Claude API key (from console.anthropic.com),
   stored on the device and sent only to Anthropic.
+- Your own voice and skills, kept private. A skills file (how drafts should
+  sound, a house style for answers, and whole pieces such as the weekly
+  letter, which appears as its own mode beside Ask and Draft) travels sealed
+  with the library, unlocked on the device with the same passphrase. It is
+  never committed to the repository: hand it to the nightly job once through
+  the workflow's `skills` input (a gzip, base64 blob), and it is kept
+  encrypted with the job's state from then on.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it
   sees one.
@@ -112,8 +119,18 @@ unchanged, up to four months. Requests go out one every half second, never in
 parallel, and robots.txt is honored. Pages the site says it does not have are
 retried on a backing-off schedule.
 
-Between runs the job keeps its working state (the database and raw copies of
-every page) as encrypted assets on a release named `state`.
+Between runs the job keeps its working state (the database, raw copies of
+every page, and the private skills file if one was handed in) as encrypted
+assets on a release named `state`.
+
+To hand in or replace the skills file: `gzip -9c skills.json | base64 -w0`,
+then run the workflow with that text as the `skills` input (from the Actions
+tab, or `gh api -X POST repos/OWNER/gospel-library/actions/workflows/sync.yml/dispatches -f ref=main -f "inputs[skills]=$(...)"`).
+The file is JSON: `{"voice": "...", "style": "...", "skills": [{"id":
+"weekly-letter", "name": "Letter", "kind": "mode", "description": "...",
+"placeholder": "...", "week1": "2026-06-28", "text": "..."}]}`. `voice` is
+prepended to every draft, `style` to every answer, and each `kind: "mode"`
+skill becomes a mode of its own.
 
 ## Working on it locally
 

@@ -166,6 +166,31 @@ const methods = {
   },
 
   async stats() { need(); return stats(); },
+  // A small sealed file published beside the library (the owner's private
+  // writing skills), unlocked with the same passphrase and returned as text.
+  async unseal({ url, passphrase }) {
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) throw new Error(`could not download (${resp.status})`);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    const dv = new DataView(buf.buffer);
+    if (new TextDecoder().decode(buf.subarray(0, 6)) !== "GLIB1\n") throw new Error("not a sealed file");
+    const hlen = dv.getUint32(6);
+    const header = JSON.parse(new TextDecoder().decode(buf.subarray(10, 10 + hlen)));
+    const key = await deriveKey(passphrase, header);
+    const prefix = b64(header.nonce_prefix);
+    let pos = 10 + hlen;
+    const parts = [];
+    for (let i = 0; i < header.chunks; i++) {
+      const clen = dv.getUint32(pos); pos += 4;
+      const ct = buf.subarray(pos, pos + clen); pos += clen;
+      const iv = new Uint8Array(12); iv.set(prefix, 0); new DataView(iv.buffer).setUint32(8, i);
+      try { parts.push(new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: u32(i) }, key, ct))); }
+      catch (_) { throw new Error("That passphrase does not unlock this file."); }
+    }
+    let plain = new Blob(parts);
+    if (header.compressed) plain = new Blob([await new Response(plain.stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer()]);
+    return await plain.text();
+  },
   async search(params) { need(); return search(params); },
   async doc({ id, uri }) { need(); return document(id, uri); },
   async resolve({ href }) { need(); return resolve(href); },

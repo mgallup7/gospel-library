@@ -163,9 +163,17 @@ def content_version(conn: sqlite3.Connection) -> str:
     return h.hexdigest()[:16]
 
 
-def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH) -> dict:
-    """Create out_dir/library.bin and out_dir/manifest.json from the library."""
+def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, skills_path: Path | None = None) -> dict:
+    """Create out_dir/library.bin and out_dir/manifest.json from the library.
+
+    If a private skills file (data/skills.json: how Ask should write for its
+    owner) is present, it is sealed alongside as skills.bin and listed in the
+    manifest, so the app can fetch and unlock it with the same passphrase.
+    """
     from .db import stats
+
+    if skills_path is None:
+        skills_path = config.DATA_DIR / "skills.json"
 
     out_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -201,5 +209,9 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH) -> 
         "latest_conference": s["latest_conference"],
         "collections": [{"slug": c["slug"], "title": c["title"], "docs": c["docs"]} for c in s["collections"]],
     }
+    if skills_path.exists():
+        json.loads(skills_path.read_text(encoding="utf-8"))  # must be valid JSON before it is sealed
+        sh = encrypt_file(skills_path, out_dir / "skills.bin", passphrase, extra={"kind": "skills"})
+        manifest["skills"] = {"file": "skills.bin", "sha256": sh["sha256"], "size": sh["bundle_size"], "built_at": sh["built_at"]}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     return manifest
