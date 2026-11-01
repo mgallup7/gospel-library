@@ -310,7 +310,7 @@
     ]);
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, more]), moreRow, banner, hint]);
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, more]), moreRow, banner]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -319,7 +319,7 @@
     const canvas = el("div", { class: "board-canvas" }, [cards, svg, labels]);
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
-    board.append(head, canvas, saved, status);
+    board.append(head, canvas, saved, status, hint);
     ui = { title, subtitle, themes, download, present, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
@@ -356,8 +356,8 @@
     } else ui.banner.hidden = true;
     ui.hint.textContent = empty
       ? "Nothing here yet. Tick a passage under an Ask answer, tap + on a search result, or select verses while reading and choose Add to deck."
-      : count() === 1 ? "Tap the first and last word of a phrase to highlight it. Add a second passage and drag the dot at the end of a highlight onto a phrase there to draw the arrow."
-      : "Tap the first and last word of a phrase to highlight it. Drag the dot at the end of a highlight onto a phrase in another passage to link them; tap the number on the arrow, or the chip under the card, to name the connection.";
+      : count() === 1 ? "To highlight: tap the first and last word of a phrase. To link: add another passage, then drag the dot at the end of a highlight onto a phrase there."
+      : "To highlight: tap the first and last word of a phrase. To link: drag the dot at the end of a highlight onto a phrase in another passage. To name a link: tap its number.";
   }
 
   function drawCards() {
@@ -377,13 +377,12 @@
         cards.append(card);
         return;
       }
-      const meta = el("div", { class: "bc-meta" }, [
-        el("div", { class: "bc-cite", text: it.citation }),
-        it.where || it.label ? el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }) : null,
-      ]);
+      const meta = el("div", { class: "bc-meta" }, [el("div", { class: "bc-cite", text: it.citation })]);
       const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
       card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
       card.append(textEl(it));
+      // the talk and conference sit under the words, the way an attribution follows a quote
+      if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
       if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint", text: "Now tap the last word of the phrase." }));
       if (active && active.id === it.id) {
         const h = hlById(it, active.hl);

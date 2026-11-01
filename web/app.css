@@ -423,7 +423,7 @@ body.presenting { overflow: hidden; }
 .board .theme .swatch b { font-size: 13px; }
 .board .theme .swatch i { left: 7px; bottom: 5px; width: 14px; }
 .board .theme-name { font-size: 11px; }
-.board .deck-hint { margin: 6px 0 10px; }
+.board .deck-hint { margin: 14px 0 0; }
 .board-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 6px 0; border-radius: 10px; background: var(--target); font-size: 14px; }
 .board-banner span { flex: 1; }
 .board-canvas { position: relative; padding-right: 30px; }
@@ -448,7 +448,7 @@ body.presenting { overflow: hidden; }
 .bcard .bc-meta { flex: 1; min-width: 0; }
 .bcard .bc-kind { font-size: 12px; color: var(--ink-3); margin-bottom: 2px; }
 .bcard .bc-cite { font: 600 14px var(--sans); color: var(--accent); }
-.bcard .bc-src { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
+.bcard .bc-src { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
 .bcard .bc-tools { display: flex; gap: 2px; }
 .bcard .bc-tools button { width: 30px; height: 28px; border-radius: 6px; color: var(--ink-2); background: var(--chrome); font-size: 15px; }
 .bcard .bc-tools button:disabled { opacity: .3; }
