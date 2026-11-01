@@ -21,11 +21,21 @@
   const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures). It is searched with the tools below. Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly rather than quoting it from memory.`;
 
   const TOOLS_GUIDE = `Tools:
-- search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, handbook, cfm, or helps. Run several searches with different vocabulary (scriptural and modern) before concluding something is not there.
-- find_all: every passage in a scope that contains a word family (prefix-matched) or an exact phrase, in reading order, with the total and a count per chapter or talk. This is the tool for "all the references to…", "every verse that says…", "everywhere Preach My Gospel mentions…", or any list meant to be complete. Scope is scriptures, ot, nt, bofm, dc, pgp, pmg, conference, handbook, cfm, helps, or all. Give it the word family ("redeem redeemed redemption redeemer") or the phrase ("Holy Ghost"); call it once per wording when a subject has several ("Holy Ghost", "Spirit of God", "Spirit of the Lord").
-- read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11").
+- search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, handbook, cfm, or helps; speaker and years narrow conference talks.
+- find_all: every passage in a scope that contains a word family (prefix-matched) or an exact phrase, in reading order, with the total and a count per chapter or talk. Scope is scriptures, ot, nt, bofm, dc, pgp, pmg, conference, handbook, cfm, helps, or all.
+- read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11", a talk title).
 
-Search until the question is answered or the list is complete; a dozen tool calls is fine. Every passage a tool returns carries a number like [12]; cite with those numbers and only those. Then write the answer.`;
+How to search. Work the way a careful researcher works in a library, not the way a search box works:
+1. Decide what a complete answer needs before the first search: a list (then every item), a doctrine (then the defining passages and what the prophets have taught about them), a quotation (then the exact words and their setting), a comparison (then both sides in their own words).
+2. Search more than once, with different vocabulary: the scriptural wording and the modern wording ("endure to the end" and "perseverance"; "Holy Ghost", "Holy Spirit", "Spirit of God", "the Comforter"), the phrase and the word family, and each scope in turn when the question spans scripture, conference, and the manuals. One search is never enough. A substantive question takes six to twelve tool calls; the limit is fourteen, so spend them on different wordings, not repeats.
+3. For anything meant to be complete ("all", "every", "each time", "how many"), use find_all once per wording and per scope, and count. Never estimate a list from a ranked sample.
+4. Read before you quote. When a passage will be quoted or interpreted, read it in context so the meaning is the author's and not the snippet's: the verses around it, the paragraphs around a line of a talk, the heading of the chapter.
+5. Follow the thread. A passage that names another, a scripture a speaker quotes, a doctrine a verse assumes, is a lead; look it up.
+6. Prefer the primary source: for what a prophet said, his own talk and not a manual's summary; for doctrine, the scripture first, then the prophets' teaching about it.
+7. Check your memory against the library. If you recall a passage the tools have not returned, search for it before using it; if it is not there, say so rather than quoting it.
+8. Stop when further searches return nothing new, then write. Before writing, make sure every quotation you will use is on the list of passages returned, word for word.
+
+Every passage a tool returns carries a number like [12]; cite with those numbers and only those.`;
 
   const SYSTEM_ASK = `You are Claude, studying inside a personal library that belongs to an experienced Latter-day Saint leader (a mission president); speak to him as a peer and bring your full understanding to the question, the way you would in an ordinary conversation, with the library as your source of quotations. ${LIBRARY}
 
@@ -107,7 +117,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const input = el("textarea", { class: "ask-input", rows: 3, placeholder: "What have the prophets said about covenants and identity?", "aria-label": "Your question or request" });
     const go = el("button", { type: "button", class: "primary ask-go", text: "Ask" });
     const gear = el("button", { type: "button", class: "icon-btn", "aria-label": "Settings", title: "Settings", html: "&#9881;" });
-    const hint = el("div", { class: "ask-hint", text: "Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). Claude searches your library; every passage it finds becomes a card you can tick onto the deck." + (GL().skills?.voice ? " Drafts are written in your voice." : "") });
+    const modelName = MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model;
+    const hint = el("div", { class: "ask-hint", text: `Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). ${modelName}${settings.think ? ", thinking first," : ""} searches your library the way a researcher would, several searches deep; every passage it finds becomes a card you can tick onto the deck.` + (GL().skills?.voice ? " Drafts are written in your voice." : "") });
     if (!log) log = el("div", { class: "ask-log" });
     for (const b of modes.querySelectorAll("button")) {
       b.addEventListener("click", () => {
@@ -206,12 +217,13 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       const head = await registry.search({ query: text, limit: 10 });
       findings.refresh();
       status.textContent = head.length ? `${head.length} passages to start. Claude is searching further…` : "Claude is searching…";
-      const reply = await agent(text, mode, registry, findings, status, answer);
+      const trail = [];
+      const reply = await agent(text, mode, registry, findings, status, answer, trail);
       lastPassages = registry.list;
       thread.push({ role: "user", content: text }, { role: "assistant", content: reply });
       if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
       status.remove();
-      finish(answer, sources, tools, reply, registry.list, input, modes, log);
+      finish(answer, sources, tools, reply, registry.list, input, modes, log, trail);
       findings.setCited([...new Set([...reply.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]);
     } catch (err) {
       status.textContent = "";
@@ -373,7 +385,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   // ------------------------------------------------------------------ agent --
   // Claude searches the library with tools until it is ready to answer; the
   // final text streams into the answer box.
-  async function agent(text, mode, registry, findings, statusEl, answerEl) {
+  async function agent(text, mode, registry, findings, statusEl, answerEl, trail = []) {
     const head = registry.list.map((p) => passageLine(p)).join("\n\n");
     const k = modeSkill(mode);
     const lead = [weekLine(k)].filter(Boolean).join(" ");
@@ -398,20 +410,28 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       for (const tu of res.tool_uses) {
         calls++;
         let content = "";
+        const step = { tool: tu.name, what: "", found: null };
+        trail.push(step);
         try {
           if (tu.name === "search") {
-            statusEl.textContent = `Searching: ${tu.input.query}${tu.input.scope && tu.input.scope !== "all" ? ` (${tu.input.scope})` : ""}…`;
+            step.what = `${tu.input.query}${tu.input.scope && tu.input.scope !== "all" ? ` (${tu.input.scope})` : ""}${tu.input.speaker ? `, ${tu.input.speaker}` : ""}${tu.input.year_from || tu.input.year_to ? `, ${tu.input.year_from || ""}–${tu.input.year_to || ""}` : ""}`;
+            statusEl.textContent = `Searching: ${step.what}…`;
             const out = await registry.search(tu.input);
+            step.found = out.length;
             content = out.length ? out.map((p) => passageLine(p)).join("\n\n") : "No passages matched. Try other words or a different scope.";
           } else if (tu.name === "find_all" || tu.name === "find_all_verses") {
             const what = tu.input.phrase ? `“${tu.input.phrase}”` : tu.input.words;
-            statusEl.textContent = `Finding every passage with ${what}${tu.input.scope && tu.input.scope !== "all" ? ` in ${tu.input.scope}` : ""}…`;
+            step.what = `every passage with ${what}${tu.input.scope && tu.input.scope !== "all" ? ` in ${tu.input.scope}` : ""}`;
+            statusEl.textContent = `Finding ${step.what}…`;
             const r = await registry.matches({ words: tu.input.words, phrase: tu.input.phrase, scope: tu.input.scope || tu.input.volume || "all", limit: tu.input.limit });
+            step.found = r.total;
             const where = r.by_document.map((d) => `${d.title}${d.volume ? ` (${d.volume})` : ""} ${d.n}`).join("; ");
             content = r.error ? `Error: ${r.error}` : `${r.total} passages match${where ? ` (${where})` : ""}${r.out.length < r.total ? `; showing the first ${r.out.length}. Narrow the scope or the wording for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.label}: ${p.text}`).join("\n");
           } else if (tu.name === "read") {
+            step.what = `read ${tu.input.reference || `passage [${tu.input.passage}] in context`}`;
             statusEl.textContent = `Reading ${tu.input.reference || `passage ${tu.input.passage}`}…`;
             const r = await registry.read(tu.input);
+            step.found = r.out ? r.out.length : null;
             content = r.error ? `Error: ${r.error}` : (r.title ? `${r.title}\n\n` : "") + r.out.map((p) => passageLine(p, 600)).join("\n\n");
           } else content = `Unknown tool ${tu.name}`;
         } catch (err) { content = `Error: ${err.message}`; }
@@ -427,7 +447,14 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return finalText;
   }
 
-  function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log) {
+  function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log, trail = []) {
+    // The trail: what was searched, read, and counted, so the work can be checked.
+    const model = MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model;
+    const trailEl = el("details", { class: "ask-trail" }, [
+      el("summary", { text: `${trail.length ? `${trail.length} ${trail.length === 1 ? "search" : "searches"}, ${passages.length} passages` : `${passages.length} passages`} · ${model}${settings.think ? ", thinking" : ""}` }),
+      trail.length ? el("ol", {}, trail.map((t) => el("li", { text: `${t.tool === "search" ? "Searched" : t.tool === "read" ? "" : "Counted"}${t.tool === "read" ? "" : ": "}${t.what.replace(/^read /, "Read ")}${t.found !== null && t.found !== undefined ? ` (${t.found})` : ""}` }))) : null,
+    ]);
+    sourcesEl.append(trailEl);
     const bad = unverifiedQuotes(reply, passages);
     if (bad.length) {
       sourcesEl.append(el("div", { class: "quote-note" }, [

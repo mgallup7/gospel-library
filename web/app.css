@@ -354,6 +354,10 @@ body.presenting { overflow: hidden; }
 .cite:active { background: var(--rule); }
 .ask-sources .src { display: block; width: 100%; text-align: left; padding: 7px 0; font-size: 13px; color: var(--ink-2); border-bottom: 1px solid var(--rule); }
 .ask-a .unverified { text-decoration: underline dotted #b4232c 2px; text-underline-offset: 3px; }
+.ask-trail { margin: 8px 0 2px; font-size: 13px; color: var(--ink-2); }
+.ask-trail summary { cursor: pointer; color: var(--ink-3); }
+.ask-trail ol { margin: 6px 0 0; padding-left: 1.4em; }
+.ask-trail li { margin-bottom: 2px; }
 .quote-note { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin: 6px 0 2px; padding: 8px 10px; border-radius: 10px; background: var(--target); font-size: 13px; color: var(--ink-2); }
 .ask-sources .src b { display: inline-block; min-width: 1.6em; color: var(--accent); }
 .ask-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
