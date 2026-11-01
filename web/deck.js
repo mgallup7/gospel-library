@@ -812,16 +812,47 @@
       if (l.label) {
         const { x, y, above } = l.labelAt;
         const ty = y * S + (above === null ? 6 : above ? -7 : 19);
-        svg += `<text x="${f(x)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="17" fill="currentColor" opacity=".9">${esc(l.label)}</text>`;
+        svg += `<text x="${f(x)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="16" fill="currentColor" opacity=".9">${esc(l.label)}</text>`;
       }
     }
+    const accent = "var(--stage-accent, currentColor)";
     for (const nd of lay.nodes) {
-      const size = Math.min(19, Math.max(11, (nd.w * S * 0.9) / Math.max(1, nd.label.length * 0.56)));
-      svg += `<rect x="${f(nd.x - nd.w / 2)}" y="${f(nd.y - nd.h / 2)}" width="${f(nd.w)}" height="${f(nd.h)}" rx="9" fill="rgba(127,127,127,.12)" stroke="currentColor" stroke-width="2"/>` +
-        `<text x="${f(nd.x)}" y="${f(nd.y) + size * 0.36}" text-anchor="middle" font-size="${size.toFixed(1)}" font-weight="600" fill="currentColor">${esc(nd.label)}</text>`;
+      const bx = nd.x * S, by = nd.y * S, bw = nd.w * S, bh = nd.h * S;
+      svg += `<rect x="${(bx - bw / 2).toFixed(1)}" y="${(by - bh / 2).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="9" fill="rgba(127,127,127,.14)" stroke="currentColor" stroke-width="1.5" opacity=".9"/>`;
+      const refSize = Math.min(15, Math.max(10, (bw * 0.92) / Math.max(1, nd.label.length * 0.58)));
+      const top = by - bh / 2;
+      svg += `<text x="${bx.toFixed(1)}" y="${(top + 9 + refSize).toFixed(1)}" text-anchor="middle" font-size="${refSize.toFixed(1)}" font-weight="700" style="fill:${accent}">${esc(nd.label)}</text>`;
+      const size = nd.w >= 2 ? 13 : nd.w >= 1.7 ? 12 : 11;
+      const lines = wrapWords(nd.excerpt, Math.max(8, Math.floor((bw - 16) / (size * 0.5))), 3);
+      lines.forEach((line, i) => { svg += `<text x="${bx.toFixed(1)}" y="${(top + 9 + refSize + 7 + (i + 1) * size * 1.18).toFixed(1)}" text-anchor="middle" font-size="${size}" fill="currentColor" opacity=".92">${esc(line)}</text>`; });
     }
     svg += "</svg>";
     return { kind: "map", html: svg, where: deck.title ? `${deck.title}: the chain` : "The chain" };
+  }
+  // Greedy word wrap for SVG text, with an ellipsis when it runs past the lines allowed.
+  function wrapWords(text, perLine, maxLines) {
+    const lines = [];
+    let cur = "";
+    for (const w of String(text || "").split(/\s+/).filter(Boolean)) {
+      if (cur && (cur + " " + w).length > perLine) { lines.push(cur); cur = w; if (lines.length === maxLines) break; } else cur = cur ? cur + " " + w : w;
+    }
+    if (lines.length < maxLines && cur) lines.push(cur);
+    const used = lines.join(" ").split(/\s+/).length, all = String(text || "").split(/\s+/).filter(Boolean).length;
+    if (used < all && lines.length) lines[lines.length - 1] = lines[lines.length - 1].replace(/[,;:.]?$/, "") + " …";
+    return lines;
+  }
+  // What a passage says, in a box: its highlighted phrases, or its opening words.
+  function nodeExcerpt(it, maxWords = 18) {
+    const words = wordsOf(it);
+    const hls = (it.hl || []).slice().sort((a, b) => a.s - b.s);
+    if (hls.length) {
+      const parts = [];
+      let left = maxWords;
+      for (const h of hls) { const ws = words.slice(h.s, h.e + 1).map((x) => x.w); if (left <= 0) break; parts.push(ws.slice(0, left).join(" ")); left -= ws.length; }
+      return `“${parts.join(" … ")}”`;
+    }
+    const ws = words.map((x) => x.w);
+    return `“${ws.slice(0, maxWords).join(" ")}${ws.length > maxWords ? " …" : ""}”`;
   }
   // The chain as one picture: passages in deck order, left to right (up to
   // five a row), each arrow routed above the row (forward) or below it
@@ -830,15 +861,15 @@
   function mapLayout() {
     const g = graph();
     if (!g) return null;
-    const W = 10, M = 0.75, inner = W - 2 * M, top = 1.05, bottom = 4.9;
+    const W = 10, M = 0.75, inner = W - 2 * M, top = 0.98, bottom = 4.95;
     const n = g.nodes.length;
     const perRow = Math.min(5, n);
     const rows = Math.ceil(n / perRow);
-    const gap = 0.35;
-    const bw = Math.min(1.9, (inner - (perRow - 1) * gap) / perRow), bh = 0.52;
+    const gap = 0.3;
+    const bw = Math.min(2.4, (inner - (perRow - 1) * gap) / perRow), bh = rows <= 2 ? 1.0 : 0.8;
     const x0 = M + (inner - (perRow * bw + (perRow - 1) * gap)) / 2 + bw / 2;
-    const rowY = rows === 1 ? [3.0] : rows === 2 ? [2.15, 3.95] : Array.from({ length: rows }, (_, r) => top + 0.5 + r * ((bottom - top - 1.0) / (rows - 1)));
-    const nodes = g.nodes.map((node, i) => ({ ...node, i, row: Math.floor(i / perRow), x: x0 + (i % perRow) * (bw + gap), y: rowY[Math.floor(i / perRow)], w: bw, h: bh }));
+    const rowY = rows === 1 ? [3.0] : rows === 2 ? [2.18, 3.68] : Array.from({ length: rows }, (_, r) => top + bh / 2 + 0.1 + r * ((bottom - top - bh - 0.2) / (rows - 1)));
+    const nodes = g.nodes.map((node, i) => ({ ...node, i, row: Math.floor(i / perRow), x: x0 + (i % perRow) * (bw + gap), y: rowY[Math.floor(i / perRow)], w: bw, h: bh, excerpt: nodeExcerpt(byId(node.id), perRow >= 5 ? 12 : perRow === 4 ? 14 : 18) }));
     const at = Object.fromEntries(nodes.map((nd) => [nd.id, nd]));
     const links = g.edges.map((e) => ({ label: e.label, a: at[e.from], b: at[e.to] }));
     const useLanes = rows <= 2;
@@ -869,7 +900,7 @@
       if (l.bracket) {
         const up = l.side === "top";
         const edge = (nd) => (up ? nd.y - nd.h / 2 : nd.y + nd.h / 2);
-        const laneY = Math.max(top, Math.min(bottom, up ? edge(l.a) - 0.26 - l.lane * 0.3 : edge(l.a) + 0.26 + l.lane * 0.3));
+        const laneY = Math.max(top, Math.min(bottom, up ? edge(l.a) - 0.22 - l.lane * 0.26 : edge(l.a) + 0.22 + l.lane * 0.26));
         const ax = attach(l, l.a), bx = attach(l, l.b);
         l.points = [[ax, edge(l.a)], [ax, laneY], [bx, laneY], [bx, edge(l.b)]];
         l.labelAt = { x: (ax + bx) / 2, y: laneY, above: up };
@@ -1105,7 +1136,11 @@
         }
       }
       for (const nd of lay.nodes) {
-        s.addText(nd.label, { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, fontFace: SANS, fontSize: 12, bold: true, color: t.text, align: "center", valign: "middle", margin: 4, fit: "shrink",
+        const big = nd.w >= 2;
+        s.addText([
+          { text: nd.label, options: { bold: true, fontSize: big ? 11 : 10, color: t.accent, fontFace: SANS, breakLine: true, paraSpaceAfter: 3 } },
+          { text: nd.excerpt, options: { fontSize: big ? 11 : nd.w >= 1.7 ? 10 : 9, color: t.text, fontFace: SERIF } },
+        ], { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, align: "center", valign: "middle", margin: 6, fit: "shrink", lineSpacingMultiple: 1.05,
           fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.08, shape: pptx.ShapeType.roundRect });
       }
       footer(s, n);
