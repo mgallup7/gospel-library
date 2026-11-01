@@ -323,6 +323,7 @@
       if (data.smart.book) bits.push(`in ${data.smart.book.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace("Sections", "D&C")}`);
       if (data.smart.scope) bits.push(`in ${{ conference: "conference", scriptures: "the scriptures", handbook: "the handbook", pmg: "Preach My Gospel", cfm: "Come, Follow Me", helps: "study helps" }[data.smart.scope] || data.smart.scope}`);
       if (data.smart.years) bits.push(data.smart.years[0] === data.smart.years[1] ? String(data.smart.years[0]) : `${data.smart.years[0]} to ${data.smart.years[1]}`);
+      if (data.smart.corrected?.length) bits.push(data.smart.corrected.map((c) => `${c.from} → ${c.to}`).join(", "));
       const line = el("div", { class: "smart-line" }, [
         el("span", { text: `Reading this as: ${bits.join(" · ")}` }),
         el("button", { type: "button", class: "text-btn small", text: "Exact words", onclick: () => { state.q = `"${data.query.trim()}"`; syncControls(); runSearch({ typeahead: false }); } }),

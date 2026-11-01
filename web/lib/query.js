@@ -90,6 +90,8 @@ const QUESTION_WORDS = new Set(("what when where which who whom whose why how do
   "own same too very just also ever never always often sometimes something anything nothing everything someone anyone everyone " +
   "say said says saying tell told tells teach taught teaches teaching talk talked talks talking speak spoke spoken speaks mention mentioned " +
   "find show give me list quote quotes quoted verse verses scripture scriptures passage passages reference references about regarding concerning " +
+  "pull pulls pulled get gets bring brings fetch grab collect gather compile please mentions mention mentioned cite cites cited citation citations " +
+  "places place time times use uses used using word words phrase phrases line lines anywhere everywhere whenever " +
   "need want like look looking search for best good great favorite examples example mean means meaning think thinks thought " +
   "lord's god's").split(/\s+/));
 
@@ -134,6 +136,13 @@ export function isNatural(raw) {
 }
 
 /** Turn a question into search parts. speakers: [{name, surname}] from the library. */
+// The entry a wording belongs to ("holy spirit" is listed under "holy ghost").
+let SYN_REVERSE = null;
+function synonymKey(wording) {
+  if (!SYN_REVERSE) { SYN_REVERSE = new Map(); for (const [k, alts] of Object.entries(SYNONYMS)) for (const a of alts) if (!SYN_REVERSE.has(a)) SYN_REVERSE.set(a, k); }
+  return SYN_REVERSE.get(wording) || null;
+}
+
 export function naturalQuery(raw, speakers = []) {
   let text = raw.trim().toLowerCase().replace(/[?.!,;]+/g, " ").replace(/’/g, "'");
   const out = { speaker: null, scope: null, bookSlug: null, yearFrom: null, yearTo: null, terms: [], phrase: null, strict: null, loose: null };
@@ -160,6 +169,42 @@ export function naturalQuery(raw, speakers = []) {
   for (const w of words) {
     if (BOOK_WORDS.has(w) && words.length > 2) { out.bookSlug = BOOK_WORDS.get(w); words = words.filter((x) => x !== w); if (out.bookSlug === "1-nephi") out.bookSlug = null; break; }
   }
+  const trim = (list) => {
+    let a = 0, b = list.length - 1;
+    while (a <= b && QUESTION_WORDS.has(list[a])) a++;
+    while (b >= a && QUESTION_WORDS.has(list[b])) b--;
+    return list.slice(a, b + 1);
+  };
+  const group = (w) => {
+    const alts = [w, ...(SYNONYMS[w] || [])].map((a) => phrase(a)).filter(Boolean);
+    return alts.length > 1 ? `(${alts.join(" OR ")})` : alts[0];
+  };
+
+  // "holy spirit or spirit of god": each side of an "or" is one idea, and a
+  // side of several words is searched as the phrase it is.
+  if (words.includes("or")) {
+    const sides = [];
+    let cur = [];
+    for (const w of words) { if (w === "or") { sides.push(cur); cur = []; } else cur.push(w); }
+    sides.push(cur);
+    const alts = [], terms = [];
+    for (const side of sides) {
+      const core = trim(side);
+      const content = core.filter((w) => !QUESTION_WORDS.has(w) && w.length > 1 && /[a-z]/.test(w));
+      if (!content.length) continue;
+      terms.push(...content);
+      const joined = core.join(" ");
+      const known = SYNONYMS[joined] ? joined : synonymKey(joined);
+      alts.push(known ? group(known) : core.length >= 2 && core.length <= 6 ? phrase(joined) : group(content[0]));
+    }
+    if (alts.length >= 2) {
+      out.terms = [...new Set(terms)];
+      out.strict = alts.join(" OR ");
+      out.loose = alts.length > 1 ? alts.join(" OR ") : null;
+      return out;
+    }
+  }
+
   const content = words.filter((w) => !QUESTION_WORDS.has(w) && w.length > 1 && /[a-z]/.test(w));
   const uniq = [...new Set(content)];
   if (!uniq.length) return out;
@@ -167,16 +212,9 @@ export function naturalQuery(raw, speakers = []) {
 
   // The words as typed, trimmed of leading and trailing filler: an exact phrase
   // such as "plan of happiness" should beat any clever expansion.
-  let a = 0, b = words.length - 1;
-  while (a <= b && QUESTION_WORDS.has(words[a])) a++;
-  while (b >= a && QUESTION_WORDS.has(words[b])) b--;
-  const core = words.slice(a, b + 1);
+  const core = trim(words);
   if (core.length >= 2 && core.length <= 7 && core.some((w) => !QUESTION_WORDS.has(w))) out.phrase = phrase(core.join(" "));
 
-  const group = (w) => {
-    const alts = [w, ...(SYNONYMS[w] || [])].map((a) => phrase(a)).filter(Boolean);
-    return alts.length > 1 ? `(${alts.join(" OR ")})` : alts[0];
-  };
   const groups = uniq.map(group);
   out.strict = groups.join(" AND ");
   out.loose = groups.length > 1 ? groups.join(" OR ") : null;

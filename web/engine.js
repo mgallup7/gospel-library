@@ -201,6 +201,7 @@ const methods = {
   async scriptures() { need(); return shelf(); },
   async context({ doc_id, pid, before = 1, after = 1 }) { need(); return context(Number(doc_id), pid, before, after); },
   async verses({ words, volume = "all", limit = 400 }) { need(); return allVerses(words, volume, limit); },
+  async matches(params) { need(); return allMatches(params || {}); },
 };
 
 function need() { if (!db) throw new Error("no library is loaded yet"); }
@@ -395,11 +396,12 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
 // A question, answered in tiers: the exact phrase first, then passages with
 // every idea, then passages with any of them, best matches first within each.
 function naturalSearch(q, { scope, limit, offset, speaker, from, to, book }) {
-  const n = naturalQuery(q, speakersBySurname());
+  const fixed = correctTypos(q);
+  const n = naturalQuery(fixed.text, speakersBySurname());
   if (!n.terms.length) return null;
   const cq = { collections: scopeCollections(n.scope || scope || "all"), speaker: speaker || n.speaker, yearFrom: from ? Number(from) : n.yearFrom, yearTo: to ? Number(to) : n.yearTo, bookSlug: n.bookSlug, terms: n.terms };
   if (book) { const ref = S.parseReference(book); if (ref) cq.bookSlug = ref.book.slug; }
-  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], smart: { terms: n.terms, speaker: cq.speaker, scope: n.scope, book: cq.bookSlug, years: n.yearFrom ? [n.yearFrom, n.yearTo] : null } };
+  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], smart: { terms: n.terms, speaker: cq.speaker, scope: n.scope, book: cq.bookSlug, years: n.yearFrom ? [n.yearFrom, n.yearTo] : null, corrected: fixed.changes } };
   const seen = new Set();
   const want = limit + offset;
   const tiers = [n.phrase, n.strict, n.loose].filter(Boolean).filter((m, i, arr) => arr.indexOf(m) === i);
@@ -416,6 +418,13 @@ function naturalSearch(q, { scope, limit, offset, speaker, from, to, book }) {
   }
   const last = tiers[tiers.length - 1];
   try { out.total = Math.max(collected.length, last ? value(`SELECT COUNT(*) ${baseSql(cq)}`, [last, ...whereParams(cq)]) : 0); } catch (_) { out.total = collected.length; }
+  // Show a corrected word as it is written in the text, not as the index stores it ("charity", not "chariti").
+  for (const c of fixed.changes) {
+    for (const r of collected.slice(0, 30)) {
+      const w = (r.text || "").split(/[^\p{L}'’]+/u).find((x) => x.length >= 3 && stem(x.toLowerCase()) === c.to);
+      if (w) { c.to = w.toLowerCase(); break; }
+    }
+  }
   for (const r of collected.slice(offset, offset + limit)) {
     out.hits.push({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse,
       snippet: r.kind === "verse" ? markTerms(r.text, expandTerms(n.terms)) : highlight(r.snip), citation: citation(r, r.verse) });
@@ -423,6 +432,66 @@ function naturalSearch(q, { scope, limit, offset, speaker, from, to, book }) {
   if (offset === 0) out.titles = titleMatches(n.terms, cq);
   return out;
 }
+// A word the library has never seen ("spirt") is swapped for the nearest
+// word it has, measured against the index's own vocabulary; everything else
+// is left exactly as typed.
+let vocab = null;
+function loadVocab() {
+  if (vocab) return vocab;
+  try {
+    db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab USING fts5vocab(main, 'paragraphs', 'row')");
+    vocab = rows("SELECT term, cnt FROM temp.vocab WHERE cnt >= 2 AND length(term) >= 3").map((r) => [r.term, r.cnt]);
+  } catch (_) { vocab = []; }
+  return vocab;
+}
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+// The index's own stemmer, applied to one word (so "charty" is compared as
+// "charti", the way "charity" is stored).
+let stemReady = false;
+function stem(w) {
+  try {
+    if (!stemReady) {
+      db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.stemq USING fts5(w, tokenize='porter unicode61 remove_diacritics 2'); CREATE VIRTUAL TABLE IF NOT EXISTS temp.stemv USING fts5vocab(temp, 'stemq', 'row')");
+      stemReady = true;
+    }
+    db.exec("DELETE FROM temp.stemq");
+    db.exec({ sql: "INSERT INTO temp.stemq(w) VALUES (?)", bind: [w] });
+    return value("SELECT term FROM temp.stemv LIMIT 1") || w;
+  } catch (_) { return w; }
+}
+function correctTypos(q) {
+  const changes = [];
+  if (!db || /["']|\w+:/.test(q)) return { text: q, changes };
+  const text = q.replace(/\b([A-Za-z][a-z]{2,})\b/g, (word) => {
+    const w = word.toLowerCase();
+    if (QUESTION_WORDS_LOCAL.has(w)) return word;
+    let known = true;
+    try { known = !!row("SELECT rowid FROM paragraphs WHERE paragraphs MATCH ? LIMIT 1", [`"${w}"`]); } catch (_) { return word; }
+    if (known) return word;
+    const sw = stem(w);
+    const limit = sw.length >= 6 ? 2 : 1;
+    let best = null, bestD = limit + 1, bestCnt = 0;
+    for (const [term, cnt] of loadVocab()) {
+      if (term[0] !== sw[0] || Math.abs(term.length - sw.length) > limit) continue;
+      const d = editDistance(sw, term);
+      if (d < bestD || (d === bestD && cnt > bestCnt)) { best = term; bestD = d; bestCnt = cnt; }
+    }
+    if (!best) return word;
+    changes.push({ from: word, to: best });
+    return best;
+  });
+  return { text, changes };
+}
+const QUESTION_WORDS_LOCAL = new Set("what when where which who whom whose why how does do did the and for with from that this these those have has had can could should would will shall may might must about all any some every each pull give show find list get bring tell say said".split(" "));
 function expandTerms(terms) {
   const out = [];
   for (const t of terms) { out.push(t); for (const w of t.split(" ")) if (w.length > 3) out.push(w); }
@@ -490,6 +559,34 @@ async function document(id, uri) {
 // "redeem" also finds redeemed and redeemer), in canonical order. For the
 // complete lists a keyword search ranked by relevance cannot give.
 const VOLUMES = { ot: "Old Testament", nt: "New Testament", bofm: "Book of Mormon", dc: "Doctrine and Covenants", pgp: "Pearl of Great Price" };
+// Every passage in a scope with a word family or an exact phrase, in reading
+// order: the tool for "all the references to…" in any part of the library.
+function allMatches({ words, phrase, scope = "all", limit = 400 }) {
+  let match;
+  if (phrase && String(phrase).trim()) match = `"${String(phrase).trim().replace(/"/g, " ")}"`;
+  else {
+    const terms = String(words || "").toLowerCase().split(/[\s,]+|\bor\b/).map((w) => w.replace(/[^\p{L}\p{N}'’*]/gu, "")).filter((w) => w.length > 1);
+    if (!terms.length) return { total: 0, passages: [], query: "" };
+    match = terms.map((t) => (t.endsWith("*") ? `"${t.slice(0, -1)}"*` : `"${t}"*`)).join(" OR ");
+  }
+  const where = ["paragraphs MATCH ?", "p.kind IN ('verse','para')"];
+  const params = [match];
+  if (VOLUMES[scope]) { where.push("c.slug = 'scriptures'", "d.volume = ?"); params.push(VOLUMES[scope]); }
+  else if (scope === "scriptures") where.push("c.slug = 'scriptures'");
+  else { const colls = scopeCollections(scope); if (colls.length) { where.push(`c.slug IN (${colls.map(() => "?").join(",")})`); params.push(...colls); } }
+  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id WHERE ${where.join(" AND ")}`;
+  let total = 0, rs = [], byDoc = [];
+  try {
+    total = value(`SELECT COUNT(*) ${base}`, params);
+    byDoc = rows(`SELECT d.title AS title, d.volume AS volume, c.slug AS collection, COUNT(*) AS n ${base} GROUP BY d.id ORDER BY d.sort_key`, params);
+    rs = rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text, d.uri, d.title, d.author, d.year, d.month, d.session,
+                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection ${base} ORDER BY d.sort_key, p.seq LIMIT ?`, [...params, Math.min(limit, 600)]);
+  } catch (err) {
+    return { total: 0, passages: [], query: match, error: err.message };
+  }
+  return { total, query: match, by_document: byDoc, passages: rs.map((r) => ({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, citation: citation(r, r.verse) })) };
+}
+
 function allVerses(words, volume, limit) {
   const terms = String(words || "").toLowerCase().split(/[\s,]+|\bor\b/).map((w) => w.replace(/[^\p{L}\p{N}'’*]/gu, "")).filter((w) => w.length > 1);
   if (!terms.length) return { total: 0, verses: [], query: "" };

@@ -1,6 +1,6 @@
 /* Keeps the app shell available offline. The library itself lives in the
    browser's private storage; the data files are never cached here. */
-const SHELL = "gospel-shell-v10";
+const SHELL = "gospel-shell-v11";
 const FILES = ["./", "./index.html", "./app.css", "./app.js", "./ask.js", "./deck.js", "./engine.js", "./lib/query.js", "./lib/scriptures.js",
   "./lib/scriptures-data.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
 

@@ -22,7 +22,7 @@
 
   const TOOLS_GUIDE = `Tools:
 - search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, handbook, cfm, or helps. Run several searches with different vocabulary (scriptural and modern) before concluding something is not there.
-- find_all_verses: every scripture verse containing any of the given words (prefix-matched, canonical order, with counts per volume). This is the tool for "all the verses about…", "every time the scriptures say…", or any list meant to be complete. Give it the word family: "redeem redeemed redemption redeemer".
+- find_all: every passage in a scope that contains a word family (prefix-matched) or an exact phrase, in reading order, with the total and a count per chapter or talk. This is the tool for "all the references to…", "every verse that says…", "everywhere Preach My Gospel mentions…", or any list meant to be complete. Scope is scriptures, ot, nt, bofm, dc, pgp, pmg, conference, handbook, cfm, helps, or all. Give it the word family ("redeem redeemed redemption redeemer") or the phrase ("Holy Ghost"); call it once per wording when a subject has several ("Holy Ghost", "Spirit of God", "Spirit of the Lord").
 - read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11").
 
 Search until the question is answered or the list is complete; a dozen tool calls is fine. Every passage a tool returns carries a number like [12]; cite with those numbers and only those. Then write the answer.`;
@@ -48,12 +48,13 @@ Build the piece from passages the tools returned. Quotation marks are a promise:
         year_from: { type: "integer" }, year_to: { type: "integer" },
         limit: { type: "integer", description: "How many passages, 5 to 30. Default 12." },
       }, required: ["query"] } },
-    { name: "find_all_verses", description: "Every scripture verse containing any of the given words, in canonical order, with counts per volume. For complete lists.",
+    { name: "find_all", description: "Every passage in a scope containing a word family or an exact phrase, in reading order, with the total and counts per chapter or talk. For complete lists.",
       input_schema: { type: "object", properties: {
-        words: { type: "string", description: "The word family, space-separated, e.g. 'redeem redeemed redemption redeemer'. Each is prefix-matched." },
-        volume: { type: "string", enum: ["all", "ot", "nt", "bofm", "dc", "pgp"], description: "One volume, or all." },
+        words: { type: "string", description: "A word family, space-separated, each prefix-matched: 'redeem redeemed redemption redeemer'. Use this or phrase." },
+        phrase: { type: "string", description: "An exact phrase, words in order: 'Holy Ghost', 'Spirit of God'." },
+        scope: { type: "string", enum: ["all", "scriptures", "ot", "nt", "bofm", "dc", "pgp", "pmg", "conference", "handbook", "cfm", "helps"], description: "Where to look. Default all." },
         limit: { type: "integer", description: "Up to 600. Default 400." },
-      }, required: ["words"] } },
+      } } },
     { name: "read", description: "Read in context: either the paragraphs around a passage you have (by its number), or a chapter or talk by reference.",
       input_schema: { type: "object", properties: {
         passage: { type: "integer", description: "The [n] of a passage already returned." },
@@ -277,10 +278,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       }
       return out;
     }
-    async verses({ words, volume = "all", limit = 400 }) {
-      const r = await GL().api("verses", { words, volume, limit });
-      const out = r.verses.map((v) => this.add({ doc_id: v.doc_id, pid: v.pid, kind: "verse", citation: v.citation, label: v.citation, text: v.text, plain: v.text, verses: [{ n: v.verse, text: v.text }], collection: "scriptures", volume: v.volume }));
-      return { total: r.total, out, query: r.query, error: r.error };
+    async matches({ words, phrase, scope = "all", limit = 400 }) {
+      const r = await GL().api("matches", { words, phrase, scope, limit });
+      const out = (r.passages || []).map((v) => this.add({ doc_id: v.doc_id, pid: v.pid, kind: v.kind, citation: v.citation, label: v.collection === "scriptures" ? v.citation : sourceLabel({ ...v, citation: v.citation }), text: v.text, plain: v.text,
+        verses: v.kind === "verse" && v.verse ? [{ n: v.verse, text: v.text }] : null, author: v.author, title: v.title, collection: v.collection, conf: v.label, volume: v.volume }));
+      return { total: r.total, out, query: r.query, error: r.error, by_document: r.by_document || [] };
     }
     async read({ passage, reference, before = 2, after = 2 }) {
       const api = GL().api;
@@ -401,19 +403,19 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
             statusEl.textContent = `Searching: ${tu.input.query}${tu.input.scope && tu.input.scope !== "all" ? ` (${tu.input.scope})` : ""}…`;
             const out = await registry.search(tu.input);
             content = out.length ? out.map((p) => passageLine(p)).join("\n\n") : "No passages matched. Try other words or a different scope.";
-          } else if (tu.name === "find_all_verses") {
-            statusEl.textContent = `Finding every verse with: ${tu.input.words}…`;
-            const r = await registry.verses(tu.input);
-            const byVol = {};
-            for (const p of r.out) byVol[p.volume] = (byVol[p.volume] || 0) + 1;
-            content = r.error ? `Error: ${r.error}` : `${r.total} verses match (${Object.entries(byVol).map(([k, v]) => `${k} ${v}`).join(", ")})${r.out.length < r.total ? `; showing the first ${r.out.length}. Call again one volume at a time for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.citation}: ${p.text}`).join("\n");
+          } else if (tu.name === "find_all" || tu.name === "find_all_verses") {
+            const what = tu.input.phrase ? `“${tu.input.phrase}”` : tu.input.words;
+            statusEl.textContent = `Finding every passage with ${what}${tu.input.scope && tu.input.scope !== "all" ? ` in ${tu.input.scope}` : ""}…`;
+            const r = await registry.matches({ words: tu.input.words, phrase: tu.input.phrase, scope: tu.input.scope || tu.input.volume || "all", limit: tu.input.limit });
+            const where = r.by_document.map((d) => `${d.title}${d.volume ? ` (${d.volume})` : ""} ${d.n}`).join("; ");
+            content = r.error ? `Error: ${r.error}` : `${r.total} passages match${where ? ` (${where})` : ""}${r.out.length < r.total ? `; showing the first ${r.out.length}. Narrow the scope or the wording for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.label}: ${p.text}`).join("\n");
           } else if (tu.name === "read") {
             statusEl.textContent = `Reading ${tu.input.reference || `passage ${tu.input.passage}`}…`;
             const r = await registry.read(tu.input);
             content = r.error ? `Error: ${r.error}` : (r.title ? `${r.title}\n\n` : "") + r.out.map((p) => passageLine(p, 600)).join("\n\n");
           } else content = `Unknown tool ${tu.name}`;
         } catch (err) { content = `Error: ${err.message}`; }
-        const cap = tu.name === "find_all_verses" ? 170000 : 60000;
+        const cap = tu.name === "find_all" || tu.name === "find_all_verses" ? 170000 : 60000;
         if (content.length > cap) content = content.slice(0, cap) + "\n…(truncated; ask for one volume at a time to see the rest)";
         results.push({ type: "tool_result", tool_use_id: tu.id, content });
         findings.refresh();

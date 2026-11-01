@@ -8,9 +8,11 @@ not.
 - Search as you type, in plain language: "what did Nelson say about covenants
   and identity" becomes a search for covenant and identity (and their
   scriptural synonyms) in talks by President Nelson; "where does Alma teach
-  about faith and knowledge" looks in Alma; an exact phrase such as "plan of
-  happiness" wins when it exists. The results say how the question was read,
-  with an "Exact words" switch. With a Claude API key set, pressing return
+  about faith and knowledge" looks in Alma; "the holy spirit or spirit of god
+  in PMG" searches each wording as the phrase it is; an exact phrase such as
+  "plan of happiness" wins when it exists. A word the library has never seen
+  ("spirt") is swapped for the nearest word it has. The results say how the
+  question was read, with an "Exact words" switch. With a Claude API key set, pressing return
   also has Claude propose a few more searches and folds their results in.
   Power syntax still works: quotes, `-word`, `speaker:nelson`,
   `year:2015-2020`, `book:alma`, `in:conference`.
@@ -49,8 +51,10 @@ not.
   colors.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
   conference training, a letter). Claude searches the library itself, with
-  tools that run on the device: ranked search, every verse containing a word
-  family (for complete lists), and reading a chapter or talk in context. It
+  tools that run on the device: ranked search, every passage in any part of
+  the library containing a word family or an exact phrase (for complete
+  lists: "all the references to the Holy Ghost in Preach My Gospel"), and
+  reading a chapter or talk in context. It
   keeps searching until it has what it needs, then writes. Every passage found
   appears as a card under the answer (book and verse, or speaker, talk and
   conference, with the full text) that you can open, present, or tick onto
