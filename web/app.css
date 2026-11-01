@@ -353,6 +353,8 @@ body.presenting { overflow: hidden; }
 .cite { display: inline-block; min-width: 1.5em; padding: 0 5px; margin: 0 1px; border-radius: 6px; background: var(--chrome-2); color: var(--accent); font: 600 .72em/1.6 var(--sans); vertical-align: super; line-height: 1.5; }
 .cite:active { background: var(--rule); }
 .ask-sources .src { display: block; width: 100%; text-align: left; padding: 7px 0; font-size: 13px; color: var(--ink-2); border-bottom: 1px solid var(--rule); }
+.ask-a .unverified { text-decoration: underline dotted #b4232c 2px; text-underline-offset: 3px; }
+.quote-note { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin: 6px 0 2px; padding: 8px 10px; border-radius: 10px; background: var(--target); font-size: 13px; color: var(--ink-2); }
 .ask-sources .src b { display: inline-block; min-width: 1.6em; color: var(--accent); }
 .ask-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .ask.setup-key h2, .ask.settings h2 { font: 600 20px var(--serif); margin: 10px 0 8px; }

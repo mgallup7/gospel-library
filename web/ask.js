@@ -31,13 +31,13 @@ Search until the question is answered or the list is complete; a dozen tool call
 
 ${TOOLS_GUIDE}
 
-Writing the answer: open with the answer, not a restatement of the question. Reason in the open where it helps: connections between passages, the original-language sense of a word, what a prophet was responding to, where the texts are in tension. Quote scripture exactly as returned. Cite every quotation and every claim a passage supports with [n]. For a list, give every item, grouped by volume or book in canonical order, each with its reference and the exact text or the key clause; do not summarize a list the person asked for in full. Plain prose, short paragraphs, headings only when the answer is long, no bullet lists of one-line fragments, no em dashes. When the library does not settle the question, say so in a sentence and give your own best judgment, marked as such.`;
+Writing the answer: open with the answer, not a restatement of the question. Reason in the open where it helps: connections between passages, the original-language sense of a word, what a prophet was responding to, where the texts are in tension. Quotation marks are a promise: anything inside them must be word for word from a passage the tools returned in this conversation, followed by its [n]. Never quote from memory, never smooth or modernize the wording, never run two verses together as one quotation. If you want to bring in a passage that has not been returned, search for it first; if it cannot be found, name it without quotation marks and say it was not in the library. Cite every claim a passage supports with [n]. For a list, give every item, grouped by volume or book in canonical order, each with its reference and the exact text or the key clause; do not summarize a list the person asked for in full. Plain prose, short paragraphs, headings only when the answer is long, no bullet lists of one-line fragments, no em dashes. When the library does not settle the question, say so in a sentence and give your own best judgment, marked as such.`;
 
   const SYSTEM_DRAFT = `You are Claude, composing talks, lessons, trainings, letters and outlines for an experienced Latter-day Saint leader (a mission president), with the library as your source of quotations. ${LIBRARY}
 
 ${TOOLS_GUIDE}
 
-Build the piece from passages the tools returned; quote scripture exactly and cite every quotation and paraphrase as [n]. Follow the requested form and length closely. Voice: warm, direct, doctrinally careful, concrete. No em dashes. No filler openings. Headings only when the form calls for them (an outline, a lesson plan). If the passages are thin for part of the request, write that part briefly and say which searches would strengthen it.`;
+Build the piece from passages the tools returned. Quotation marks are a promise: anything inside them must be word for word from a passage the tools returned, followed by its [n]; never quote from memory or smooth the wording, and search first for any passage you want to use. Cite every paraphrase as [n] too. Follow the requested form and length closely. Voice: warm, direct, doctrinally careful, concrete. No em dashes. No filler openings. Headings only when the form calls for them (an outline, a lesson plan). If the passages are thin for part of the request, write that part briefly and say which searches would strengthen it.`;
 
   const TOOLS = [
     { name: "search", description: "Ranked full-text search of the whole library. Returns the best passages with their numbers for citing.",
@@ -207,7 +207,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       thread.push({ role: "user", content: text }, { role: "assistant", content: reply });
       if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
       status.remove();
-      finish(answer, sources, tools, reply, registry.list);
+      finish(answer, sources, tools, reply, registry.list, input, modes, log);
       findings.setCited([...new Set([...reply.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]);
     } catch (err) {
       status.textContent = "";
@@ -326,9 +326,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     if (d.collection === "scriptures") return d.citation;
     return [d.title, d.label].filter(Boolean).join(", ");
   }
-  function passageLine(p, max = 420) {
+  // The whole passage, never cut short: a truncated verse invites the model
+  // to finish it from memory, and that is how a quotation goes wrong.
+  function passageLine(p, max = 2400) {
     const t = p.verses && p.verses.length ? p.verses.map((v) => `${v.n} ${v.text}`).join(" ") : (p.plain || p.text);
-    return `[${p.n}] ${p.label}\n${t.length > max ? t.slice(0, max) + "…" : t}`;
+    return `[${p.n}] ${p.label}\n${t.length > max ? t.slice(0, max) + " […]" : t}`;
   }
 
   // ------------------------------------------------------------------ agent --
@@ -367,7 +369,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
             const r = await registry.verses(tu.input);
             const byVol = {};
             for (const p of r.out) byVol[p.volume] = (byVol[p.volume] || 0) + 1;
-            content = r.error ? `Error: ${r.error}` : `${r.total} verses match (${Object.entries(byVol).map(([k, v]) => `${k} ${v}`).join(", ")})${r.out.length < r.total ? `; showing the first ${r.out.length}. Call again one volume at a time for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.citation}: ${p.text.length > 300 ? p.text.slice(0, 300) + "…" : p.text}`).join("\n");
+            content = r.error ? `Error: ${r.error}` : `${r.total} verses match (${Object.entries(byVol).map(([k, v]) => `${k} ${v}`).join(", ")})${r.out.length < r.total ? `; showing the first ${r.out.length}. Call again one volume at a time for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.citation}: ${p.text}`).join("\n");
           } else if (tu.name === "read") {
             statusEl.textContent = `Reading ${tu.input.reference || `passage ${tu.input.passage}`}…`;
             const r = await registry.read(tu.input);
@@ -386,7 +388,17 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return finalText;
   }
 
-  function finish(answerEl, sourcesEl, toolsEl, reply, passages) {
+  function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log) {
+    const bad = unverifiedQuotes(reply, passages);
+    if (bad.length) {
+      sourcesEl.append(el("div", { class: "quote-note" }, [
+        el("span", { text: `${bad.length === 1 ? "One quotation is" : `${bad.length} quotations are`} not word for word in any passage found (underlined). ` }),
+        el("button", { type: "button", class: "text-btn small", text: "Ask Claude to fix them", onclick: () => {
+          input.value = `In your last answer these quotations are not word for word in any passage the tools returned: ${bad.map((q) => `“${q}”`).join("; ")}. Search for the right passages, then give the answer again with every quotation exactly as returned and cited, or without quotation marks where you are paraphrasing.`;
+          submit(input, modes, log);
+        } }),
+      ]));
+    }
     toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Copy answer", onclick: () => navigator.clipboard?.writeText(plainText(reply, passages)).catch(() => {}) }));
   }
 
@@ -511,12 +523,44 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   }
 
   // A small markdown renderer: paragraphs, headings, lists, bold, italic, and [n] citations.
+  // ---------------------------------------------------------- quotations --
+  // Every quotation in an answer is checked, word for word, against the
+  // passages the tools returned. One that is not there is underlined, and
+  // the answer gets a note with a button that asks Claude to put it right.
+  const normText = (t) => String(t || "").toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
+  const QUOTE_RE = /[“"]([^”"]{12,}?)[”"]/g;
+  function quoteFound(q, passages) {
+    const parts = q.split(/\s*(?:\.\.\.|…)\s*/).map(normText).filter((x) => x.split(" ").length >= 3);
+    if (!parts.length) return true;
+    for (const p of passages) {
+      if (p._norm === undefined) p._norm = " " + normText(p.plain || p.text) + " ";
+      if (parts.every((x) => p._norm.includes(" " + x + " "))) return true;
+    }
+    return false;
+  }
+  function unverifiedQuotes(src, passages) {
+    const out = [];
+    for (const m of src.matchAll(QUOTE_RE)) if (m[1].split(/\s+/).length >= 4 && !quoteFound(m[1], passages)) out.push(m[1]);
+    return [...new Set(out)];
+  }
+
   function markdown(src, passages) {
     const cite = (n) => {
       const p = passages.find((x) => x.n === Number(n));
       return p ? `<button type="button" class="cite" data-doc="${p.doc_id}" data-pid="${esc(p.pid || "")}" title="${esc(p.label)}">${esc(shortLabel(p))}</button>` : `[${n}]`;
     };
-    const inline = (t) => esc(t)
+    const quoted = (t) => {
+      let html = "", last = 0;
+      for (const m of t.matchAll(QUOTE_RE)) {
+        html += esc(t.slice(last, m.index));
+        const q = m[1], open = m[0][0], close = m[0][m[0].length - 1];
+        const bad = q.split(/\s+/).length >= 4 && !quoteFound(q, passages);
+        html += esc(open) + (bad ? `<span class="unverified" title="Not word for word in any passage found">${esc(q)}</span>` : esc(q)) + esc(close);
+        last = m.index + m[0].length;
+      }
+      return html + esc(t.slice(last));
+    };
+    const inline = (t) => quoted(t)
       .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
       .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>")
       .replace(/\[(\d+)\]/g, (_, n) => cite(n));
