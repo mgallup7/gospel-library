@@ -430,6 +430,16 @@ body.presenting { overflow: hidden; }
 .board .theme .swatch i { left: 7px; bottom: 5px; width: 14px; }
 .board .theme-name { font-size: 11px; }
 .board .deck-hint { margin: 14px 0 0; }
+.board-think { margin: 8px 0 4px; padding: 10px 12px; border-radius: 12px; background: var(--chrome); border: 1px solid var(--rule); font-family: var(--sans); font-size: 14px; }
+.board-think .think-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.board-think .think-status { font-size: 13px; color: var(--ink-2); line-height: 1.4; min-height: 1.4em; }
+.board-think .think-list { display: grid; gap: 6px; margin-top: 6px; }
+.board-think .think-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--paper); line-height: 1.4; }
+.board-think .think-row > span { flex: 1; min-width: 0; }
+.board-think .think-row .why { color: var(--ink-3); font-size: 12px; }
+.board-think .think-row .chip { flex: none; }
+.board-think .think-row .chip:disabled { opacity: .6; }
+.stage-caption { font-size: .5em; font-style: italic; opacity: .85; text-align: center; margin-top: 2vmin; line-height: 1.35; }
 .board-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 6px 0; border-radius: 10px; background: var(--target); font-size: 14px; }
 .board-banner span { flex: 1; }
 .board-canvas { position: relative; padding-right: 30px; }

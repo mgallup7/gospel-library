@@ -743,5 +743,5 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return { text, blocks: clean, tool_uses: clean.filter((b) => b.type === "tool_use"), stop_reason };
   }
 
-  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key };
+  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key, complete, modelName: () => MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model };
 })();

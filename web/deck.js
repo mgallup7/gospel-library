@@ -34,7 +34,7 @@
   // between a highlighted phrase (or whole passage) and another; a connection
   // slide follows the later of its two passages.
   const uid = () => Math.random().toString(36).slice(2, 10);
-  const blank = () => ({ id: uid(), title: "", subtitle: "", theme: DEFAULT_THEME, themeSet: true, items: [], links: [], updated: Date.now() });
+  const blank = () => ({ id: uid(), title: "", subtitle: "", theme: DEFAULT_THEME, themeSet: true, items: [], links: [], chain: null, updated: Date.now() });
   let deck = migrate(store.get("deck")) || blank();
 
   function migrate(d) {
@@ -61,6 +61,7 @@
     }
     d.links = links.filter((l) => l.from && l.to && d.items.some((i) => i.id === l.from.id) && d.items.some((i) => i.id === l.to.id));
     if (!d.themeSet) { d.theme = DEFAULT_THEME; d.themeSet = true; }
+    if (d.chain === undefined) d.chain = null;
     if (!THEMES[d.theme]) d.theme = DEFAULT_THEME;
     return d;
   }
@@ -298,6 +299,7 @@
     const themes = el("div", { class: "themes" });
     const download = el("button", { type: "button", class: "primary", text: "Download PowerPoint", onclick: () => downloadFile() });
     const present = el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => presentDeck() });
+    const think = el("button", { type: "button", class: "text-btn", text: "Think it through", title: "Claude studies the chain: labels, connections, a caption", onclick: () => thinkChain() });
     const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); } });
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
@@ -310,7 +312,8 @@
     ]);
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, more]), moreRow, banner]);
+    const thinkBox = el("div", { class: "board-think", hidden: true });
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, think, more]), moreRow, banner, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -320,7 +323,7 @@
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
     board.append(head, canvas, saved, status, hint);
-    ui = { title, subtitle, themes, download, present, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { title, subtitle, themes, download, present, think, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
@@ -346,6 +349,7 @@
     }
     const empty = !deck.items.length;
     ui.download.disabled = empty; ui.present.disabled = empty;
+    ui.think.disabled = count() < 2;
     if (linking) {
       const from = endOf(linking);
       ui.banner.hidden = false;
@@ -707,6 +711,113 @@
     return asking;
   }
 
+  // ------------------------------------------------------------ thinking --
+  // Claude studies the chain: the passages in order, their highlighted
+  // phrases, the arrows drawn so far. It returns labels for unlabeled arrows,
+  // connections not yet drawn (with the exact phrases), a key phrase for any
+  // passage without one, a caption for the chain slide, and speaker notes.
+  // Each is accepted one at a time; nothing changes until it is.
+  const CHAIN_SYSTEM = `You are helping a mission president finish a scripture chain for a presentation. He has chosen the passages, highlighted key phrases in some, and drawn arrows between some of them. Study the whole chain as a careful teacher would: what each passage contributes, which words or ideas carry from one to another (the same word, a definition, a promise and its keeping, a cause and its effect, a contrast), and what the chain says when it is read from the first passage to the last, in the order given.
+
+Answer with JSON only, no prose around it, in this shape:
+{"caption": "one or two sentences: how the chain reads from start to finish, for the slide",
+ "labels": [{"link": 1, "label": "two to four words"}],
+ "connections": [{"from": {"passage": 1, "words": "exact words from that passage"}, "to": {"passage": 3, "words": "exact words from that passage"}, "label": "two to four words", "why": "one sentence"}],
+ "key_phrases": [{"passage": 2, "words": "exact words from that passage"}],
+ "notes": "speaker notes, 120 to 220 words: how to walk the room through the chain, passage by passage"}
+
+Rules. "labels" only for arrows that have no label or a weak one. "connections" only for arrows worth drawing that are not drawn; three at most; each must join two different passages and be something the words themselves support. "key_phrases" only for passages that have no highlighted phrase: the short phrase (three to eight words) a teacher would underline. Every "words" value must be copied exactly from the passage text given, with its punctuation; never paraphrase, never quote from memory. Plain, warm, doctrinally precise prose; no em dashes.`;
+
+  function chainUser() {
+    const passages = deck.items.filter((i) => i.type === "passage");
+    const num = new Map(passages.map((p, i) => [p.id, i + 1]));
+    const lines = [deck.title ? `Deck title: ${deck.title}` : "", "Passages, in the order they are presented:"];
+    passages.forEach((p, i) => {
+      const words = wordsOf(p);
+      const hl = (p.hl || []).map((h) => `“${words.slice(h.s, h.e + 1).map((x) => x.w).join(" ")}”`);
+      lines.push(`[${i + 1}] ${p.citation}${p.where ? `, ${p.where}` : ""}${p.label ? `, ${p.label}` : ""}\n${p.verses ? p.verses.map((v) => `${v.n} ${v.text}`).join(" ") : p.text}\nHighlighted: ${hl.length ? hl.join("; ") : "nothing yet"}`);
+    });
+    lines.push(deck.links.length ? "Arrows drawn so far:" : "No arrows drawn yet.");
+    deck.links.forEach((l, i) => {
+      const a = endOf(l.from), b = endOf(l.to);
+      if (!a || !b) return;
+      lines.push(`${i + 1}. [${num.get(a.item.id)}] ${a.hl ? `“${phraseOf(a.item, a.hl)}”` : "(whole passage)"} → [${num.get(b.item.id)}] ${b.hl ? `“${phraseOf(b.item, b.hl)}”` : "(whole passage)"}${l.label ? ` (label: ${l.label})` : " (no label yet)"}`);
+    });
+    return lines.filter(Boolean).join("\n\n");
+  }
+  // Where a run of words sits in a passage, by matching the words themselves (case and punctuation aside).
+  function findPhrase(it, text) {
+    const norm = (w) => w.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[^a-z0-9']/g, "");
+    const target = String(text || "").split(/\s+/).map(norm).filter(Boolean);
+    const words = wordsOf(it).map((x) => norm(x.w));
+    if (!target.length) return null;
+    for (let i = 0; i + target.length <= words.length; i++) {
+      let ok = true;
+      for (let j = 0; j < target.length; j++) if (words[i + j] !== target[j]) { ok = false; break; }
+      if (ok) return { s: i, e: i + target.length - 1 };
+    }
+    return null;
+  }
+  async function thinkChain() {
+    const Ask = window.Ask;
+    if (!Ask || !Ask.hasKey()) { GL().toast("Add your Claude API key under Ask first."); return; }
+    if (count() < 2) { GL().toast("Put at least two passages on the deck first."); return; }
+    const box = ui.thinkBox;
+    box.hidden = false;
+    const status = el("div", { class: "think-status", text: `${Ask.modelName()} is studying the chain…` });
+    box.replaceChildren(el("div", { class: "think-head" }, [el("b", { text: "Thinking it through" }), el("button", { type: "button", class: "text-btn small", text: "Close", onclick: () => { box.hidden = true; box.replaceChildren(); } })]), status);
+    ui.think.disabled = true;
+    try {
+      const sk = GL().skills || {};
+      const system = [{ type: "text", text: CHAIN_SYSTEM + (sk.style ? `\n\nHouse style for the caption and notes:\n${sk.style}` : ""), cache_control: { type: "ephemeral" } }];
+      let thought = "";
+      const text = await Ask.complete({ model: Ask.settings.model, system, messages: [{ role: "user", content: chainUser() }], max_tokens: 16000, stream: true, thinking: Ask.settings.think,
+        onThinking: (t) => { thought = (thought + t).slice(-2000); status.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
+        onDelta: () => { status.textContent = "Writing…"; } });
+      const m = String(text).match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("no JSON in the reply");
+      renderThought(JSON.parse(m[0]), box);
+    } catch (err) {
+      status.textContent = `Could not think it through: ${err.message}`;
+    } finally { ui.think.disabled = count() < 2; }
+  }
+  function renderThought(r, box) {
+    const passages = deck.items.filter((i) => i.type === "passage");
+    const byNum = (n) => passages[Number(n) - 1] || null;
+    const list = el("div", { class: "think-list" });
+    const row = (text, btn, act) => { const b = el("button", { type: "button", class: "chip small", text: btn }); const line = el("div", { class: "think-row" }, [el("span", { html: text }), b]); b.addEventListener("click", () => { const ok = act(); if (ok !== false) { b.textContent = "Done"; b.disabled = true; } }); list.append(line); return line; };
+    const applied = [];
+    if (r.caption) { const cap = String(r.caption).trim(); applied.push(row(`<b>Caption for the chain slide:</b> ${esc(cap)}`, "Use", () => { deck.chain = { ...(deck.chain || {}), caption: cap }; save({ redraw: false }); flash("Caption added to the chain slide."); })); }
+    for (const x of r.labels || []) {
+      const l = deck.links[Number(x.link) - 1];
+      if (!l || !x.label) continue;
+      applied.push(row(`<b>Label arrow ${x.link}:</b> “${esc(x.label)}”${l.label ? ` (now “${esc(l.label)}”)` : ""}`, "Apply", () => { l.label = String(x.label).trim(); save(); }));
+    }
+    for (const c of r.connections || []) {
+      const a = byNum(c.from?.passage), b = byNum(c.to?.passage);
+      if (!a || !b || a === b) continue;
+      const ra = findPhrase(a, c.from.words), rb = findPhrase(b, c.to.words);
+      const text = `<b>Connect</b> ${esc(a.citation)} “${esc(c.from.words)}” → ${esc(b.citation)} “${esc(c.to.words)}”${c.label ? `, <i>${esc(c.label)}</i>` : ""}${c.why ? `<br><span class="why">${esc(c.why)}</span>` : ""}${!ra || !rb ? `<br><span class="why">(those words were not found exactly; it will link the whole passage on that side)</span>` : ""}`;
+      applied.push(row(text, "Add", () => {
+        const from = { id: a.id, hl: ra ? (hlAt(a, ra.s) && hlAt(a, ra.s).e === ra.e && hlAt(a, ra.s).s === ra.s ? hlAt(a, ra.s).id : setHighlight(a, ra.s, ra.e).id) : null };
+        const to = { id: b.id, hl: rb ? (hlAt(b, rb.s) && hlAt(b, rb.s).e === rb.e && hlAt(b, rb.s).s === rb.s ? hlAt(b, rb.s).id : setHighlight(b, rb.s, rb.e).id) : null };
+        addLink(from, to, String(c.label || "").trim()); save();
+      }));
+    }
+    for (const k of r.key_phrases || []) {
+      const p = byNum(k.passage);
+      if (!p || !k.words) continue;
+      const range = findPhrase(p, k.words);
+      if (!range) continue;
+      applied.push(row(`<b>Highlight in ${esc(p.citation)}:</b> “${esc(k.words)}”`, "Highlight", () => { setHighlight(p, range.s, range.e); save(); }));
+    }
+    if (r.notes) { const notes = String(r.notes).trim(); applied.push(row(`<b>Speaker notes for the chain slide:</b> ${esc(notes)}`, "Add", () => { deck.chain = { ...(deck.chain || {}), notes }; save({ redraw: false }); flash("Notes added to the chain slide."); })); }
+    if (!applied.length) list.append(el("div", { class: "deck-hint", text: "Nothing to add: the chain reads well as it is." }));
+    const all = el("button", { type: "button", class: "primary", text: "Use everything", onclick: () => { for (const line of list.querySelectorAll(".think-row button:not(:disabled)")) line.click(); } });
+    box.querySelector(".think-status")?.remove();
+    box.append(list, el("div", { class: "deck-actions" }, [all]));
+  }
+
   // Saved decks
   function saveNamed(nameGiven) {
     const all = store.get("decks", []);
@@ -827,7 +938,8 @@
       lines.forEach((line, i) => { svg += `<text x="${bx.toFixed(1)}" y="${(top + 9 + refSize + 7 + (i + 1) * size * 1.18).toFixed(1)}" text-anchor="middle" font-size="${size}" fill="currentColor" opacity=".92">${esc(line)}</text>`; });
     }
     svg += "</svg>";
-    return { kind: "map", html: svg, where: deck.title ? `${deck.title}: the chain` : "The chain" };
+    const caption = deck.chain && deck.chain.caption ? `<div class="stage-caption">${esc(deck.chain.caption)}</div>` : "";
+    return { kind: "map", html: svg + caption, where: deck.title ? `${deck.title}: the chain` : "The chain" };
   }
   // Greedy word wrap for SVG text, with an ellipsis when it runs past the lines allowed.
   function wrapWords(text, perLine, maxLines) {
@@ -861,7 +973,7 @@
   function mapLayout() {
     const g = graph();
     if (!g) return null;
-    const W = 10, M = 0.75, inner = W - 2 * M, top = 0.98, bottom = 4.95;
+    const W = 10, M = 0.75, inner = W - 2 * M, top = 0.98, bottom = deck.chain && deck.chain.caption ? 4.3 : 4.95;
     const n = g.nodes.length;
     const perRow = Math.min(5, n);
     const rows = Math.ceil(n / perRow);
@@ -1135,6 +1247,8 @@
           s.addText(l.label, { x: x - 1.0, y: above === null ? y - 0.14 : above ? y - 0.3 : y + 0.02, w: 2.0, h: 0.28, fontFace: SANS, fontSize: 10, color: t.accent, align: "center", valign: above === null ? "middle" : above ? "bottom" : "top", margin: 0, fit: "shrink" });
         }
       }
+      if (deck.chain && deck.chain.caption) s.addText(deck.chain.caption, { x: M + 0.3, y: 4.36, w: inner - 0.6, h: 0.62, fontFace: SERIF, italic: true, fontSize: 12, color: t.muted, align: "center", valign: "top", margin: 0, fit: "shrink", lineSpacingMultiple: 1.1 });
+      if (deck.chain && deck.chain.notes) s.addNotes(deck.chain.notes);
       for (const nd of lay.nodes) {
         const big = nd.w >= 2;
         s.addText([

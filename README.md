@@ -47,8 +47,12 @@ not.
   two excerpts in panels and the arrow between them, and the deck ends with
   the chain as one picture: the passages left to right in the order you
   arranged them, each arrow routed above the row with its label (backward
-  links go under). Or present the deck straight from the iPad, in the same
-  colors.
+  links go under). "Think it through" on the deck sends the chain to Claude
+  (your chosen model, thinking first): it comes back with labels for
+  unlabeled arrows, connections worth drawing that you have not drawn (with
+  the exact phrases), a key phrase for any passage you have not highlighted,
+  a caption for the chain slide, and speaker notes; accept each one or all.
+  Or present the deck straight from the iPad, in the same colors.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
   conference training, a letter). Claude searches the library itself, with
   tools that run on the device: ranked search, every passage in any part of
