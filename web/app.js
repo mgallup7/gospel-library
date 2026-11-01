@@ -910,9 +910,13 @@
       else if (e.key === "-") stageScale(-0.1);
       return;
     }
-    if (e.key === "/" && document.activeElement !== input && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
-    if ((e.key === "p" || e.key === "P") && document.activeElement !== input && currentDoc && !readerPane.hidden && !e.metaKey && !e.ctrlKey) { e.preventDefault(); startPresenting(); }
-    if (e.key === "Escape") { if (!sheet.hidden) hideNote(); else input.blur(); }
+    // Single-key shortcuts never fire while typing in any field (the Ask box, a deck title, a label).
+    const a = document.activeElement;
+    const typing = !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable);
+    if (e.key === "Escape") { if (!sheet.hidden) hideNote(); else if (typing) a.blur(); return; }
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "/" && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
+    if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
   });
 
   const ICON_BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
