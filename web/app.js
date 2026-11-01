@@ -872,7 +872,18 @@
     if (!wide() && !readerPane.hidden) { state.docId = null; state.pid = null; showList(); }
     scheduleSearch();
   });
-  $("#searchForm").addEventListener("submit", (e) => { e.preventDefault(); if (!state.ready) return; clearTimeout(typeTimer); runSearch({ typeahead: false }); input.blur(); });
+  $("#searchForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!state.ready) return;
+    clearTimeout(typeTimer);
+    input.blur();
+    // A deck in progress: ask what this search should do with it before going on.
+    if (window.Deck?.shouldAsk() && state.q.trim().length >= 2) {
+      const choice = await window.Deck.askAboutDeck({ kind: "search" });
+      if (choice === "cancel") return;
+    }
+    runSearch({ typeahead: false });
+  });
   $(".clear").addEventListener("click", () => { if (!state.ready) return; input.value = ""; state.q = ""; input.focus(); runSearch(); });
   for (const b of document.querySelectorAll(".scopes button")) {
     b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });

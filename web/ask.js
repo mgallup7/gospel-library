@@ -171,6 +171,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     if (!text || busy) return;
     const mode = modes.querySelector("button.on")?.dataset.mode || "ask";
     if (!navigator.onLine) { log.prepend(el("div", { class: "status error", text: "Ask needs an internet connection. Search and reading work offline." })); return; }
+    // A deck in progress: ask what this question should do with it first.
+    if (window.Deck?.shouldAsk()) {
+      const choice = await window.Deck.askAboutDeck({ kind: mode === "draft" ? "request" : "question" });
+      if (choice === "cancel" || busy) return;
+    }
     busy = true;
     input.value = "";
     const card = el("article", { class: "ask-card" });

@@ -26,7 +26,9 @@ not.
   answer, tap + on a search result, or select verses while reading and choose
   Add to deck. On an iPad in landscape or a Mac the deck is a board on the
   right while you keep finding passages on the left; on a phone it is the
-  Deck tab.
+  Deck tab. Pressing Return on a new search, or sending a new question, while
+  a deck is in progress asks whether to clear it: keep adding to it, save it
+  as it is and start a new one, or delete it and start over.
 - The board: each passage is a card. Tap the first and last word of a phrase
   to highlight it. Every highlight ends in a dot; drag the dot onto a phrase
   in another passage (or onto the passage itself) and an arrow is drawn

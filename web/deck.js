@@ -662,10 +662,56 @@
     editing = null;
   }
 
+  // ------------------------------------------------------------ new topic --
+  // A new search or question while a deck is in progress: clear it, save it
+  // as it is and start a new one, or keep adding to it. Asked once per state
+  // of the deck, so refining the same search does not ask twice.
+  let asking = null, keptAt = null;
+  function shouldAsk() { return count() > 0 && deck.updated !== keptAt; }
+  function askAboutDeck({ kind = "search" } = {}) {
+    if (asking) return asking;
+    if (!shouldAsk()) return Promise.resolve("keep");
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    asking = new Promise((resolve) => {
+      const n = count(), l = deck.links.length;
+      const scrim = el("div", { class: "dscrim" });
+      const sheet = el("div", { class: "dsheet", role: "dialog", "aria-modal": "true", "aria-label": "Deck in progress" });
+      const onKey = (e) => { if (e.key === "Escape") finish("cancel"); };
+      const finish = (v) => { scrim.remove(); sheet.remove(); document.removeEventListener("keydown", onKey); asking = null; resolve(v); };
+      const what = `${n} ${n === 1 ? "passage" : "passages"}${l ? ` and ${l} ${l === 1 ? "connection" : "connections"}` : ""}`;
+      const name = el("input", { class: "deck-subtitle", value: deck.title || `Deck ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}`, "aria-label": "Name for the saved deck", autocapitalize: "words" });
+      const nameRow = el("div", { class: "dsheet-save", hidden: true }, [
+        el("label", { text: "Save it as" }),
+        name,
+        el("button", { type: "button", class: "primary", text: "Save, then start a new deck", onclick: () => {
+          const v = name.value.trim();
+          if (!deck.title && v) deck.title = v;
+          saveNamed(v);
+          deck = blank(); pending = active = linking = null; save();
+          GL().toast(`Saved “${v || deck.title}”. The deck is empty.`);
+          finish("new");
+        } }),
+      ]);
+      sheet.append(
+        el("h2", { text: `Clear the deck for this ${kind}?` }),
+        el("p", { class: "lede", text: `${deck.title ? `“${deck.title}” has` : "The deck has"} ${what}.` }),
+        el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { keptAt = deck.updated; finish("keep"); } }),
+        el("button", { type: "button", class: "text-btn", text: "No, save it as it is, then start a new deck", onclick: (e) => { nameRow.hidden = false; e.currentTarget.hidden = true; name.focus(); name.select(); } }),
+        nameRow,
+        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; save(); GL().toast("The deck is empty."); finish("new"); } }),
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => finish("cancel") }),
+      );
+      scrim.addEventListener("click", () => finish("cancel"));
+      document.addEventListener("keydown", onKey);
+      document.body.append(scrim, sheet);
+    });
+    return asking;
+  }
+
   // Saved decks
-  function saveNamed() {
+  function saveNamed(nameGiven) {
     const all = store.get("decks", []);
-    const name = deck.title || `Deck ${new Date().toLocaleDateString()}`;
+    const name = (nameGiven || "").trim() || deck.title || `Deck ${new Date().toLocaleDateString()}`;
     const i = all.findIndex((d) => d.id === deck.id);
     const entry = { id: deck.id, title: name, updated: Date.now(), deck: JSON.parse(JSON.stringify(deck)) };
     if (i >= 0) all[i] = entry; else all.unshift(entry);
@@ -1084,7 +1130,7 @@
 
   window.Deck = {
     render, board: boardEl, showBoard, addFromDoc, addPassage, has, remove, toggle, count, updateBadge,
-    present: presentDeck, chunksOf, build, THEMES,
+    shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES,
     // for tests and scripts
     get state() { return deck; }, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
   };

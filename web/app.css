@@ -473,6 +473,23 @@ body.presenting { overflow: hidden; }
 .bcard.section input { width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); font: 600 17px var(--serif); -webkit-appearance: none; }
 .bcard.section input:focus { border-color: var(--rule); background: var(--paper); }
 .board-empty { padding: 20px 4px 26px; font: 16px/1.5 var(--serif); color: var(--ink-2); }
+/* "Clear the deck?" when a new search or question starts */
+.dscrim { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.35); }
+.dsheet {
+  position: fixed; z-index: 71; left: 50%; bottom: calc(14px + var(--safe-bottom)); transform: translateX(-50%);
+  width: min(460px, calc(100% - 24px)); padding: 18px 18px calc(14px + var(--safe-bottom));
+  display: grid; gap: 8px; background: var(--chrome); border: 1px solid var(--rule); border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.28); font-family: var(--sans);
+}
+@media (min-width: 900px) { .dsheet { bottom: auto; top: 50%; transform: translate(-50%, -50%); padding-bottom: 18px; } }
+.dsheet h2 { font: 600 19px/1.3 var(--serif); margin: 0; }
+.dsheet .lede { font-size: 14px; line-height: 1.45; color: var(--ink-2); margin: 0 0 6px; }
+.dsheet .primary { height: 44px; padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.dsheet .text-btn { height: 44px; text-align: left; justify-content: flex-start; }
+.dsheet .text-btn.danger { color: #b4232c; }
+.dsheet-save { display: grid; gap: 6px; padding: 8px 0 4px; }
+.dsheet-save label { font-size: 13px; color: var(--ink-2); }
+.dsheet-save .deck-subtitle { margin: 0; }
 .bpop { position: absolute; z-index: 6; padding: 12px; border-radius: 12px; background: var(--chrome); border: 1px solid var(--rule); box-shadow: 0 10px 30px rgba(0,0,0,.18); font-family: var(--sans); }
 .bpop .bpop-t { font: 15px/1.4 var(--serif); margin-bottom: 2px; }
 .bpop .bpop-t .arrow { color: var(--accent); padding: 0 6px; }
