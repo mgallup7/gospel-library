@@ -171,6 +171,28 @@ def cmd_bundle(args) -> int:
     return 0
 
 
+def cmd_originals(args) -> int:
+    """Load the Hebrew Bible and Greek New Testament, word by word, into the library."""
+    import sqlite3
+
+    from . import db, originals
+
+    config.ensure_dirs()
+    conn = sqlite3.connect(config.DB_PATH)
+    conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    have = conn.execute("SELECT value FROM meta WHERE key='originals'").fetchone()
+    if have and not args.force:
+        print(f"original languages already in the library: {have[0]}")
+        return 0
+    source = Path(args.source) if args.source else config.DATA_DIR / "originals-src"
+    if not args.source:
+        originals.download(source)
+    info = originals.ingest(conn, source, force=args.force)
+    conn.close()
+    print(f"original languages: {info['words']:,} words in {info['verses']:,} verses, {info['lexicon']:,} lexicon entries")
+    return 0
+
+
 def cmd_seal(args) -> int:
     """Encrypt any file (used for the nightly job's state)."""
     from . import bundle
@@ -260,6 +282,11 @@ def main(argv=None) -> int:
     s.add_argument("--out", default="site/data")
     s.add_argument("--passphrase-env", default="LIBRARY_PASSPHRASE")
     s.set_defaults(fn=cmd_bundle, to_file=False)
+
+    s = sub.add_parser("originals", help="add the Hebrew Bible and Greek New Testament, word by word (STEP Bible data, CC BY 4.0)")
+    s.add_argument("--source", help="folder with the STEP Bible files (downloaded from GitHub when omitted)")
+    s.add_argument("--force", action="store_true", help="reload even if already present")
+    s.set_defaults(fn=cmd_originals, to_file=False)
 
     s = sub.add_parser("seal", help="encrypt a file with the library passphrase")
     s.add_argument("src")

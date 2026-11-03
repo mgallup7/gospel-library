@@ -1,0 +1,20 @@
+# fixture
+Psa.51.0(51.1)#01=L	לַ/מְנַצֵּ֗חַ	la/m.na.Tze.ach	to the/ choirmaster	H9005/{H5329}	HRd/Vprmsa			H5329			H9005=ל=to/{H5329=נָצַח=to conduct}					
+Psa.51.0(51.1)#02=L	מִזְמ֥וֹר	miz.Mor	a psalm	{H4210}	HNcmsa			H4210			{H4210=מִזְמוֹר=melody}					
+Psa.51.0(51.1)#03=L	לְ/דָוִֽד\׃	le./da.Vid	of/ David	H9005/{H1732}\H9016	HR/Npm			H1732			H9005=ל=to/{H1732=דָּוִד=David»David@Rut.4.17-Rev}\H9016=׃=verseEnd					
+Psa.51.0(51.2)#01=L	בְּֽ/בוֹא\־	be./Vo'-	when/ came	H9003/{H0935G}\H9014	HR/Vqcc			H0935G_A			H9003=ב=in/{H0935G=בּוֹא=: come»to come (in):1_come;_go_in}\H9014=־=link					
+Psa.51.0(51.2)#02=L	אֵ֭לָי/ו	'E.la/v	to/ him	{H0413}/H9033	HR/Sp3ms			H0413_A			{H0413=אֶל=to(wards)}/H9033=Os3m=him					
+Psa.51.0(51.2)#03=L	נָתָ֣ן	na.Tan	Nathan	{H5416H}	HNpm			H5416H			{H5416H=נָתָן=Nathan»Nathan@2Sa.7.2-Psa}					
+Psa.51.0(51.2)#04=L	הַ/נָּבִ֑יא	ha./na.Vi'	the/ prophet	H9009/{H5030}	HTd/Ncmsa			H5030			H9009=ה=the/{H5030=נָבִיא=prophet}					
+Psa.51.0(51.2)#05=L	כַּֽ/אֲשֶׁר\־	ka./'a.Sher-	just/ when	H9004/{H0834D}\H9014	HR/Tr			H0834D			H9004=כ=like/{H0834D=כַּאֲשֶׁר=as which}\H9014=־=link					
+Psa.51.0(51.2)#06=L	בָּ֝֗א	Ba'	he had gone	{H0935G}	HVqp3ms			H0935G_B			{H0935G=בּוֹא=: come»to come (in):1_come;_go_in}					
+Psa.51.0(51.2)#07=L	אֶל\־	'el-	into	{H0413}\H9014	HR			H0413_B			{H0413=אֶל=to(wards)}\H9014=־=link					
+Psa.51.0(51.2)#08=L	בַּת\־	bat-	Bath-	{H1339}+\H9014	HNpf			H1339_A			{H1339=בַּת־שֶׁ֫בַע=Bathsheba»Bathsheba@2Sa.11.3-Psa}+\H9014=־=link					
+Psa.51.0(51.2)#09=L	שָֽׁבַע\׃	Sha.va'	-sheba	{H1339}\H9016	HNpf			H1339_b			{H1339=בַּת־שֶׁ֫בַע=Bathsheba»Bathsheba@2Sa.11.3-Psa}\H9016=׃=verseEnd					
+Psa.51.1(51.3)#01=L	חָנֵּ֣/נִי	cho.ne./ni	show favor to/ me	{H2603A}/H9030	HVqv2ms/Sp1bs			H2603A			{H2603A=חָנַן=be gracious}/H9030=Os1c=me					
+Psa.51.1(51.3)#02=L	אֱלֹהִ֣ים	'E.lo.Him	O God	{H0430G}	HNcmpa			H0430G			{H0430G=אֱלֹהִים=God»LORD@Gen.1.1-Heb}					
+Psa.51.1(51.3)#03=L	כְּ/חַסְדֶּ֑/ךָ	ke./chas.De./kha	according to/ covenant loyalty/ your	H9004/{H2617A}/H9021	HR/Ncmsc/Sp2ms			H2617A			H9004=כ=like/{H2617A=חֶ֫סֶד=kindness}/H9021=Ps2m=your					
+Psa.51.1(51.3)#04=L	כְּ/רֹ֥ב	ke./Ro	according to/ [the] greatness of	H9004/{H7230}	HR/Ncmsc			H7230			H9004=כ=like/{H7230=רֹב=abundance}					
+Psa.51.1(51.3)#05=L	רַ֝חֲמֶ֗י/ךָ	ra.cha.Mei./kha	compassion<s>/ your	{H7356B}/H9021	HNcmpc/Sp2ms			H7356B			{H7356B=רַחֲמִים=compassion}/H9021=Ps2m=your					
+Psa.51.1(51.3)#06=L	מְחֵ֣ה	me.Cheh	wipe out	{H4229A}	HVqv2ms			H4229A			{H4229A=מָחָה=to wipe}					
+Psa.51.1(51.3)#07=L	פְשָׁעָֽ/י\׃	fe.sha.'A/i	transgressions/ my	{H6588}/H9020\H9016	HNcmpc/Sp1bs			H6588			{H6588=פֶּ֫שַׁע=transgression}/H9020=Ps1c=my\H9016=׃=verseEnd					

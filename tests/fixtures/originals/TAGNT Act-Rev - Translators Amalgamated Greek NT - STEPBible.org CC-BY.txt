@@ -1,0 +1,23 @@
+# fixture
+1Jn.5.7#01=NKO	ὅτι (hoti)	For	G3754H=CONJ	ὅτι=that/since	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			porque	: since»that/since|2_since	#01	G3754					
+1Jn.5.7#02=NKO	τρεῖς (treis)	three	G5140=A-NPM	τρεῖς, τρία=three	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			tres	three	#02	G5140_A					
+1Jn.5.7#03=NKO	εἰσιν (eisin)	there are	G1510=V-PAI-3P	εἰμί=to be	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			están siendo	to be	#03	G1510_A	G1526				
+1Jn.5.7#04=NKO	οἱ (hoi)	those	G3588=T-NPM	ὁ=the/this/who	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			los	[those] which	#04»05:G3140	G3588_A					
+1Jn.5.7#05=NKO	μαρτυροῦντες, (marturountes)	bearing testimony:	G3140=V-PAP-NPM	μαρτυρέω=to testify	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			estando dando testimonio	to testify	#05	G3140					
+1Jn.5.7#06=K	ἕν (hen)	in	G1722=PREP	ἐν=in/on/among	TR			en	in	#06	G1722		^ 			
+1Jn.5.7#07=K	τῷ (tō)	the	G3588=T-DSM	ὁ=the/this/who	TR			a el	the	#07»08:G3772	G3588_b		^ 			
+1Jn.5.7#08=K	οὐρανῷ (ouranō)	heaven	G3772=N-DSM	οὐρανός=heaven	TR			cielo	heaven	#08	G3772		^ 			
+1Jn.5.7#09=K	ὁ (ho)	the	G3588=T-NSM	ὁ=the/this/who	TR			el	the	#09»10:G3962	G3588_c		^ 			
+1Jn.5.7#10=K	πατήρ (patēr)	Father	G3962=N-NSM-T	πατήρ=father	TR			padre	father	#10	G3962		^ 			
+1Jn.5.7#11=K	ὁ (ho)	the	G3588=T-NSM	ὁ=the/this/who	TR			el	the	#11»12:G3056	G3588_d		^ 			
+1Jn.5.7#12=K	λόγος (logos)	Word	G3056=N-NSM	λόγος=word	TR			palabra	word	#12	G3056		^ 			
+1Jn.5.7#13=K	καὶ (kai)	and	G2532=CONJ	καί=and	TR			y	and	#13	G2532_a		^ 			
+1Jn.5.7#14=K	τὸ (to)	the	G3588=T-NSN	ὁ=the/this/who	TR			el	the	#14»16:G4151	G3588_e		^ 			
+1Jn.5.7#15=K	ἅγιον (hagion)	Holy	G0040G=A-NSN	ἅγιος=holy	TR			santo	: holy»holy|1_holy	#15	G0040	G0039	^ 			
+1Jn.5.7#16=K	πνεῦμα (pneuma)	Spirit	G4151G=N-NSN	πνεῦμα=spirit/breath	TR			espíritu	: spirit»spirit/breath|1_spirit	#16	G4151		^ 			
+1Jn.5.7#17=K	καὶ (kai)	and	G2532=CONJ	καί=and	TR			y	and	#17	G2532_b		^ 			
+1Jn.5.7#18=K	οὗτοι (houtoi)	these	G3778=D-NPM	οὗτος=this/he/she/it	TR			estos	these	#18»22:G1510	G3778		^ 			
+1Jn.5.7#19=K	οἱ (hoi)	<the>	G3588=T-NPM	ὁ=the/this/who	TR			los	the	#19»20:G5140	G3588_f		^ 			
+1Jn.5.7#20=K	τρεῖς (treis)	three	G5140=A-NPM	τρεῖς, τρία=three	TR			tres	three	#20	G5140_b		^ 			
+1Jn.5.7#21=K	ἕν (hen)	one	G1520=A-NSN	εἷς=one	TR			uno	one	#21	G1520		^ 			
+1Jn.5.7#22=K	εἰσιν (eisin)	are	G1510=V-PAI-3P	εἰμί=to be	TR			están siendo	to be	#22	G1510_b	G1526	^ ἕν   τῷ    οὐρανῷ    ὁ    πατήρ    ὁ    λόγος    καὶ    τὸ    ἅγιον    πνεῦμα    καὶ    οὗτοι    οἱ    τρεῖς    ἕν    εἰσιν   (<i>hen tō ouranō ho patēr ho logos kai to hagion pneuma kai houtoi hoi treis hen eisin</i>) 'in the heaven the Father the Word and the Holy Spirit and these three one are' is only in traditional manuscripts (TR)			

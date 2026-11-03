@@ -322,3 +322,36 @@ def test_sync_moves_cached_book_to_new_collection(tmp_path, monkeypatch):
     assert store.conn.execute("SELECT collection_id FROM books WHERE id=?", (bid,)).fetchone()[0] == pmg
     assert store.conn.execute("SELECT collection_id FROM documents WHERE uri=?", (node.uri,)).fetchone()[0] == pmg
     store.close()
+
+
+def test_originals_ingest(tmp_path):
+    """The Hebrew and Greek word tables: references, order, searching, lexicon."""
+    import sqlite3
+
+    from gospel_library import originals as O
+
+    src = Path(__file__).parent / "fixtures" / "originals"
+    conn = sqlite3.connect(tmp_path / "o.sqlite")
+    conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+    info = O.ingest(conn, src)
+    assert info["words"] > 40 and info["verses"] >= 6 and info["lexicon"] >= 3
+    gen = conn.execute("SELECT seq, word, translit, gloss, strongs, root, morph FROM original_words WHERE book='genesis' AND chapter=1 AND verse=1 ORDER BY seq").fetchall()
+    assert [O.strip_marks(g[1], "he") for g in gen][:3] == ["בראשית", "ברא", "אלהים"] and gen[0][4] == "H7225G" and gen[0][6] == "HR/Ncfsa"
+    # Psalm 51's two-verse Hebrew title is one KJV title, in order
+    title = conn.execute("SELECT gloss FROM original_words WHERE book='psalms' AND chapter=51 AND verse=0 ORDER BY seq").fetchall()
+    assert title[0][0].startswith("to the choirmaster") and title[-1][0] == "-sheba"
+    # NRSV Matthew 17:15 is part of the KJV's 17:14, after 17:14's own words
+    m = conn.execute("SELECT seq, word FROM original_words WHERE book='matthew' AND chapter=17 AND verse=14 ORDER BY seq").fetchall()
+    assert m[0][1] == "Καὶ" and m[-1][0] > 15000 and not conn.execute("SELECT 1 FROM original_words WHERE book='matthew' AND chapter=17 AND verse=15").fetchone()
+    # the Johannine Comma is marked as the KJV's Greek only
+    k = conn.execute("SELECT flags, tags FROM original_words WHERE book='1-john' AND chapter=5 AND verse=7 AND word='ἕν'").fetchone()
+    assert k == ("K", "TR")
+    # searching: Hebrew letters without points, Greek without accents, a Strong's number, a transliteration
+    find = lambda m: conn.execute("SELECT r.book, r.chapter, r.verse FROM original_verses v JOIN original_verse_refs r ON r.id=v.rowid WHERE original_verses MATCH ?", (m,)).fetchall()
+    assert ("genesis", 1, 1) in find("plain:בראשית") and ("genesis", 1, 1) in find("translit:bereshit")
+    assert ("matthew", 1, 1) in find("plain:βιβλος") and ("matthew", 1, 1) in find("strongs:G0976") and ("genesis", 1, 1) in find("strongs:H7225")
+    lex = conn.execute("SELECT lemma, translit, gloss FROM original_lexicon WHERE strongs='H7225G'").fetchone()
+    assert O.strip_marks(lex[0], "he") == "ראשית" and lex[2].endswith("beginning")
+    assert O.strip_marks(conn.execute("SELECT lemma FROM original_lexicon WHERE strongs='G0026'").fetchone()[0], "gr") == "αγαπη"
+    # idempotent
+    assert O.ingest(conn, src)["words"] == info["words"]

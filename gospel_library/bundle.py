@@ -186,6 +186,7 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('bundle', ?)",
                  (json.dumps({"version": version, "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}),))
     conn.commit()
+    orig_row = conn.execute("SELECT value FROM meta WHERE key='originals'").fetchone()
     compact = out_dir / "library.compact.sqlite"
     compact.unlink(missing_ok=True)
     conn.execute("VACUUM INTO ?", (str(compact),))
@@ -209,6 +210,8 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
         "latest_conference": s["latest_conference"],
         "collections": [{"slug": c["slug"], "title": c["title"], "docs": c["docs"]} for c in s["collections"]],
     }
+    if orig_row:
+        manifest["originals"] = json.loads(orig_row[0])
     if skills_path.exists():
         json.loads(skills_path.read_text(encoding="utf-8"))  # must be valid JSON before it is sealed
         sh = encrypt_file(skills_path, out_dir / "skills.bin", passphrase, extra={"kind": "skills"})

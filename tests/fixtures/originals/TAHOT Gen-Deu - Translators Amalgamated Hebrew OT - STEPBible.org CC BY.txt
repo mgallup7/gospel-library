@@ -1,0 +1,19 @@
+# fixture: a few lines of TAHOT (STEP Bible, CC BY 4.0)
+Gen.1.1#01=L	בְּ/רֵאשִׁ֖ית	be./re.Shit	in/ beginning	H9003/{H7225G}	HR/Ncfsa			H7225G			H9003=ב=in/{H7225G=רֵאשִׁית=: beginning»first:1_beginning}					
+Gen.1.1#02=L	בָּרָ֣א	ba.Ra'	he created	{H1254A}	HVqp3ms			H1254A			{H1254A=בָּרָא=to create}					
+Gen.1.1#03=L	אֱלֹהִ֑ים	'E.lo.Him	God	{H0430G}	HNcmpa			H0430G			{H0430G=אֱלֹהִים=God»LORD@Gen.1.1-Heb}					
+Gen.1.1#04=L	אֵ֥ת	'et	<obj.>	{H0853}	HTo			H0853_A			{H0853=אֵת=[Obj.]}					
+Gen.1.1#05=L	הַ/שָּׁמַ֖יִם	ha./sha.Ma.yim	the/ heavens	H9009/{H8064}	HTd/Ncmpa			H8064			H9009=ה=the/{H8064=שָׁמַיִם=heaven}					
+Gen.1.1#06=L	וְ/אֵ֥ת	ve./'Et	and/ <obj.>	H9002/{H0853}	HC/To			H0853_B			H9002=ו=and/{H0853=אֵת=[Obj.]}					
+Gen.1.1#07=L	הָ/אָֽרֶץ\׃	ha./'A.retz	the/ earth	H9009/{H0776G}\H9016	HTd/Ncfsa			H0776G			H9009=ה=the/{H0776G=אֶ֫רֶץ=: country;_planet»land:2_country;_planet}\H9016=׃=verseEnd					
+Gen.27.3#01=L	וְ/עַתָּה֙	ve./'a.Tah	and/ therefore	H9002/{H6258}	HC/D			H6258			H9002=ו=and/{H6258=עַתָּ֫ה=now}					
+Gen.27.3#02=L	שָׂא\־	sa'-	take up	{H5375G}\H9014	HVqv2ms			H5375G			{H5375G=נָשָׂא=: raise»to lift:1_raise;_take_up}\H9014=־=link					
+Gen.27.3#03=L	נָ֣א	na'	please	{H4994}	HTj			H4994			{H4994=נָא=please}					
+Gen.27.3#04=L	כֵלֶ֔י/ךָ	khe.Lei./kha	weapons/ your	{H3627}/H9021	HNcmpc/Sp2ms			H3627			{H3627=כְּלִי=article|utensil}/H9021=Ps2m=your					
+Gen.27.3#05=L	תֶּלְיְ/ךָ֖	tel.ye./Kha	quiver/ your	{H8522}/H9021	HNcmsc/Sp2ms			H8522			{H8522=תְּלִי=quiver}/H9021=Ps2m=your					
+Gen.27.3#06=L	וְ/קַשְׁתֶּ֑/ךָ	ve./kash.Te./cha	and/ bow/ your	H9002/{H7198}/H9021	HC/Ncfsc/Sp2ms			H7198			H9002=ו=and/{H7198=קֶ֫שֶׁת=bow}/H9021=Ps2m=your					
+Gen.27.3#07=L	וְ/צֵא֙	ve./Tze'	and/ go out	H9002/{H3318G}	HC/Vqv2ms			H3318G			H9002=ו=and/{H3318G=יָצָא=: come»to come out:1_come;_go_out;_escape}					
+Gen.27.3#08=L	הַ/שָּׂדֶ֔ה	ha./sa.Deh	the/ field	H9009/{H7704G}	HTd/Ncmsa			H7704G			H9009=ה=the/{H7704G=שָׂדֶה=: country;_planet»land:2_country;_planet}					
+Gen.27.3#09=L	וְ/צ֥וּדָ/ה	ve./Tzu.da/h	and/ hunt/ !	H9002/{H6679A}/H9012	HC/Vqv2ms/Sh			H6679A			H9002=ו=and/{H6679A=צוּד=to hunt}/H9012=ה=emph.					
+Gen.27.3#10=L	לִּ֖/י	l/i	for <the>/ me	H9005/{H9030}	HRd/Sp1bs			H9030			H9005=ל=to/{H9030=Os1c=me}					
+Gen.27.3#11=Q(K)	צָֽיִד\׃	tzeid	wild game	{H6718A}\H9016	HNcmsa	K= tzei.dah (צֵידָה\׃) "food" (H6720\H9016=HNcbsa)	L= צָֽיִדה\׃ ¦ ;	H6718A	H6720		{H6718A=צַ֫יִד=wild game}\H9016=׃=verseEnd					

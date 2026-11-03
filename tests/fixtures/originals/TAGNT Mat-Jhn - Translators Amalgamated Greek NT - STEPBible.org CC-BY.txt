@@ -1,0 +1,22 @@
+# fixture
+Mat.1.1#01=NKO	Βίβλος (Biblos)	[The] book	G0976=N-NSF	βίβλος=book	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			Libro	book	#01	G0976					
+Mat.1.1#02=NKO	γενέσεως (geneseōs)	of [the] genealogy	G1078=N-GSF	γένεσις=origin	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			de origen	origin	#02	G1078					
+Mat.1.1#03=NKO	Ἰησοῦ (Iēsou)	of Jesus	G2424G=N-GSM-P	Ἰησοῦς=Jesus/Joshua	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			de Jesús	Jesus»Jesus|Jesus@Mat.1.1	#03	G2424					
+Mat.1.1#04=NKO	Χριστοῦ (Christou)	Christ	G5547=N-GSM-T	Χριστός=Christ	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			Ungido	Christ»Christ|Jesus@Mat.1.1	#04	G5547					
+Mat.1.1#05=NKO	υἱοῦ (huiou)	son	G5207=N-GSM	υἱός=son	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			hijo	son	#05	G5207_A					
+Mat.1.1#06=NKO	Δαυὶδ (Dauid)	of David	G1138=N-GSM-P	Δαυείδ, Δαυίδ, Δαβίδ=David	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz		Tyn+WH: Δαυεὶδ ; +TR: Δαβὶδ ; 	de David	David»David|David@Rut.4.17	#06	G1138					
+Mat.1.1#07=NKO	υἱοῦ (huiou)	son	G5207=N-GSM	υἱός=son	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			hijo	son	#07	G5207_B					
+Mat.1.1#08=NKO	Ἀβραάμ. (Abraam)	of Abraham.	G0011=N-GSM-P	Ἀβραάμ=Abraham	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz		Tyn: Ἁβραάμ ; 	de Abrahán	Abraham»Abraham|Abraham@Gen.11.26	#08	G0011					
+Mat.17.14#01=NKO	Καὶ (Kai)	And	G2532=CONJ	καί=and	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			Y	and	#01	G2532					
+Mat.17.14#02=NKO	ἐλθόντων (elthontōn)	when were coming 	G2064=V-2AAP-GPM	ἔρχομαι=to come/go	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			habiendo venido (ellos)	to come	#02	G2064					
+Mat.17.14#03=k	αὐτῶν (autōn)	they	G0846=P-GPM	αὐτός=he/she/it/self	TR+Byz			de ellos	of them	#03«02:G2064	G0846_a	G3778				
+Mat.17.14#04=NKO	πρὸς (pros)	to	G4314=PREP	πρός=to/with	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			hacia	to	#04	G4314					
+Mat.17.14#05=NKO	τὸν (ton)	the	G3588=T-ASM	ὁ=the/this/who	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			la	the	#05»06:G3793	G3588					
+Mat.17.14#06=NKO	ὄχλον (ochlon)	crowd	G3793=N-ASM	ὄχλος=crowd	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			muchedumbre	crowd	#06	G3793					
+Mat.17.14#07=NKO	προσῆλθεν (prosēlthen)	came	G4334=V-2AAI-3S	προσέρχομαι=to come near/agree	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			vino hacia	to come near	#07	G4334					
+Mat.17.14#08=NKO	αὐτῷ (autō)	to Him	G0846=P-DSM	αὐτός=he/she/it/self	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			él	to him	#08«07:G4334	G0846_B	G3778				
+Mat.17.14#09=NKO	ἄνθρωπος (anthrōpos)	a man	G0444=N-NSM	ἄνθρωπος=a human	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			hombre	a human	#09	G0444					
+Mat.17.14#10=NKO	γονυπετῶν (gonupetōn)	kneeling down	G1120=V-PAP-NSM	γονυπετέω=to kneel	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			estando arrodillando	to kneel	#10	G1120					
+Mat.17.14#11=N(k)O	αὐτὸν (auton)	[to] Him	G0846=P-ASM	αὐτός=he/she/it/self	NA28+NA27+Tyn+SBL+WH+Treg+Byz	αὐτῷ (t=autō) to Him - G0846=P-DSM in: TR		(ante) él	him	#11«10:G1120	G0846_C	G3778				
+Mat.17.15[17.14]#01=NKO	καὶ (kai)	and	G2532=CONJ	καί=and	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			Y	and	#01	G2532_A					
+Mat.17.15[17.14]#02=NKO	λέγων· (legōn)	saying;	G3004G=V-PAP-NSM	λέγω=to speak	NA28+NA27+Tyn+SBL+WH+Treg+TR+Byz			estando diciendo	: speak»to speak|1_speak/ask	#02	G3004					

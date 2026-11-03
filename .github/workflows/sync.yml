@@ -69,6 +69,9 @@ jobs:
           printf '%s' "$SKILLS_BLOB" | base64 -d | gunzip > "$GOSPEL_LIBRARY_DATA/skills.json"
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get("skills", [])), "skills taken in")' "$GOSPEL_LIBRARY_DATA/skills.json"
 
+      - name: Original languages (loaded once, kept with the state)
+        run: python -m gospel_library originals
+
       - name: Sync with churchofjesuschrist.org
         id: sync
         continue-on-error: true

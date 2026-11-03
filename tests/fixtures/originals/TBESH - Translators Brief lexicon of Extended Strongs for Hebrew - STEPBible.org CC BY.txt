@@ -1,0 +1,6 @@
+# fixture
+H0430	H0430G = a Name of	H3068G	אֱלֹהִים	e.lo.him	H:N-M	God	This name means  "gods" (plural intensive-singular meaning), "God"<BR>Another name of <i>ye.ho.vah</i> (יהוה "LORD" H3068G) 
+H0430	H0430H = a Part of	H3068G	אֱלֹהִים	e.lo.him	H:N-M	(LORD)-Elohe	<BR>Combined with <i>ye.ho.vah</i> (יהוה "LORD" H3068)
+H0430	H0430I = a Part of	H1389G	אֱלֹהִים	e.lo.him	H:N-M	(Gibeath)-elohim	<BR>Combined with <i>giv.ah</i> (גִּבְעָה "Gibeath" H1389)
+H7225	H7225G =	H7225G	רֵאשִׁית	re.shit	H:N-F	first: beginning	: beginning<br>1) first, beginning, best, chief<br>1a) beginning<br>1b) first<br>1c) chief<br>1d) choice part<BR>Also means: <i>re.shit</i> (רֵאשִׁית ": best" H7225H)
+H7225	H7225H = a Meaning of	H7225G	רֵאשִׁית	re.shit	H:N-F	first: best	: best<br>1) first, beginning, best, chief<br>1a) beginning<br>1b) first<br>1c) chief<br>1d) choice part
