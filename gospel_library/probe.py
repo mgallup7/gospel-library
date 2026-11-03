@@ -66,15 +66,40 @@ def probe(url: str) -> int:
     links = [a.get("href") for a in soup.find_all("a", href=True)]
     same = [h for h in links if h.startswith("/") or h.startswith(root)]
     notice("links", f"{len(links)} links, {len(same)} on site. Sample: {same[:80]}")
+    for sel in ("#transcription", "#source-note-wysiwyg", "#table-of-contents", "main", "article"):
+        el = soup.select_one(sel)
+        if el is not None:
+            inner = "".join(str(c) for c in el.contents)
+            notice("html " + sel, f"{len(inner)} chars: {inner[:2500]}")
     if next_data:
+        raw = next_data.string if next_data.string is not None else next_data.get_text()
+        raw = (raw or "").strip()
+        notice("next-data-raw", f"{len(raw)} chars, starts {raw[:200]!r}")
         try:
-            data = json.loads(next_data.get_text())
-            keys = list(data.get("props", {}).get("pageProps", {}).keys())
-            notice("next-data", f"pageProps keys: {keys[:40]}; head: {json.dumps(data)[:1500]}")
+            data = json.loads(raw)
+            props = data.get("props", {}).get("pageProps", {})
+            sizes = {k: len(json.dumps(v)) for k, v in props.items()} if isinstance(props, dict) else {}
+            notice("next-data", f"page {data.get('page')!r}; query {json.dumps(data.get('query'))[:300]}; pageProps sizes: {sizes}")
+            for k, v in (props.items() if isinstance(props, dict) else []):
+                js = json.dumps(v)
+                if len(js) > 200:
+                    notice("next-data " + k, js[:1800])
         except Exception as e:  # noqa: BLE001
             notice("next-data", f"unparsable: {e}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(probe(sys.argv[1]))
+    rc = 0
+    for u in sys.argv[1:]:
+        for one in u.split(","):
+            one = one.strip()
+            if one:
+                print(f"::group::{one}")
+                try:
+                    rc |= probe(one)
+                except Exception as e:  # noqa: BLE001
+                    notice("error", f"{one}: {e}")
+                    rc = 1
+                print("::endgroup::")
+    sys.exit(rc)

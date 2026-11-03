@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Page to look at, the way the sync would"
+        description: "Page(s) to look at, the way the sync would (comma-separated)"
         required: true
 
 jobs:
