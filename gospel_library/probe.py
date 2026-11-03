@@ -13,6 +13,7 @@ import re
 import sys
 import urllib.parse
 import urllib.robotparser
+from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
@@ -24,6 +25,21 @@ def notice(title: str, text: str) -> None:
     text = re.sub(r"\s+", " ", text).strip()
     for i in range(0, max(1, len(text)), 900):
         print(f"::notice title={title}::{text[i:i + 900]}")
+
+
+OUT = Path("probe-out")
+
+
+def keep(url: str, html: str) -> None:
+    """Save the page (and its Next.js data, when there is any) for study off the runner."""
+    OUT.mkdir(exist_ok=True)
+    n = len(list(OUT.glob("*.html"))) + 1
+    stem = OUT / f"{n:02d}-{re.sub(r'[^a-z0-9]+', '-', url.lower())[:80].strip('-')}"
+    stem.with_suffix(".html").write_text(html, encoding="utf-8")
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if m:
+        stem.with_suffix(".next.json").write_text(m.group(1), encoding="utf-8")
+        notice("next-data", f"{len(m.group(1))} chars of page data saved as {stem.name}.next.json; starts {m.group(1)[:300]!r}")
 
 
 def probe(url: str) -> int:
@@ -47,6 +63,7 @@ def probe(url: str) -> int:
     r = session.get(url, timeout=60)
     html = r.text
     notice("page", f"status {r.status_code}; type {r.headers.get('Content-Type')}; {len(html)} chars; final url {r.url}")
+    keep(url, html)
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
     scripts = soup.find_all("script")
@@ -71,21 +88,6 @@ def probe(url: str) -> int:
         if el is not None:
             inner = "".join(str(c) for c in el.contents)
             notice("html " + sel, f"{len(inner)} chars: {inner[:2500]}")
-    if next_data:
-        raw = next_data.string if next_data.string is not None else next_data.get_text()
-        raw = (raw or "").strip()
-        notice("next-data-raw", f"{len(raw)} chars, starts {raw[:200]!r}")
-        try:
-            data = json.loads(raw)
-            props = data.get("props", {}).get("pageProps", {})
-            sizes = {k: len(json.dumps(v)) for k, v in props.items()} if isinstance(props, dict) else {}
-            notice("next-data", f"page {data.get('page')!r}; query {json.dumps(data.get('query'))[:300]}; pageProps sizes: {sizes}")
-            for k, v in (props.items() if isinstance(props, dict) else []):
-                js = json.dumps(v)
-                if len(js) > 200:
-                    notice("next-data " + k, js[:1800])
-        except Exception as e:  # noqa: BLE001
-            notice("next-data", f"unparsable: {e}")
     return 0
 
 
