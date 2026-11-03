@@ -71,6 +71,7 @@
     store.set("deck", deck);
     updateBadge();
     if (redraw) draw();
+    else if (ui) { syncDownloadButton(); schedulePrepare(); }
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
   }
 
@@ -352,6 +353,8 @@
     ui.download.disabled = empty; ui.present.disabled = empty;
     ui.think.disabled = count() < 2;
     ui.md.disabled = empty;
+    syncDownloadButton();
+    schedulePrepare();
     if (linking) {
       const from = endOf(linking);
       ui.banner.hidden = false;
@@ -1398,27 +1401,80 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     return merged;
   }
 
-  async function downloadFile() {
-    const status = ui ? ui.status : null;
-    const say = (s) => { if (status) status.textContent = s; };
-    try {
-      say("Building the PowerPoint file…");
+  // Handing the file over. On an iPhone or iPad the file goes out through the
+  // share sheet (Save to Files, PowerPoint, Keynote, AirDrop, Mail), and Safari
+  // opens that sheet only in direct answer to a tap: once the file has taken a
+  // moment to build, the tap is spent and the sheet never appears. So the file
+  // is built ahead of time while the board is open, and when it is not ready
+  // at the tap, the button becomes "Save PowerPoint" for one more tap.
+  const PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  let prepared = null;   // { updated, theme, blob, name, file }
+  let preparing = null;
+  let prepareTimer = null;
+  function pptxName() { return `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.pptx`; }
+  function isPrepared() { return !!prepared && prepared.updated === deck.updated && prepared.theme === deck.theme && prepared.name === pptxName(); }
+  async function preparePptx() {
+    if (isPrepared()) return prepared;
+    if (preparing) return preparing;
+    const stamp = deck.updated, theme = deck.theme;
+    preparing = (async () => {
       const pptx = await build();
-      const blob = await pptx.write({ outputType: "blob" });
-      const name = `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.pptx`;
-      const file = new File([blob], name, { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], title: name }); say(""); return; }
-        catch (err) { if (err.name === "AbortError") { say(""); return; } }
-      }
-      const url = URL.createObjectURL(blob);
-      const a = el("a", { href: url, download: name });
+      const blob = new Blob([await pptx.write({ outputType: "arraybuffer" })], { type: PPTX_TYPE });
+      const name = pptxName();
+      prepared = { updated: stamp, theme, blob, name, file: new File([blob], name, { type: PPTX_TYPE }) };
+      return prepared;
+    })();
+    try { return await preparing; } finally { preparing = null; }
+  }
+  // Build quietly a moment after the board settles, so the tap finds the file ready.
+  function schedulePrepare() {
+    clearTimeout(prepareTimer);
+    if (!deck.items.length || isPrepared()) return;
+    prepareTimer = setTimeout(() => { if (!linking && !pending && !preparing) preparePptx().then(() => syncDownloadButton()).catch(() => {}); }, 1800);
+  }
+  function syncDownloadButton() {
+    if (!ui) return;
+    const ready = isPrepared();
+    ui.download.textContent = ready && !ui.download.disabled ? "Save PowerPoint" : "Download PowerPoint";
+    ui.download.classList.toggle("ready", ready);
+  }
+  function canShareFile(file) { try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) { return false; } }
+  function say(text) { if (ui) ui.status.textContent = text; }
+  // Inside the tap: the share sheet where there is one, a download elsewhere.
+  function handOver(p) {
+    if (canShareFile(p.file)) {
+      say("");
+      navigator.share({ files: [p.file], title: p.name }).catch((err) => {
+        if (err && err.name === "AbortError") return;
+        fallbackDownload(p);
+      });
+      return;
+    }
+    fallbackDownload(p);
+  }
+  function fallbackDownload(p) {
+    try {
+      const url = URL.createObjectURL(p.blob);
+      const a = el("a", { href: url, download: p.name });
       document.body.append(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-      say(`Saved ${name}.`);
+      say(`${p.name} is on its way to your downloads. If it did not appear, tap Save PowerPoint once more.`);
     } catch (err) {
-      say(`Could not build the file: ${err.message}`);
+      say(`Could not hand the file over: ${err.message}`);
     }
+  }
+  async function downloadFile() {
+    if (isPrepared()) { handOver(prepared); return; }
+    if (!ui) return;
+    ui.download.disabled = true;
+    say("Building the PowerPoint file…");
+    try { await preparePptx(); }
+    catch (err) { say(`Could not build the file: ${err.message}`); ui.download.disabled = false; return; }
+    ui.download.disabled = false;
+    syncDownloadButton();
+    // Built after the tap. Where a share sheet exists it needs a fresh tap; elsewhere the download can start now.
+    if (canShareFile(prepared.file)) say("Ready. Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.");
+    else handOver(prepared);
   }
 
   window.Deck = {

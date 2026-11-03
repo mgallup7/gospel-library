@@ -424,6 +424,7 @@ body.presenting { overflow: hidden; }
 .board { padding: 10px 16px 40px; }
 .board-head { margin-bottom: 6px; }
 .board-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 2px 0 4px; }
+.board-row .primary.ready { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
 .board .primary { height: 38px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .board .primary:disabled, .board .text-btn:disabled { opacity: .45; }
 .board .themes { gap: 8px; margin: 2px 0 8px; }
