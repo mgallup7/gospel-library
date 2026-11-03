@@ -553,3 +553,54 @@ body.presenting { overflow: hidden; }
 .ask-findings-inline { margin: 6px 0 14px; }
 .ask-findings-inline + .ask-a { border-top: 1px solid var(--rule); padding-top: 12px; }
 .cite { font-size: .8em; vertical-align: baseline; line-height: 1.4; padding: 1px 6px; }
+
+/* ---- the Bible in its own languages ------------------------------- */
+.orig-btn { font-size: 14px; }
+.orig {
+  display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: flex-start;
+  margin: -0.2em 0 1em; padding: 8px 8px 6px; border-radius: 10px;
+  background: var(--chrome); font-family: var(--sans);
+}
+.orig.he { direction: rtl; }
+.orig .ow {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 4px 6px 5px; border-radius: 8px; background: var(--paper);
+  border: 1px solid transparent; text-align: center; max-width: 11em; color: var(--ink);
+}
+.orig .ow:active { background: var(--chrome-2); }
+.orig .ow .w { font-family: "SBL Hebrew", "Ezra SIL", "SBL Greek", "Gentium Plus", "Times New Roman", "Arial Hebrew", "Noto Serif Hebrew", "Noto Serif", serif; font-size: 1.45em; line-height: 1.35; }
+.orig.gr .ow .w { font-size: 1.2em; }
+.orig .ow .t { font-size: .72em; color: var(--ink-2); letter-spacing: .01em; }
+.orig .ow .g { font-size: .78em; color: var(--ink); max-width: 11em; }
+.orig .ow.kjv-only { border-color: color-mix(in srgb, var(--accent) 45%, transparent); border-style: dashed; }
+.orig .ow.not-kjv .w { opacity: .55; }
+.orig .ow.qere .w, .orig .ow.restored .w { text-decoration: underline dotted var(--ink-3); text-underline-offset: 4px; }
+.orig-label { width: 100%; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); margin: 0 2px 2px; }
+.orig-credit { font-family: var(--sans); font-size: 12px; color: var(--ink-3); margin: 1.6em 0 0; }
+.with-orig p.verse { margin-bottom: .35em; }
+
+.ow-head { display: flex; gap: 14px; align-items: baseline; margin: 2px 36px 10px 0; }
+.ow-word { font-family: "SBL Hebrew", "Ezra SIL", "SBL Greek", "Gentium Plus", "Times New Roman", "Arial Hebrew", "Noto Serif Hebrew", serif; font-size: 36px; line-height: 1.2; }
+.ow-meta { font-family: var(--sans); min-width: 0; }
+.ow-translit { font-size: 15px; color: var(--ink-2); }
+.ow-gloss { font-size: 14px; color: var(--ink); margin-top: 2px; }
+.ow-details { font-family: var(--sans); font-size: 14px; line-height: 1.45; }
+.ow-details p { margin: 0 0 .45em; }
+.ow-section { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--rule); }
+.ow-section .nm { margin-bottom: 4px; }
+.ow-note { color: var(--ink-2); font-style: italic; }
+.ow-lemma .lemma { font-family: "SBL Hebrew", "Ezra SIL", "SBL Greek", "Gentium Plus", "Times New Roman", "Arial Hebrew", serif; font-size: 1.25em; }
+.ow-type { color: var(--ink-2); }
+.ow-def { color: var(--ink); font-size: 14px; max-height: 14em; overflow-y: auto; padding-right: 4px; }
+.ow-def .ore { color: var(--ink-2); }
+.ow-def a.oref { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
+.ow-fine { color: var(--ink-2); font-size: 13px; }
+.ow-credit { color: var(--ink-3); font-size: 12px; margin-top: 10px; }
+.ow-details .deck-actions { margin: 8px 0 2px; }
+.ow-details .primary { height: 36px; padding: 0 14px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 14px; }
+
+.ow-inline { font-family: "SBL Hebrew", "Ezra SIL", "SBL Greek", "Gentium Plus", "Times New Roman", "Arial Hebrew", "Noto Serif Hebrew", serif; font-size: 1.2em; unicode-bidi: isolate; }
+.hit .snip .ow-lead { display: block; font-family: var(--sans); font-size: 13px; color: var(--ink-2); margin-bottom: 3px; }
+.hit .snip .ow-lead .ow-inline { font-size: 1.35em; color: var(--ink); }
+.smart-line.orig-line, .smart-line.orig-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+@media (max-width: 899px) { .orig .ow .w { font-size: 1.3em; } .orig.gr .ow .w { font-size: 1.1em; } }

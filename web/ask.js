@@ -18,7 +18,7 @@
   const MAX_PASSAGES = 22;
   const MAX_TURNS = 8;
 
-  const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Missionary Standards for Disciples of Jesus Christ (the booklet, its supplement, and the service missionary edition), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures). It is searched with the tools below. Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly rather than quoting it from memory.`;
+  const LIBRARY = `The library holds: the standard works (KJV Old and New Testament, Book of Mormon, Doctrine and Covenants, Pearl of Great Price, with footnotes), every general conference talk from 1971 to today, Preach My Gospel (2023), Missionary Standards for Disciples of Jesus Christ (the booklet, its supplement, and the service missionary edition), Come, Follow Me, the General Handbook, and the study helps (Topical Guide, Bible Dictionary, Guide to the Scriptures); and under every verse of the Bible, the Hebrew and Greek text word by word (STEP Bible data: the Leningrad Codex, and the Greek of NA28 together with the Textus Receptus behind the KJV), each word with its transliteration, gloss, Strong's number and grammar, with the lexicon behind the numbers. It is searched with the tools below. Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly rather than quoting it from memory.`;
 
   const TOOLS_GUIDE = `Tools:
 - search: ranked full-text search (SQLite FTS5 with stemming). Use distinctive words; put exact phrases in double quotes; separate true synonyms with OR; scope narrows to scriptures, conference, pmg, standards (Missionary Standards), handbook, cfm, or helps; speaker and years narrow conference talks; edition and exclude_edition keep to, or keep out, one edition or volume by words in its title.
@@ -26,6 +26,8 @@
 
 Editions. Some shelves hold several editions or volumes, and every passage's label names the one it is from: the Missionary Standards shelf holds the booklet for full-time missionaries ("Missionary Standards for Disciples of Jesus Christ"), its supplement, and the service missionary edition (its title says "Service Missionaries"); Come, Follow Me has a volume per year; the study helps are the Topical Guide, the Bible Dictionary and the Guide to the Scriptures. When the person includes or excludes one, search with edition or exclude_edition, and before writing check the label of every passage you use against what was asked. A passage from an excluded edition is never quoted, cited, or summarized, not even to say it was set aside.
 - read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11", a talk title).
+- original: the Hebrew or Greek of a Bible verse or short passage, word by word, each word with its transliteration, English gloss, Strong's number and grammar, beside the KJV. Use it whenever a question turns on what a word means, how a verse is built, or which word the KJV rendered; Psalm titles are verse 0.
+- lexicon: a Strong's number's dictionary entry (lemma, gloss, definition), the senses the data tells apart, how often it occurs and in which books, with its first occurrences and the KJV's verses. For the meaning of a word across the Bible, not just in one verse. The search tool also takes Hebrew or Greek letters, a Strong's number ("H2617", "G26") or "translit: chesed", and returns every verse with that word.
 
 How to search. Work the way a careful researcher works in a library, not the way a search box works:
 1. Decide what a complete answer needs before the first search: a list (then every item), a doctrine (then the defining passages and what the prophets have taught about them), a quotation (then the exact words and their setting), a comparison (then both sides in their own words).
@@ -33,7 +35,7 @@ How to search. Work the way a careful researcher works in a library, not the way
 3. For anything meant to be complete ("all", "every", "each time", "how many"), use find_all once per wording and per scope, and count. Never estimate a list from a ranked sample.
 4. Read before you quote. When a passage will be quoted or interpreted, read it in context so the meaning is the author's and not the snippet's: the verses around it, the paragraphs around a line of a talk, the heading of the chapter.
 5. Follow the thread. A passage that names another, a scripture a speaker quotes, a doctrine a verse assumes, is a lead; look it up.
-6. Prefer the primary source: for what a prophet said, his own talk and not a manual's summary; for doctrine, the scripture first, then the prophets' teaching about it.
+6. Prefer the primary source: for what a prophet said, his own talk and not a manual's summary; for doctrine, the scripture first, then the prophets' teaching about it; for what a Bible word means, the Hebrew or Greek itself (original, then lexicon) before the Bible Dictionary.
 7. Check your memory against the library. If you recall a passage the tools have not returned, search for it before using it; if it is not there, say so rather than quoting it.
 8. Stop when further searches return nothing new, then write. Before writing, read the question once more for its conditions (what to include, what to exclude, "exact quotes", "all", a scope, a speaker, a date) and check the answer against each one; then make sure every quotation you will use is on the list of passages returned, word for word.
 
@@ -77,6 +79,15 @@ Build the piece from passages the tools returned. Quotation marks are a promise:
         reference: { type: "string", description: "A chapter or verse reference such as 'Alma 32' or 'D&C 76:22-24', or a talk title." },
         before: { type: "integer", description: "Paragraphs before, default 2" }, after: { type: "integer", description: "Paragraphs after, default 2" },
       } } },
+    { name: "original", description: "The Hebrew or Greek text of a Bible verse or short passage, word by word: each word with its transliteration, English gloss, Strong's number and grammar, beside the KJV's verse.",
+      input_schema: { type: "object", properties: {
+        reference: { type: "string", description: "A verse or range within one chapter: 'Genesis 1:1', 'John 1:1-5', 'Isaiah 53:4-6', 'Psalm 23'. Psalm titles are verse 0." },
+      }, required: ["reference"] } },
+    { name: "lexicon", description: "A Strong's number's lexicon entry: lemma, transliteration, gloss, definition, the senses told apart, how often it occurs and in which books, with its first occurrences in the KJV.",
+      input_schema: { type: "object", properties: {
+        strongs: { type: "string", description: "A Strong's number such as H2617, G26 or H7307G (a letter suffix picks one sense)." },
+        limit: { type: "integer", description: "How many occurrences to list, default 40, up to 200." },
+      }, required: ["strongs"] } },
   ];
   const MAX_TOOL_CALLS = 14;
 
@@ -288,12 +299,21 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       const r = await api("search", { q: query, scope: scope && scope !== "all" ? scope : null, limit: Math.max(5, Math.min(30, limit || 12)), speaker: speaker || null, from: year_from || null, to: year_to || null, edition: edition || null, exclude_edition: exclude_edition || null });
       const out = [];
       for (const h of r.hits) {
-        const p = await this.fromHit(h, { before: h.kind === "verse" ? 1 : 0, after: h.kind === "verse" ? 1 : 0 });
-        if (p) out.push(p);
+        if (!h.doc_id || !h.pid) continue;
+        const p = await this.fromHit(h, { before: h.kind === "verse" && !r.original ? 1 : 0, after: h.kind === "verse" && !r.original ? 1 : 0 });
+        if (!p) continue;
+        // a Hebrew, Greek or Strong's search: say which word in the verse answered
+        if (r.original && h.words && h.words.length) p.original = h.words.map((w) => `${w.word} ${w.translit || ""} [${(w.gloss || "").replace(/\s+/g, " ").trim()}] ${w.strongs || ""}`.trim()).join("; ");
+        out.push(p);
       }
       if (r.jump?.doc_id && r.jump.pid) {
         const p = await this.fromHit({ doc_id: r.jump.doc_id, pid: r.jump.pid, kind: "verse" }, { before: 0, after: r.jump.verse_end ? Math.max(0, r.jump.verse_end - parseInt(r.jump.pid.slice(1), 10)) : 0 });
         if (p) out.unshift(p);
+      }
+      if (r.original) {
+        const o = r.original;
+        const lex = o.lexicon ? `${o.lexicon.lemma} ${o.lexicon.translit || ""}, "${o.lexicon.gloss || ""}", Strong's ${o.lexicon.strongs}` : (o.tokens || []).join(" ");
+        out.note = `${o.language} search: ${lex}. ${o.total.toLocaleString()} ${o.total === 1 ? "verse" : "verses"} in all${out.length < o.total ? `; the first ${out.length} follow (raise limit, or narrow with scope ot/nt, for more)` : ""}.${o.all_forms && o.all_forms > o.total ? ` Every form of ${o.strongs} occurs in ${o.all_forms.toLocaleString()} verses: search "${o.strongs}" for all of them.` : ""} Each passage's line names the word that answered.`;
       }
       return out;
     }
@@ -345,6 +365,45 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     }
   }
 
+  Registry.prototype.original = async function ({ reference }) {
+    const api = GL().api;
+    const r = await api("original", { chapter: reference, parse: true, max_words: 1500 });
+    if (!r || !r.available) return { text: "The original-language text is not in this library yet (it arrives with the next nightly build).", verses: [] };
+    if (r.error) return { text: `Error: ${r.error}`, verses: [] };
+    if (!r.verses.length) return { text: `No Hebrew or Greek text for "${reference}". Give a Bible chapter or verse; the other standard works have no original-language text here.`, verses: [] };
+    const lines = [`${r.book_name} ${r.chapter}, ${r.language}${r.truncated ? " (long chapter: the first verses only; ask for a verse range for the rest)" : ""}. Each word: the ${r.language} word, its transliteration, its gloss in [brackets], its Strong's number and grammar.`];
+    for (const v of r.verses) {
+      let cite = v.citation || `${r.book_name} ${r.chapter}:${v.verse}`;
+      if (v.text && r.doc_id && v.pid) { const p = this.add({ doc_id: r.doc_id, pid: v.pid, kind: "verse", citation: cite, label: cite, text: v.text, plain: v.text, verses: [{ n: v.verse, text: v.text }], collection: "scriptures" }); cite = `[${p.n}] ${cite}`; }
+      lines.push(`\n${cite}${v.text ? ` (KJV: ${v.text})` : v.verse === 0 ? " (the psalm's title)" : ""}`);
+      lines.push(v.words.map((w, i) => `${i + 1}. ${w.word} ${w.translit || ""} [${(w.gloss || "").replace(/\s+/g, " ").trim()}] ${w.strongs || ""}${w.grammar ? ` ${w.grammar}` : w.morph ? ` ${w.morph}` : ""}${w.flags && /^[KkO(]/.test(w.flags) && !/[nN]/.test(w.flags) ? " {in the KJV's Greek, not NA28}" : w.flags && /[nN]/.test(w.flags) && !/[kK]/.test(w.flags) ? " {in NA28, not the KJV's Greek}" : /Q/.test(w.flags || "") ? " {qere}" : ""}`).join("\n"));
+    }
+    lines.push(`\n${r.credit}`);
+    return { text: lines.join("\n"), verses: r.verses, language: r.language };
+  };
+  Registry.prototype.lexicon = async function ({ strongs, limit }) {
+    const api = GL().api;
+    const r = await api("lexicon", { strongs, limit: Math.max(1, Math.min(200, limit || 40)) });
+    if (!r) return { text: `Nothing in the lexicon for "${strongs}". Strong's numbers look like H2617 or G26.` };
+    const e = r.entry;
+    const lines = [];
+    if (e) lines.push(`${r.strongs} ${e.lemma} (${e.translit}), "${e.gloss}"${e.type ? `, ${e.type}` : ""}.${e.definition ? ` Definition: ${String(e.definition).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()}` : ""}${e.relation ? ` (${e.relation})` : ""}`);
+    else lines.push(`${r.strongs}: no dictionary entry, but the number is used in the text.`);
+    if (r.senses && r.senses.length > 1) lines.push(`Senses told apart: ${r.senses.map((x) => `${x.strongs} "${x.gloss}"`).join("; ")}.`);
+    lines.push(`Occurs ${r.count.toLocaleString()} times in ${r.verses_total.toLocaleString()} verses${r.books && r.books.length ? `: ${r.books.map((b) => `${b.name} ${b.n}`).join(", ")}` : ""}.`);
+    if (r.glosses && r.glosses.length) lines.push(`Rendered in the gloss as: ${r.glosses.map((g) => `${g.gloss} (${g.n})`).join(", ")}.`);
+    if (r.verses && r.verses.length) {
+      lines.push(`\nOccurrences${r.verses.length < r.verses_total ? ` (the first ${r.verses.length})` : ""}, with the KJV's text:`);
+      for (const v of r.verses) {
+        let cite = v.citation;
+        if (v.text && v.doc_id && v.pid) { const p = this.add({ doc_id: v.doc_id, pid: v.pid, kind: "verse", citation: cite, label: cite, text: v.text, plain: v.text, verses: [{ n: v.verse, text: v.text }], collection: "scriptures" }); cite = `[${p.n}] ${cite}`; }
+        lines.push(`${cite}: ${v.words.map((w) => `${w.word} ${w.translit || ""} [${(w.gloss || "").trim()}]`).join("; ")}${v.text ? ` — ${v.text}` : ""}`);
+      }
+    }
+    lines.push(`\n${r.credit}`);
+    return { text: lines.join("\n"), count: r.count };
+  };
+
   function sourceLabel(d) {
     if (d.collection === "general-conference") return [d.author, `“${d.title}”`, d.label].filter(Boolean).join(", ");
     if (d.collection === "scriptures") return d.citation;
@@ -354,7 +413,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   // to finish it from memory, and that is how a quotation goes wrong.
   function passageLine(p, max = 2400) {
     const t = p.verses && p.verses.length ? p.verses.map((v) => `${v.n} ${v.text}`).join(" ") : (p.plain || p.text);
-    return `[${p.n}] ${p.label}\n${t.length > max ? t.slice(0, max) + " […]" : t}`;
+    return `[${p.n}] ${p.label}${p.original ? ` · ${p.original}` : ""}\n${t.length > max ? t.slice(0, max) + " […]" : t}`;
   }
 
   // The owner's private skills (published sealed with the library, unlocked
@@ -431,7 +490,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
             statusEl.textContent = `Searching: ${step.what}…`;
             const out = await registry.search(tu.input);
             step.found = out.length;
-            content = out.length ? out.map((p) => passageLine(p)).join("\n\n") : "No passages matched. Try other words or a different scope.";
+            content = out.length ? (out.note ? out.note + "\n\n" : "") + out.map((p) => passageLine(p)).join("\n\n") : (out.note ? out.note : "No passages matched. Try other words or a different scope.");
           } else if (tu.name === "find_all" || tu.name === "find_all_verses") {
             const what = tu.input.phrase ? `“${tu.input.phrase}”` : tu.input.words;
             step.what = `every passage with ${what}${tu.input.scope && tu.input.scope !== "all" ? ` in ${tu.input.scope}` : ""}`;
@@ -447,6 +506,19 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
             const r = await registry.read(tu.input);
             step.found = r.out ? r.out.length : null;
             content = r.error ? `Error: ${r.error}` : (r.title ? `${r.title}\n\n` : "") + r.out.map((p) => passageLine(p, 600)).join("\n\n");
+          } else if (tu.name === "original") {
+            step.what = `the original of ${tu.input.reference}`;
+            statusEl.textContent = `Reading the Hebrew or Greek of ${tu.input.reference}…`;
+            const r = await registry.original(tu.input);
+            step.found = r.verses ? r.verses.length : null;
+            if (r.language && step.what.startsWith("the original")) step.what = `the ${r.language} of ${tu.input.reference}`;
+            content = r.text;
+          } else if (tu.name === "lexicon") {
+            step.what = `lexicon ${tu.input.strongs}`;
+            statusEl.textContent = `Looking up ${tu.input.strongs}…`;
+            const r = await registry.lexicon(tu.input);
+            step.found = r.count ?? null;
+            content = r.text;
           } else content = `Unknown tool ${tu.name}`;
         } catch (err) { content = `Error: ${err.message}`; }
         const cap = tu.name === "find_all" || tu.name === "find_all_verses" ? 170000 : 60000;
@@ -466,7 +538,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const model = MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model;
     const trailEl = el("details", { class: "ask-trail" }, [
       el("summary", { text: `${trail.length ? `${trail.length} ${trail.length === 1 ? "search" : "searches"}, ${passages.length} passages` : `${passages.length} passages`} · ${model}${settings.think ? ", thinking" : ""}` }),
-      trail.length ? el("ol", {}, trail.map((t) => el("li", { text: `${t.tool === "search" ? "Searched" : t.tool === "read" ? "" : "Counted"}${t.tool === "read" ? "" : ": "}${t.what.replace(/^read /, "Read ")}${t.found !== null && t.found !== undefined ? ` (${t.found})` : ""}` }))) : null,
+      trail.length ? el("ol", {}, trail.map((t) => el("li", { text: `${t.tool === "search" ? "Searched: " : t.tool === "read" ? "" : t.tool === "original" ? "Read " : t.tool === "lexicon" ? "Looked up " : "Counted: "}${t.what.replace(/^read /, "Read ").replace(/^lexicon /, "")}${t.found !== null && t.found !== undefined ? ` (${t.found})` : ""}` }))) : null,
     ]);
     sourcesEl.append(trailEl);
     const bad = unverifiedQuotes(reply, passages);

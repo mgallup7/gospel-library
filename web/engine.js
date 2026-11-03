@@ -397,7 +397,7 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
     return out;
   }
 
-  if (offset === 0 && !typeahead) out.original_hint = transliterationHint(q);
+  if (offset === 0 && !typeahead && !out.jump) out.original_hint = transliterationHint(q);
   if (offset === 0 && cq.terms.length) {
     const titleMatch = cq.terms.map((t) => ftsPhrase(t)).filter(Boolean).join(" ");
     const tw = ["documents_fts MATCH ?"];
@@ -983,7 +983,7 @@ function finishOriginal(out, occ, info, limit, offset, scope) {
 // transliterates, so the results can offer the original word.
 let translitMap = null;
 function transliterationHint(q) {
-  if (!haveOriginals()) return null;
+  if (!haveOriginals() || /\d|["':]/.test(String(q || ""))) return null;
   const words = String(q || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
   if (words.length !== 1) return null;
   if (!translitMap) {

@@ -20,6 +20,22 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Power syntax still works: quotes, `-word`, `speaker:nelson`,
   `year:2015-2020`, `book:alma`, `in:conference`.
 - Type a reference (`Alma 32:21`, `d&c 76 22`, `js-h 1:17`) and jump straight to it.
+- The Bible in its own languages. Open any chapter of the Old or New
+  Testament and tap Hebrew (or Greek) in the reader bar: under every verse,
+  each word of the original as a tile, with how it sounds and what it means
+  (Psalm titles come as verse 0, as the Hebrew counts them). Tap a word for
+  its grammar in plain words, its dictionary entry, how often it occurs and
+  where, and every verse that has it. Greek words the KJV translators had
+  that the critical text lacks are outlined (and the reverse dimmed), so
+  the differences between the Textus Receptus and NA28 are visible. The
+  search box takes Hebrew or Greek letters (points and accents optional), a
+  Strong's number (`H2617`, `G26`) or `translit: chesed`, and an English
+  search that is really a transliteration ("logos", "shalom") offers the
+  word behind it. Ask has the same text as tools (`original`, `lexicon`).
+  The data is the STEP Bible's (Tyndale House, Cambridge; the Leningrad
+  Codex, and the Greek of NA28 together with the Textus Receptus and the
+  other editions, each word tagged and glossed), used under CC BY 4.0; see
+  "A word on the content".
 - Results are verses and paragraphs with the matches highlighted; open one and
   the whole chapter or talk is there with footnotes, speaker, session, and
   previous/next.
@@ -192,3 +208,12 @@ talks, manuals, and the handbook are copyrighted by Intellectual Reserve, Inc.
 and offered by the Church for personal, noncommercial use, which is exactly
 what this is. The published library file is encrypted for that reason; do not
 share the passphrase or publish a decrypted copy.
+
+The Hebrew and Greek text, transliterations, glosses, Strong's numbers,
+grammar and lexicons are data created by [STEP Bible](https://www.STEPBible.org)
+based on work at Tyndale House, Cambridge, used under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the source is
+<https://STEPBible.github.io/STEPBible-Data>. The nightly job downloads the
+files from there once (`python -m gospel_library originals`) and keeps the
+loaded tables with its state; the app credits STEP Bible under every
+chapter it shows and in every answer that draws on it.

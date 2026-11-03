@@ -237,6 +237,7 @@
       if (active?.slot && active.slot !== result.slot) call("forget", { slot: active.slot }).catch(() => {});
       banner.remove();
       currentDoc = null;
+      try { window.dispatchEvent(new CustomEvent("library:change")); } catch (_) {}
       render();
     } catch (err) {
       label.textContent = `Update failed: ${err.message}`;
@@ -337,6 +338,8 @@
       if (data.widened) line.append(el("span", { class: "widened", text: ` · Claude also searched: ${data.widened.join("; ")}` }));
       frag.append(line);
     }
+    if (data.original) { const line = window.Original?.resultsHeader(data.original); if (line) frag.append(line); }
+    if (data.original_hint) { const line = window.Original?.hintLine(data.original_hint); if (line) frag.append(line); }
     if (data.titles && data.titles.length) {
       frag.append(el("div", { class: "group-title", text: "By title" }));
       for (const d of data.titles) frag.append(docRow(d));
@@ -561,6 +564,7 @@
     readerPane.scrollTop = 0;
     body.addEventListener("click", onBodyClick);
     body.addEventListener("click", onSelectClick);
+    window.Original?.attach(doc, body, bar);
     body.addEventListener("dblclick", (e) => {
       const unit = e.target.closest("p, h2, h3, li");
       if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
@@ -570,7 +574,7 @@
 
   // Tap a verse or paragraph to select it for the deck; a bar offers what to do with the selection.
   function onSelectClick(e) {
-    if (e.defaultPrevented || e.target.closest("a, button, .notes, header")) return;
+    if (e.defaultPrevented || e.target.closest("a, button, .notes, header, .orig")) return;
     const unit = e.target.closest("p.verse, .body-block p, .body-block li, p[id]");
     if (!unit || !unit.id || !unit.closest(".doc")) return;
     unit.classList.toggle("sel");
@@ -969,8 +973,12 @@
     restore() { if (panel.lastEl) panel.show(panel.lastEl, panel.lastTitle); },
   };
 
+  function searchFor(q) {
+    state.q = q; state.offset = 0; state.docId = null; state.pid = null;
+    syncControls(); showList(); runSearch({ typeahead: false });
+  }
   window.GL = {
-    api, el, esc, store, openDoc, startPresentingUnits, toast, panel,
+    api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor,
     get ready() { return state.ready; },
     get skills() { return store.get("skills")?.data || null; },
     get wide() { return wide(); },
