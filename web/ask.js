@@ -212,7 +212,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const sources = el("div", { class: "ask-sources" });
     const tools = el("div", { class: "ask-tools" });
     const inline = el("div", { class: "ask-findings-inline" });
-    card.append(q, status, answer, sources, tools, inline);
+    // The passages first, the answer under them.
+    card.append(q, status, inline, answer, sources, tools);
     log.prepend(card);
     try {
       const registry = new Registry();

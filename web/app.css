@@ -549,5 +549,6 @@ body.presenting { overflow: hidden; }
 .finding .text { font: 16px/1.5 var(--serif); margin: 6px 0 4px; }
 .finding .text .vn { font: 600 .7em var(--sans); color: var(--ink-3); vertical-align: super; margin-right: 2px; }
 .finding .acts { display: flex; gap: 2px; margin-left: -8px; }
-.ask-findings-inline { margin-top: 10px; }
+.ask-findings-inline { margin: 6px 0 14px; }
+.ask-findings-inline + .ask-a { border-top: 1px solid var(--rule); padding-top: 12px; }
 .cite { font-size: .8em; vertical-align: baseline; line-height: 1.4; padding: 1px 6px; }
