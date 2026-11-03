@@ -17,6 +17,10 @@ on:
         description: "Private writing skills for Ask (gzip, base64). Kept encrypted with the nightly state; sealed into the library for the devices."
         required: false
         default: ""
+      jsp_minutes:
+        description: "Minutes to spend on the Joseph Smith Papers this run (default 75; 0 to skip)"
+        required: false
+        default: ""
 
 concurrency:
   group: library-sync
@@ -82,6 +86,14 @@ jobs:
           if [ -n "${{ inputs.collections }}" ]; then args="$args --collections ${{ inputs.collections }}"; fi
           if [ "${{ inputs.full }}" = "true" ]; then args="$args --full"; fi
           python -m gospel_library sync $args
+
+      # A little of the Joseph Smith Papers each night, within a time budget;
+      # what is not reached tonight comes on a later night.
+      - name: Joseph Smith Papers
+        if: inputs.jsp_minutes != '0'
+        continue-on-error: true
+        timeout-minutes: 110
+        run: python -m gospel_library jsp --minutes "${{ inputs.jsp_minutes || 75 }}"
 
       - name: Save state for tomorrow
         if: always()

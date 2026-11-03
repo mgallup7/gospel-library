@@ -194,6 +194,21 @@ def cmd_originals(args) -> int:
     return 0
 
 
+def cmd_jsp(args) -> int:
+    """Fetch the Joseph Smith Papers, a little at a time, within a time budget."""
+    from . import jsp
+    from .db import Store
+
+    config.ensure_dirs()
+    store = Store(config.DB_PATH)
+    try:
+        counts = jsp.JspSync(store, minutes=args.minutes, catalog_days=args.catalog_days).run(args.series or None)
+    finally:
+        store.close()
+    print(f"Joseph Smith Papers: {counts['papers']} papers ({counts['pages']} pages, {counts['documents']} documents) in {counts['requests']} requests, {counts['errors']} errors")
+    return 0
+
+
 def cmd_seal(args) -> int:
     """Encrypt any file (used for the nightly job's state)."""
     from . import bundle
@@ -288,6 +303,12 @@ def main(argv=None) -> int:
     s.add_argument("--source", help="folder with the STEP Bible files (downloaded from GitHub when omitted)")
     s.add_argument("--force", action="store_true", help="reload even if already present")
     s.set_defaults(fn=cmd_originals, to_file=False)
+
+    s = sub.add_parser("jsp", help="fetch the Joseph Smith Papers (josephsmithpapers.org), a little each run")
+    s.add_argument("--minutes", type=float, default=75, help="time budget for this run (default 75)")
+    s.add_argument("--series", nargs="*", help="only these series (journals, revelations-and-translations, histories, documents, ...)")
+    s.add_argument("--catalog-days", type=float, default=7, help="how often to re-read the site's lists of papers")
+    s.set_defaults(fn=cmd_jsp, to_file=False)
 
     s = sub.add_parser("seal", help="encrypt a file with the library passphrase")
     s.add_argument("src")

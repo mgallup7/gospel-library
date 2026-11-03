@@ -358,7 +358,7 @@ class Store:
         return self.conn.execute(
             """SELECT d.id, d.uri, d.collection_id, d.book_id, c.slug AS collection
                  FROM documents d JOIN collections c ON c.id=d.collection_id
-                WHERE d.next_check <= ? ORDER BY d.next_check LIMIT ?""",
+                WHERE d.next_check <= ? AND c.kind != 'jsp' ORDER BY d.next_check LIMIT ?""",
             (now(), limit),
         ).fetchall()
 

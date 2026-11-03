@@ -363,3 +363,89 @@ def test_originals_ingest(tmp_path):
     assert O.ingest(conn, src)["words"] == info["words"] and info["format"] == O.FORMAT and info["morph"] >= 6
     conn.execute("UPDATE meta SET value=json_set(value, '$.format', 1) WHERE key='originals'")
     assert O.ingest(conn, src)["format"] == O.FORMAT
+
+
+def test_joseph_smith_papers(tmp_path):
+    """The Papers: the site's page data cleaned into documents, and the sync's bookkeeping."""
+    import json
+
+    from gospel_library import jsp
+    from gospel_library.db import Store
+
+    fx = Path(__file__).parent / "fixtures" / "jsp"
+    load = lambda name: json.loads((fx / name).read_text(encoding="utf-8"))
+
+    # a journal page: entries become headings, notes become footnotes, names open their bios
+    pp = load("journal-26.json")
+    s = dict(pp["summary"]); s["_toc"] = pp["tableOfContents"]; s["_gallery"] = pp["gallery"]
+    docs = jsp.paper_documents([s], "journal-december-1841-december-1842", "Journal, December 1841–December 1842", whole=False)
+    page = docs[0]
+    assert page.uri == "/paper-summary/journal-december-1841-december-1842/26" and page.title.endswith(", page 95") and page.content_type == "jsp-page"
+    assert page.paragraphs[0].kind == "heading" and page.paragraphs[0].text == "6 May 1842 • Friday"
+    assert page.paragraphs[1].kind == "para" and page.paragraphs[1].text.startswith("Friday 6 Attended the officer drill") and "179" not in page.paragraphs[1].text
+    assert '<a class="study-note-ref" href="#n179"><sup class="marker">179</sup></a>' in page.body_html
+    assert '<a class="study-note-ref jsp-ref" href="#per294">Lyman Wight</a>' in page.body_html and "popup" not in page.body_html
+    notes = {f.note_id: f for f in page.footnotes}
+    assert notes["n179"].marker == "179" and notes["n179"].pid == "p2" and "officer drill" in notes["n179"].text
+    assert notes["per294"].marker == "" and notes["per294"].html.startswith("<p><b>Lyman Wight</b></p>") and "josephsmithpapers.org" in notes["per294"].html
+    assert "<s>two</s>" in page.body_html  # a deletion in the manuscript
+    assert [d.content_type for d in docs] == ["jsp-page", "jsp-source-note", "jsp-introduction"]
+    assert docs[1].title.startswith("Source Note: Journal") and docs[2].paragraphs
+
+    # a short letter: one document for the whole paper, page breaks marked
+    p1, p2 = load("letter-1.json"), load("letter-2.json")
+    s1 = dict(p1["summary"]); s1["_toc"] = []; s1["_gallery"] = p1["gallery"]
+    s2 = dict(p2["summary"]); s2["_toc"] = []; s2["_gallery"] = p2["gallery"]
+    docs = jsp.paper_documents([s1, s2], "letter-to-emma-smith-4-june-1834", "Letter to Emma Smith, 4 June 1834", whole=True)
+    letter = docs[0]
+    assert letter.uri == "/paper-summary/letter-to-emma-smith-4-june-1834" and letter.content_type == "jsp-paper"
+    assert letter.body_html.count('class="jsp-page"') == 2 and 'class="jsp right"' in letter.body_html
+    assert [p.pid for p in letter.paragraphs] == [f"p{i}" for i in range(1, len(letter.paragraphs) + 1)]
+    assert any(f.note_id == "n1" and f.pid for f in letter.footnotes)
+    assert letter.paragraphs[0].text.startswith("On the banks of the Mississippi")
+
+    # the sync, with the site played by the fixtures
+    class Fake(jsp.JspFetcher):
+        def __init__(self):
+            super().__init__(interval=0)
+            self.paths = []
+        def page_props(self, path):
+            self.paths.append(path)
+            if path == "/the-papers/journals":
+                return load("series-journals.json")
+            if path == "/the-papers/journals/jsppj1":
+                return load("volume-jsppj1.json")
+            if path == "/the-papers/journals/jsppj2":
+                return {"docDetails": {"panes": [{"sections": [{"links": [{"text": "Letter to Emma Smith, 4 June 1834", "href": "/paper-summary/letter-to-emma-smith-4-june-1834"}]}]}]}}
+            if path.startswith("/paper-summary/journal-"):
+                d = load("journal-26.json"); d["summary"]["numberOfPages"] = "1"; d["summary"]["requestedPageNumber"] = "1"; return d
+            if path == "/paper-summary/letter-to-emma-smith-4-june-1834/1":
+                d = load("letter-1.json"); d["summary"]["numberOfPages"] = "2"; return d
+            if path == "/paper-summary/letter-to-emma-smith-4-june-1834/2":
+                d = load("letter-2.json"); d["summary"]["numberOfPages"] = "2"; return d
+            raise jsp.JspError(f"404 {path}")
+
+    store = Store(tmp_path / "jsp.sqlite")
+    fake = Fake()
+    counts = jsp.JspSync(store, fake, minutes=5).run(["journals"])
+    assert counts["papers"] == 3 and counts["errors"] == 0 and counts["documents"] >= 7
+    coll = store.conn.execute("SELECT slug, title, kind FROM collections").fetchall()
+    assert [tuple(c) for c in coll] == [("jsp-journals", "Joseph Smith Papers: Journals", "jsp")]
+    books = store.conn.execute("SELECT uri, title, entry_count FROM books ORDER BY sort").fetchall()
+    assert [b["uri"] for b in books] == ["/the-papers/journals/jsppj1", "/the-papers/journals/jsppj2"] and books[0]["title"].startswith("Journals, 1832")
+    rows = store.conn.execute("SELECT uri, title, section_path, year FROM documents ORDER BY sort_key").fetchall()
+    uris = [r["uri"] for r in rows]
+    assert "/paper-summary/letter-to-emma-smith-4-june-1834" in uris and "/paper-summary/journal-1832-1834" in uris
+    letter_row = next(r for r in rows if r["uri"] == "/paper-summary/letter-to-emma-smith-4-june-1834")
+    assert json.loads(letter_row["section_path"]) == ["Joseph Smith Papers: Journals", "Journals, 1841–1844"] or letter_row["section_path"]
+    assert letter_row["year"] == 1834
+    # the whole letter's text is searchable, and the nightly recheck leaves the Papers alone
+    hit = store.conn.execute("SELECT text FROM paragraphs WHERE paragraphs MATCH 'mumps'").fetchone()
+    assert hit and "Mumps" in hit[0]
+    assert store.due_documents(10) == []
+    # a second run fetches nothing new
+    before = fake.requests_made
+    jsp.JspSync(store, fake, minutes=5).run(["journals"])
+    assert fake.requests_made == before
+    assert set(store.get_meta("jsp_papers")) >= {"journal-1832-1834", "letter-to-emma-smith-4-june-1834"}
+    store.close()

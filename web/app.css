@@ -604,3 +604,15 @@ body.presenting { overflow: hidden; }
 .hit .snip .ow-lead .ow-inline { font-size: 1.35em; color: var(--ink); }
 .smart-line.orig-line, .smart-line.orig-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 @media (max-width: 899px) { .orig .ow .w { font-size: 1.3em; } .orig.gr .ow .w { font-size: 1.1em; } }
+
+/* ---- the Joseph Smith Papers ---------------------------------------- */
+.doc .jsp-meta { font-family: var(--sans); font-size: .85em; color: var(--ink-2); margin: -.6em 0 1.2em; }
+.doc .jsp-page { font-family: var(--sans); font-size: 12px; color: var(--ink-3); margin: 1.4em 0 .6em; letter-spacing: .04em; }
+.doc h3.jsp-entry { font-family: var(--sans); font-size: .9em; color: var(--ink-2); margin: 1.4em 0 .4em; }
+.doc p.jsp.indent { text-indent: 1.4em; }
+.doc p.jsp.right { text-align: right; }
+.doc p.jsp.center { text-align: center; }
+.doc .jsp-ref { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--ink-3); }
+.doc .illegible { color: var(--ink-3); font-style: italic; }
+.doc .ed { font-style: italic; color: var(--ink-2); }
+.doc .jsp-credit { font-family: var(--sans); font-size: 13px; color: var(--ink-3); margin-top: 2em; }

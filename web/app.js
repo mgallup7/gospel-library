@@ -102,8 +102,8 @@
   window.addEventListener("popstate", () => { if (!state.ready) return; readUrl(); syncControls(); render(); });
 
   // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
-  const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps" };
-  const SCOPE_NAME = { scriptures: "the scriptures", conference: "general conference", pmg: "Preach My Gospel", standards: "Missionary Standards", handbook: "the handbook", cfm: "Come, Follow Me", manuals: "the manuals", helps: "the study helps" };
+  const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", jsp: "jsp" };
+  const SCOPE_NAME = { scriptures: "the scriptures", conference: "general conference", pmg: "Preach My Gospel", standards: "Missionary Standards", handbook: "the handbook", cfm: "Come, Follow Me", manuals: "the manuals", helps: "the study helps", jsp: "the Joseph Smith Papers" };
   function syncControls() {
     input.value = state.q;
     for (const b of document.querySelectorAll(".scopes button")) b.classList.toggle("on", b.dataset.scope === state.scope);
@@ -413,7 +413,7 @@
     const frag = document.createDocumentFragment();
     frag.append(el("div", { class: "status", id: "homeStatus", text: "" }));
     const tabs = el("div", { class: "shelf", id: "homeTabs" });
-    const sections = [["ask", "Ask"], ["deck", "Deck"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["missionary-standards", "Missionary Standards"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"]];
+    const sections = [["ask", "Ask"], ["deck", "Deck"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["missionary-standards", "Missionary Standards"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"], ["jsp", "JS Papers"]];
     for (const [key, label] of sections) {
       tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => {
         state.browse = { tab: key };
@@ -441,6 +441,7 @@
       if (tab === "deck") { window.Deck?.render(body); return; }
       if (tab === "conference") await browseConference(body);
       else if (tab === "scriptures") await browseScriptures(body);
+      else if (tab === "jsp") await browseJsp(body);
       else await browseCollection(body, tab);
     } catch (e) {
       body.append(el("div", { class: "status error", text: e.message }));
@@ -505,6 +506,23 @@
     if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with a later nightly build." })); return; }
     if (books.length === 1) return renderBookToc(body, books[0].uri, null);
     for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: slug, bookUri: bk.uri }; renderHome(); } }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} pages` })]));
+  }
+
+  // The Joseph Smith Papers: a series (journals, revelations, histories…), then its volumes, then the papers.
+  async function browseJsp(body) {
+    const b = state.browse || {};
+    const all = (await api("browse", {})).collections.filter((c) => c.slug.startsWith("jsp-"));
+    if (!all.length) { body.append(el("div", { class: "empty", text: "The Joseph Smith Papers arrive with the nightly builds, a series at a time: journals first, then revelations and translations, histories, and the documents." })); return; }
+    const chips = el("div", { class: "shelf" });
+    const series = b.series || all[0].slug;
+    for (const c of all) chips.append(el("button", { class: "chip" + (series === c.slug ? " on" : ""), text: c.title.replace(/^Joseph Smith Papers: /, "") + (c.docs ? "" : " (soon)"), onclick: () => { state.browse = { tab: "jsp", series: c.slug }; renderHome(); } }));
+    body.append(chips);
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: "jsp", series }; renderHome(); });
+    const data = await api("browse", { collection: series });
+    const books = data.books.filter((x) => x.docs > 0);
+    if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing from this series yet. It arrives with a later nightly build." })); return; }
+    for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: "jsp", series, bookUri: bk.uri }; renderHome(); } }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} ${bk.docs === 1 ? "page" : "pages"}` })]));
+    body.append(el("p", { class: "deck-hint", text: "Transcriptions, source notes and historical introductions from josephsmithpapers.org (The Church Historian’s Press, © Intellectual Reserve, Inc.), for personal study. Tap a name in a paper for who or where it is." }));
   }
 
   async function renderBookToc(body, uri, back) {
@@ -624,6 +642,7 @@
   function crumbFor(doc) {
     if (doc.collection === "general-conference") return [doc.author, doc.session, doc.label].filter(Boolean).join(", ");
     const path = (doc.section_path || []).join(", ");
+    if (doc.collection && doc.collection.startsWith("jsp-")) return path || doc.label;
     return [doc.label !== doc.title ? doc.label : null, path].filter(Boolean).join(", ") || doc.collection_title;
   }
 
@@ -859,7 +878,7 @@
       if (inline) { inline.scrollIntoView({ block: "center" }); return; }
       bodyEl.replaceChildren(el("div", { text: "That note is not in the local copy." }));
     } else {
-      bodyEl.replaceChildren(el("div", { class: "nm", text: `Note ${n.marker || ""}`.trim() }), el("div", { html: n.html || esc(n.text) }));
+      bodyEl.replaceChildren(n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, el("div", { html: n.html || esc(n.text) }));
     }
     sheet.hidden = false;
     const scrim = el("div", { class: "scrim", onclick: hideNote });

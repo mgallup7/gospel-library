@@ -271,6 +271,7 @@ function metaValue(key) { const r = row("SELECT value FROM meta WHERE key=?", [k
 function docLabel(r) {
   const coll = r.collection;
   if (coll === "general-conference" && r.year) return `${r.month === 4 ? "April" : "October"} ${r.year} General Conference`;
+  if (coll && coll.startsWith("jsp-")) return `Joseph Smith Papers${r.book_title ? `, ${r.book_title}` : ""}`;
   if (r.volume) return r.volume;
   // A manual's own title names the edition or volume (the service missionary
   // edition of the Missionary Standards, this year's Come, Follow Me, the
@@ -577,7 +578,9 @@ async function document(id, uri) {
   } else {
     doc.next = doc.prev = null;
   }
-  doc.source_url = `https://www.churchofjesuschrist.org/study${r.uri}?lang=eng`;
+  doc.source_url = r.collection && r.collection.startsWith("jsp-")
+    ? `https://www.josephsmithpapers.org${r.uri.replace(/\/(source-note|introduction)$/, "/1")}`
+    : `https://www.churchofjesuschrist.org/study${r.uri}?lang=eng`;
   return doc;
 }
 
@@ -714,7 +717,8 @@ function bookToc(uri, id) {
   const docs = new Map(rows("SELECT id, uri, title, author FROM documents WHERE book_id=?", [b.id]).map((d) => [d.uri, d]));
   const nodes = b.toc_json ? JSON.parse(b.toc_json) : [];
   for (const n of nodes) {
-    const d = docs.get(n.uri);
+    // a long paper of the Joseph Smith Papers is stored one document per page; the entry opens its first page
+    const d = docs.get(n.uri) || (n.uri ? docs.get(n.uri + "/1") : undefined);
     n.doc_id = d ? d.id : null;
     if (d && !n.subtitle && d.author) n.subtitle = d.author;
   }

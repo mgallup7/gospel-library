@@ -38,6 +38,7 @@ _SCOPES = {
     "manuals": ["manuals", "come-follow-me", "handbook", "preach-my-gospel"],
     "manual": ["manuals", "come-follow-me", "handbook", "preach-my-gospel"],
     "helps": ["study-helps"],
+    "jsp": ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"],
     "all": [],
 }
 _FILTER = re.compile(r'(?P<key>speaker|by|year|book|in|scope):(?P<val>"[^"]+"|\S+)', re.I)

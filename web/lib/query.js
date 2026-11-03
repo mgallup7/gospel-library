@@ -7,6 +7,7 @@ const SCOPES = {
   handbook: ["handbook"], cfm: ["come-follow-me"], pmg: ["preach-my-gospel"], standards: ["missionary-standards"], "missionary-standards": ["missionary-standards"],
   manuals: ["manuals", "come-follow-me", "handbook", "preach-my-gospel", "missionary-standards"], manual: ["manuals", "come-follow-me", "handbook", "preach-my-gospel", "missionary-standards"],
   helps: ["study-helps"], all: [],
+  jsp: ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"], papers: ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"], "joseph-smith-papers": ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"],
 };
 const FILTER = /(speaker|by|year|book|in|scope):("[^"]+"|\S+)/gi;
 const TOKEN = /"([^"]*)"|(\S+)/g;
@@ -125,7 +126,7 @@ const BOOK_WORDS = new Map([
   ["psalms", "psalms"], ["psalm", "psalms"], ["proverbs", "proverbs"], ["matthew", "matthew"], ["luke", "luke"], ["romans", "romans"], ["corinthians", "1-corinthians"], ["hebrews", "hebrews"],
   ["revelation", "revelation"], ["moses", "moses"], ["abraham", "abraham"], ["d&c", "sections"], ["dc", "sections"],
 ]);
-const SCOPE_WORDS = { conference: "conference", talks: "conference", talk: "conference", scriptures: "scriptures", scripture: "scriptures", handbook: "handbook", pmg: "pmg", "preach my gospel": "pmg", "come follow me": "cfm", "topical guide": "helps", "bible dictionary": "helps", "missionary standards": "standards", "the standards": "standards", "msdjc": "standards" };
+const SCOPE_WORDS = { conference: "conference", talks: "conference", talk: "conference", scriptures: "scriptures", scripture: "scriptures", handbook: "handbook", pmg: "pmg", "preach my gospel": "pmg", "come follow me": "cfm", "topical guide": "helps", "bible dictionary": "helps", "missionary standards": "standards", "the standards": "standards", "msdjc": "standards", "joseph smith papers": "jsp", "the papers": "jsp", "jsp": "jsp" };
 
 export function isNatural(raw) {
   const t = raw.trim();
