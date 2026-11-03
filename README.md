@@ -100,6 +100,18 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   never committed to the repository: hand it to the nightly job once through
   the workflow's `skills` input (a gzip, base64 blob), and it is kept
   encrypted with the job's state from then on.
+- The Joseph Smith Papers. The nightly job also brings in josephsmithpapers.org,
+  a series at a time (journals, then revelations and translations, histories,
+  documents, and the administrative, legal and financial records), about 75
+  minutes a night at one request every 1.2 seconds, so the whole of it arrives
+  over a week or two. Each paper comes with its transcription (the editors'
+  bracketed readings, deletions struck through), its footnotes, the people
+  and places it names with their short biographies (tap a name), and its
+  source note and historical introduction. A JS Papers shelf lists the
+  series, volumes and papers; the JS Papers scope searches only them, and so
+  does "in the Joseph Smith Papers" in a plain-language search; Ask can be
+  pointed at them. Long papers (a journal, a history volume) come one page at
+  a time with previous and next; short ones as one piece with page markers.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it
   sees one.
@@ -208,6 +220,11 @@ talks, manuals, and the handbook are copyrighted by Intellectual Reserve, Inc.
 and offered by the Church for personal, noncommercial use, which is exactly
 what this is. The published library file is encrypted for that reason; do not
 share the passphrase or publish a decrypted copy.
+
+The Joseph Smith Papers transcriptions, notes and introductions are The
+Church Historian's Press's, © Intellectual Reserve, Inc., read from
+josephsmithpapers.org under its terms of use for personal, noncommercial
+study; each paper in the app links to its page there.
 
 The Hebrew and Greek text, transliterations, glosses, Strong's numbers,
 grammar and lexicons are data created by [STEP Bible](https://www.STEPBible.org)
