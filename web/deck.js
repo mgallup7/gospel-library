@@ -1138,15 +1138,15 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // ------------------------------------------------------------ chunking --
   // A slide holds about MAX_CHARS of scripture comfortably; longer passages
   // are split at verse or sentence boundaries, and the label says "1 of 2".
-  function chunksOf(it) {
+  function chunksOf(it, max = MAX_CHARS) {
     const out = [];
     if (it.verses && it.verses.length) {
       let cur = [], len = 0;
       for (const v of it.verses) {
-        if (cur.length && len + v.text.length > MAX_CHARS) { out.push({ verses: cur }); cur = []; len = 0; }
-        if (v.text.length > MAX_CHARS * 1.4) {
+        if (cur.length && len + v.text.length > max) { out.push({ verses: cur }); cur = []; len = 0; }
+        if (v.text.length > max * 1.4) {
           // one very long verse: split its sentences, keep the number on the first piece
-          const parts = sentences(v.text, MAX_CHARS);
+          const parts = sentences(v.text, max);
           if (cur.length) { out.push({ verses: cur }); cur = []; len = 0; }
           parts.forEach((p, i) => out.push({ verses: [{ n: i === 0 ? v.n : null, text: p }] }));
           continue;
@@ -1155,7 +1155,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       }
       if (cur.length) out.push({ verses: cur });
     } else {
-      for (const p of sentences(it.text, MAX_CHARS)) out.push({ text: p });
+      for (const p of sentences(it.text, max)) out.push({ text: p });
     }
     out.forEach((c, i) => {
       let label = (it.kind === "verse" || !it.label) ? (it.citation || "") : it.label;
@@ -1195,6 +1195,77 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     if (len <= 260) return 32;
     if (len <= 350) return 28;
     return 26;
+  }
+
+  // --------------------------------------------------------------- fitting --
+  // "Shrink text on overflow" in the file is only a hint, and Keynote and
+  // PowerPoint on an iPad do not act on it: text set too large runs over the
+  // footer. So every box is sized here, by measuring the words: the largest
+  // size at which they fit, and a passage split further when none does.
+  let ctx2d = null;
+  function measurer() {
+    if (ctx2d !== null) return ctx2d;
+    try { const c = typeof document !== "undefined" ? document.createElement("canvas") : null; ctx2d = (c && c.getContext && c.getContext("2d")) || false; }
+    catch (_) { ctx2d = false; }
+    return ctx2d;
+  }
+  const AVG_EM = { [SERIF]: 0.5, [SANS]: 0.46 };   // average width of a character, in ems, when no canvas can measure (Georgia is 0.44, Calibri 0.40)
+  const LINE_EM = { [SERIF]: 1.22, [SANS]: 1.22 };  // a line's height in ems, with room for apps that space lines more generously than the font asks
+  const widthCache = new Map();
+  // Width of a piece of text in points at a size in points.
+  function textWidth(text, font, size, bold) {
+    const key = `${font}|${bold ? 1 : 0}|${size}|${text}`;
+    const hit = widthCache.get(key);
+    if (hit !== undefined) return hit;
+    let w = null;
+    const c = measurer();
+    if (c) {
+      try { c.font = `${bold ? "bold " : ""}${size}px "${font}", ${font === SANS ? "Helvetica, Arial, sans-serif" : "Georgia, 'Times New Roman', serif"}`; w = c.measureText(text).width; }
+      catch (_) { w = null; }
+    }
+    if (w === null || !Number.isFinite(w) || w <= 0) w = text.length * size * (AVG_EM[font] || 0.5) * (bold ? 1.12 : 1);
+    if (widthCache.size > 20000) widthCache.clear();
+    widthCache.set(key, w);
+    return w;
+  }
+  // Lines the text takes when wrapped in a box of boxW inches; "\n" breaks a line.
+  function countLines(text, font, size, boxW, bold, charSpacing = 0) {
+    const maxW = boxW * 72;
+    let lines = 0;
+    for (const para of String(text).split("\n")) {
+      const words = para.split(/\s+/).filter(Boolean);
+      if (!words.length) { lines++; continue; }
+      const space = textWidth(" ", font, size, bold) + charSpacing;
+      let w = 0, n = 1;
+      for (const word of words) {
+        const ww = textWidth(word, font, size, bold) + charSpacing * word.length;
+        if (w > 0 && w + space + ww > maxW) { n++; w = ww; } else w += (w > 0 ? space : 0) + ww;
+      }
+      lines += n;
+    }
+    return lines;
+  }
+  // The largest size (points) from max down to min at which the text fits the box.
+  function fitSize({ text, font = SERIF, boxW, boxH, max, min, lineSpacing = 1, bold = false, charSpacing = 0, paraSpace = 0, safety = 0.94 }) {
+    const breaks = (String(text).match(/\n/g) || []).length;
+    let best = null;
+    for (let size = max; size >= min; size -= 1) {
+      const lines = countLines(text, font, size, boxW * safety, bold, charSpacing);
+      const height = (lines * size * (LINE_EM[font] || 1.2) * lineSpacing + breaks * paraSpace) / 72;
+      best = { size, lines, height, fits: height <= boxH };
+      if (best.fits) return best;
+    }
+    return best || { size: min, lines: 1, height: 0, fits: true };
+  }
+  const plainOfRuns = (runs) => runs.map((r) => r.text + (r.options && r.options.breakLine ? "\n" : "")).join("");
+  // A label that must stay on one line: smaller first, then shortened.
+  function oneLine(text, { font = SANS, boxW, max, min, bold = false, charSpacing = 0 }) {
+    let t = String(text || "");
+    for (let size = max; size >= min; size -= 1) {
+      if (countLines(t, font, size, boxW * 0.96, bold, charSpacing) <= 1) return { text: t, size };
+    }
+    while (t.length > 8 && countLines(t + "…", font, min, boxW * 0.96, bold, charSpacing) > 1) t = t.replace(/\s*\S+$/, "");
+    return { text: t + "…", size: min };
   }
 
   // ------------------------------------------------------------------ pptx --
@@ -1240,6 +1311,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     pptx.layout = "LAYOUT_16x9"; // 10 x 5.625 in
     pptx.title = deck.title || "Scriptures";
     const W = 10, H = 5.625, M = 0.75, inner = W - 2 * M;
+    const report = { slides: 0, boxes: 0, shortened: 0, split: 0, tight: [] };
+    lastReport = report;
     const bg = opts.background !== undefined ? opts.background : backgroundImage(t);
     const ext = bg ? (/^image\/(\w+)/.exec(bg) || [])[1] || "png" : "png";
     pptx.defineSlideMaster({ title: "DECK", background: bg ? { data: bg, path: `background.${ext}` } : { color: t.bg } });
@@ -1252,28 +1325,40 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     };
     const rule = (s, x, y, w) => s.addShape(pptx.ShapeType.rect, { x, y, w, h: 0.035, fill: { color: t.accent }, line: { color: t.accent, width: 0 } });
     const kicker = (s, text) => {
-      s.addText(String(text || "").toUpperCase(), { x: M, y: 0.46, w: inner, h: 0.34, fontFace: SANS, fontSize: 12, color: t.accent, charSpacing: 2, margin: 0, valign: "top", fit: "shrink" });
+      const k = oneLine(String(text || "").toUpperCase(), { font: SANS, boxW: inner, max: 12, min: 9, charSpacing: 2 });
+      if (k.text !== String(text || "").toUpperCase()) report.shortened++;
+      report.boxes++;
+      s.addText(k.text, { x: M, y: 0.46, w: inner, h: 0.34, fontFace: SANS, fontSize: k.size, color: t.accent, charSpacing: 2, margin: 0, valign: "top" });
       rule(s, M, 0.86, 0.55);
     };
     const footer = (s, idx) => {
       s.addShape(pptx.ShapeType.line, { x: M, y: H - 0.58, w: inner, h: 0, line: { color: t.rule, width: 0.75 } });
-      if (deck.title) s.addText(deck.title, { x: M, y: H - 0.52, w: inner - 1, h: 0.3, fontFace: SANS, fontSize: 10, color: t.muted, margin: 0 });
+      if (deck.title) { const ft = oneLine(deck.title, { font: SANS, boxW: inner - 1.1, max: 10, min: 8 }); s.addText(ft.text, { x: M, y: H - 0.52, w: inner - 1, h: 0.3, fontFace: SANS, fontSize: ft.size, color: t.muted, margin: 0 }); }
       s.addText(String(idx), { x: W - M - 1, y: H - 0.52, w: 1, h: 0.3, fontFace: SANS, fontSize: 10, color: t.muted, align: "right", margin: 0 });
     };
 
     // Title slide
     if (deck.title || deck.subtitle) {
       const s = slide();
+      report.slides++;
       rule(s, M, 1.55, 0.9);
-      s.addText(deck.title || "", { x: M, y: 1.7, w: inner, h: 1.7, fontFace: SERIF, fontSize: 40, bold: true, color: t.text, valign: "top", margin: 0, fit: "shrink" });
-      if (deck.subtitle) s.addText(deck.subtitle, { x: M, y: 3.45, w: inner, h: 0.6, fontFace: SANS, fontSize: 18, color: t.muted, valign: "top", margin: 0 });
+      const tf = fitSize({ text: deck.title || "", font: SERIF, bold: true, boxW: inner, boxH: 1.7, max: 40, min: 22, lineSpacing: 1.05 });
+      report.boxes++;
+      s.addText(deck.title || "", { x: M, y: 1.7, w: inner, h: 1.7, fontFace: SERIF, fontSize: tf.size, bold: true, color: t.text, valign: "top", margin: 0 });
+      if (deck.subtitle) {
+        const sf = fitSize({ text: deck.subtitle, font: SANS, boxW: inner, boxH: 0.9, max: 18, min: 12, lineSpacing: 1.05 });
+        report.boxes++;
+        s.addText(deck.subtitle, { x: M, y: 3.45, w: inner, h: 0.9, fontFace: SANS, fontSize: sf.size, color: t.muted, valign: "top", margin: 0 });
+      }
     }
 
     for (const it of sequence()) {
       if (it.type === "section") {
         n++;
         const s = slide();
-        s.addText(it.title || "", { x: M, y: 1.9, w: inner, h: 1.4, fontFace: SERIF, fontSize: 40, bold: true, color: t.text, align: "center", valign: "middle", margin: 0, fit: "shrink" });
+        report.slides++; report.boxes++;
+        const sf = fitSize({ text: it.title || "", font: SERIF, bold: true, boxW: inner, boxH: 1.4, max: 40, min: 22, lineSpacing: 1.05 });
+        s.addText(it.title || "", { x: M, y: 1.9, w: inner, h: 1.4, fontFace: SERIF, fontSize: sf.size, bold: true, color: t.text, align: "center", valign: "middle", margin: 0 });
         rule(s, W / 2 - 0.45, 3.42, 0.9);
         footer(s, n);
         continue;
@@ -1285,42 +1370,78 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         const s = slide();
         kicker(s, it.label ? `Connection: ${it.label}` : "Connection");
         const colW = 3.75, gap = inner - 2 * colW, top = 1.12, panelH = 3.3, pad = 0.22;
+        report.slides++;
         const side = (end, x) => {
           const { item, hl } = end;
           s.addShape(pptx.ShapeType.roundRect, { x, y: top, w: colW, h: panelH, fill: { color: t.panel }, line: { color: t.panel, width: 0 }, rectRadius: 0.1 });
-          const ex = excerpt(item, hl);
-          const runs = ex.words.map((w, i) => ({ text: w.w + (i < ex.words.length - 1 ? " " : ""), options: hl && i >= ex.s && i <= ex.e ? { color: t.accent, bold: true } : { color: t.text } }));
-          if (ex.before) runs.unshift({ text: "… ", options: { color: t.muted } });
-          if (ex.after) runs.push({ text: " …", options: { color: t.muted } });
-          const len = ex.words.reduce((a2, w) => a2 + w.w.length + 1, 0);
-          s.addText(runs, { x: x + pad, y: top + pad, w: colW - 2 * pad, h: panelH - 0.95, fontFace: SERIF, fontSize: len > 300 ? 15 : len > 200 ? 17 : len > 120 ? 19 : 22, valign: "middle", align: "left", lineSpacingMultiple: 1.12, margin: 0, fit: "shrink" });
-          s.addText(item.citation + (item.kind !== "verse" && item.where ? `, ${item.where}` : ""), { x: x + pad, y: top + panelH - 0.62, w: colW - 2 * pad, h: 0.45, fontFace: SANS, fontSize: 12, color: t.accent, valign: "bottom", margin: 0, fit: "shrink" });
+          // the excerpt around the highlight: as many words as fit the panel at a size the room can read
+          let best = null;
+          for (const maxWords of [48, 38, 30, 24, 18, 14, 10]) {
+            const ex = excerpt(item, hl, maxWords);
+            const runs = ex.words.map((w, i) => ({ text: w.w + (i < ex.words.length - 1 ? " " : ""), options: hl && i >= ex.s && i <= ex.e ? { color: t.accent, bold: true } : { color: t.text } }));
+            if (ex.before) runs.unshift({ text: "… ", options: { color: t.muted } });
+            if (ex.after) runs.push({ text: " …", options: { color: t.muted } });
+            const fit = fitSize({ text: plainOfRuns(runs), font: SERIF, boxW: colW - 2 * pad, boxH: panelH - 0.95, max: 22, min: 13, lineSpacing: 1.12 });
+            const cand = { runs, fit, maxWords };
+            if (fit.fits && fit.size >= 16) { best = cand; break; }
+            if (fit.fits && (!best || fit.size > best.fit.size)) best = cand;
+            if (!best && maxWords === 10) best = cand;
+          }
+          if (best.maxWords !== 48) report.shortened++;
+          report.boxes += 2;
+          s.addText(best.runs, { x: x + pad, y: top + pad, w: colW - 2 * pad, h: panelH - 0.95, fontFace: SERIF, fontSize: best.fit.size, valign: "middle", align: "left", lineSpacingMultiple: 1.12, margin: 0 });
+          const citeText = item.citation + (item.kind !== "verse" && item.where ? `, ${item.where}` : "");
+          let cite = fitSize({ text: citeText, font: SANS, boxW: colW - 2 * pad, boxH: 0.45, max: 12, min: 10, lineSpacing: 1 });
+          cite = cite.fits ? { text: citeText, size: cite.size } : oneLine(citeText, { font: SANS, boxW: colW - 2 * pad, max: 10, min: 9 });
+          s.addText(cite.text, { x: x + pad, y: top + panelH - 0.62, w: colW - 2 * pad, h: 0.45, fontFace: SANS, fontSize: cite.size, color: t.accent, valign: "bottom", margin: 0 });
         };
         side(a, M);
         side(b, M + colW + gap);
         const ax = M + colW + 0.14, aw = gap - 0.28, ay = top + panelH / 2;
         s.addShape(pptx.ShapeType.line, { x: ax, y: ay, w: aw, h: 0, line: { color: t.accent, width: 2.5, endArrowType: "triangle" } });
-        if (it.label) s.addText(it.label, { x: M + colW - 0.3, y: ay - 0.62, w: gap + 0.6, h: 0.5, fontFace: SANS, fontSize: 12, color: t.accent, align: "center", valign: "bottom", margin: 0, fit: "shrink" });
+        // The label sits over the arrow when it is short; a long one is already in the kicker.
+        if (it.label) {
+          const lf = fitSize({ text: it.label, font: SANS, boxW: gap + 0.6, boxH: 0.5, max: 12, min: 9, lineSpacing: 1 });
+          if (lf.fits && lf.lines <= 2) {
+            report.boxes++;
+            s.addText(it.label, { x: M + colW - 0.3, y: ay - 0.62, w: gap + 0.6, h: 0.5, fontFace: SANS, fontSize: lf.size, color: t.accent, align: "center", valign: "bottom", margin: 0 });
+          }
+        }
         footer(s, n);
         continue;
       }
-      for (const chunk of chunksOf(it)) {
+      const isTalk = it.kind !== "verse";
+      const boxH = isTalk && (it.citation || it.where) ? 3.05 : 3.5;
+      // Chunks that fit the box at a size the room can read; a passage is cut into more pieces until they do.
+      let chunks = chunksOf(it), limit = MAX_CHARS, fits = [];
+      const measure = (cs) => cs.map((chunk) => fitSize({ text: plainOfRuns(passageRuns(it, chunk, t)), font: SERIF, boxW: inner, boxH, max: fontSize(chunk.verses ? chunk.verses.reduce((a, v) => a + v.text.length, 0) : chunk.text.length), min: 20, lineSpacing: 1.15, paraSpace: 8 }));
+      fits = measure(chunks);
+      while (fits.some((f) => !f.fits || f.size < 22) && limit > 140) {
+        limit = Math.round(limit * 0.8);
+        const again = chunksOf(it, limit);
+        if (again.length <= chunks.length) continue;
+        chunks = again; fits = measure(chunks); report.split++;
+      }
+      chunks.forEach((chunk, ci) => {
         n++;
         const s = slide();
-        const isTalk = it.kind !== "verse";
+        report.slides++; report.boxes++;
         kicker(s, chunk.label);
         const runs = passageRuns(it, chunk, t);
-        const len = chunk.verses ? chunk.verses.reduce((a, v) => a + v.text.length, 0) : chunk.text.length;
-        const boxH = isTalk && (it.citation || it.where) ? 3.05 : 3.5;
-        s.addText(runs, { x: M, y: 1.08, w: inner, h: boxH, fontFace: SERIF, fontSize: fontSize(len), color: t.text, valign: "middle", align: "left", lineSpacingMultiple: 1.15, margin: 0, fit: "shrink" });
+        const fit = fits[ci];
+        if (!fit.fits) report.tight.push(n);
+        s.addText(runs, { x: M, y: 1.08, w: inner, h: boxH, fontFace: SERIF, fontSize: fit.size, color: t.text, valign: "middle", align: "left", lineSpacingMultiple: 1.15, margin: 0 });
         if (isTalk && (it.citation || it.where)) {
+          const c1 = oneLine(it.citation || "", { font: SANS, boxW: inner, max: 15, min: 11, bold: true });
+          const c2 = it.where ? oneLine(it.where, { font: SANS, boxW: inner, max: 12, min: 9 }) : null;
+          report.boxes++;
           s.addText([
-            { text: it.citation || "", options: { bold: true, fontSize: 15, color: t.text, breakLine: !!it.where } },
-            ...(it.where ? [{ text: it.where, options: { fontSize: 12, color: t.muted } }] : []),
+            { text: c1.text, options: { bold: true, fontSize: c1.size, color: t.text, breakLine: !!c2 } },
+            ...(c2 ? [{ text: c2.text, options: { fontSize: c2.size, color: t.muted } }] : []),
           ], { x: M, y: 4.2, w: inner, h: 0.7, fontFace: SANS, valign: "top", margin: 0 });
         }
         footer(s, n);
-      }
+      });
     }
 
     // The chain as one picture, one slide at the end.
@@ -1336,22 +1457,51 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         }
         if (l.label) {
           const { x, y, above } = l.labelAt;
-          s.addText(l.label, { x: x - 1.0, y: above === null ? y - 0.14 : above ? y - 0.3 : y + 0.02, w: 2.0, h: 0.28, fontFace: SANS, fontSize: 10, color: t.accent, align: "center", valign: above === null ? "middle" : above ? "bottom" : "top", margin: 0, fit: "shrink" });
+          const ll = oneLine(l.label, { font: SANS, boxW: 2.0, max: 10, min: 7 });
+          report.boxes++;
+          s.addText(ll.text, { x: x - 1.0, y: above === null ? y - 0.14 : above ? y - 0.3 : y + 0.02, w: 2.0, h: 0.28, fontFace: SANS, fontSize: ll.size, color: t.accent, align: "center", valign: above === null ? "middle" : above ? "bottom" : "top", margin: 0 });
         }
       }
-      if (deck.chain && deck.chain.caption) s.addText(deck.chain.caption, { x: M + 0.3, y: 4.36, w: inner - 0.6, h: 0.62, fontFace: SERIF, italic: true, fontSize: 12, color: t.muted, align: "center", valign: "top", margin: 0, fit: "shrink", lineSpacingMultiple: 1.1 });
+      if (deck.chain && deck.chain.caption) {
+        const cf = fitSize({ text: deck.chain.caption, font: SERIF, boxW: inner - 0.6, boxH: 0.62, max: 12, min: 8, lineSpacing: 1.1 });
+        report.boxes++;
+        s.addText(deck.chain.caption, { x: M + 0.3, y: 4.36, w: inner - 0.6, h: 0.62, fontFace: SERIF, italic: true, fontSize: cf.size, color: t.muted, align: "center", valign: "top", margin: 0, lineSpacingMultiple: 1.1 });
+      }
       if (deck.chain && deck.chain.notes) s.addNotes(deck.chain.notes);
+      report.slides++;
       for (const nd of lay.nodes) {
         const big = nd.w >= 2;
+        // label and excerpt share the box; the excerpt gives way until both fit
+        const innerW = nd.w - 12 / 72, innerH = nd.h - 12 / 72;
+        let excerptText = nd.excerpt, size = big ? 11 : nd.w >= 1.7 ? 10 : 9, labelSize = big ? 11 : 10, ok = false;
+        for (let tries = 0; tries < 8 && !ok; tries++) {
+          const labelLines = countLines(nd.label, SANS, labelSize, innerW * 0.94, true);
+          const labelH = (labelLines * labelSize * LINE_EM[SANS] * 1.05 + 3) / 72;
+          const ef = fitSize({ text: excerptText, font: SERIF, boxW: innerW, boxH: Math.max(0.1, innerH - labelH), max: size, min: 7, lineSpacing: 1.05 });
+          size = ef.size; ok = ef.fits;
+          if (!ok) { const ws = excerptText.replace(/[“”]/g, "").replace(/\s*…$/, "").split(/\s+/); if (ws.length <= 4) break; excerptText = `“${ws.slice(0, Math.max(3, Math.floor(ws.length * 0.75))).join(" ")} …”`; report.shortened++; }
+        }
+        report.boxes++;
         s.addText([
-          { text: nd.label, options: { bold: true, fontSize: big ? 11 : 10, color: t.accent, fontFace: SANS, breakLine: true, paraSpaceAfter: 3 } },
-          { text: nd.excerpt, options: { fontSize: big ? 11 : nd.w >= 1.7 ? 10 : 9, color: t.text, fontFace: SERIF } },
-        ], { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, align: "center", valign: "middle", margin: 6, fit: "shrink", lineSpacingMultiple: 1.05,
+          { text: nd.label, options: { bold: true, fontSize: labelSize, color: t.accent, fontFace: SANS, breakLine: true, paraSpaceAfter: 3 } },
+          { text: excerptText, options: { fontSize: size, color: t.text, fontFace: SERIF } },
+        ], { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, align: "center", valign: "middle", margin: 6, lineSpacingMultiple: 1.05,
           fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.08, shape: pptx.ShapeType.roundRect });
       }
       footer(s, n);
     }
     return pptx;
+  }
+  // What the last build measured: slides, boxes, what had to give way.
+  let lastReport = null;
+  function reportLine() {
+    const r = lastReport;
+    if (!r) return "";
+    const bits = [`Checked ${r.slides} ${r.slides === 1 ? "slide" : "slides"}: every box fits`];
+    if (r.split) bits.push(`${r.split === 1 ? "a passage was" : `${r.split} passages were`} cut into more slides to stay readable`);
+    if (r.shortened) bits.push(`${r.shortened} ${r.shortened === 1 ? "label or excerpt was" : "labels or excerpts were"} shortened`);
+    if (r.tight.length) bits[0] = `Checked ${r.slides} slides: ${r.tight.length === 1 ? `slide ${r.tight[0]} is` : `slides ${r.tight.join(", ")} are`} very full`;
+    return bits.join("; ") + ".";
   }
 
   // PptxGenJS draws a line from its box's top-left to bottom-right; flips cover the other directions.
@@ -1443,7 +1593,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // Inside the tap: the share sheet where there is one, a download elsewhere.
   function handOver(p) {
     if (canShareFile(p.file)) {
-      say("");
+      say(reportLine());
       navigator.share({ files: [p.file], title: p.name }).catch((err) => {
         if (err && err.name === "AbortError") return;
         fallbackDownload(p);
@@ -1458,7 +1608,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const a = el("a", { href: url, download: p.name });
       document.body.append(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-      say(`${p.name} is on its way to your downloads. If it did not appear, tap Save PowerPoint once more.`);
+      say(`${reportLine()} ${p.name} is on its way to your downloads; if it did not appear, tap Save PowerPoint once more.`);
     } catch (err) {
       say(`Could not hand the file over: ${err.message}`);
     }
@@ -1473,13 +1623,13 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     ui.download.disabled = false;
     syncDownloadButton();
     // Built after the tap. Where a share sheet exists it needs a fresh tap; elsewhere the download can start now.
-    if (canShareFile(prepared.file)) say("Ready. Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.");
+    if (canShareFile(prepared.file)) say(`${reportLine()} Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.`);
     else handOver(prepared);
   }
 
   window.Deck = {
     render, board: boardEl, showBoard, addFromDoc, addPassage, has, remove, toggle, count, updateBadge,
-    shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES,
+    shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
   };
