@@ -70,6 +70,7 @@ jobs:
           python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get("skills", [])), "skills taken in")' "$GOSPEL_LIBRARY_DATA/skills.json"
 
       - name: Original languages (loaded once, kept with the state)
+        continue-on-error: true
         run: python -m gospel_library originals
 
       - name: Sync with churchofjesuschrist.org
