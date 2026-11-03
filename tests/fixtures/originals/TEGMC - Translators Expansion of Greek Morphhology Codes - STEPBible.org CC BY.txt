@@ -1,0 +1,13 @@
+# fixture
+FULL MORPHOLOGY CODES:
+$
+N-NSF	Function=Noun; Case=Nominative; Number=Singular; Gender=Feminine
+	Noun Nominative Singular Feminine 
+	a female PERSON OR THING that is doing something 
+	"a _woman_ giving teachings"
+$
+V-IAI-3S	Function=Verb; Tense=Imperfect; Voice=Active; Mood=Indicative; Person=3rd; Number=Singular
+	Verb Imperfect Active Indicative 3rd Singular 
+	an ACTION that was happening - done by a person or thing being discussed 
+	"_he/she/it did teach _"
+$

@@ -353,5 +353,13 @@ def test_originals_ingest(tmp_path):
     lex = conn.execute("SELECT lemma, translit, gloss FROM original_lexicon WHERE strongs='H7225G'").fetchone()
     assert O.strip_marks(lex[0], "he") == "ראשית" and lex[2].endswith("beginning")
     assert O.strip_marks(conn.execute("SELECT lemma FROM original_lexicon WHERE strongs='G0026'").fetchone()[0], "gr") == "αγαπη"
-    # idempotent
-    assert O.ingest(conn, src)["words"] == info["words"]
+    # grammar codes come with their meaning in words
+    m = conn.execute("SELECT short, meaning FROM original_morph WHERE code='HVqp3ms'").fetchone()
+    assert m[0].startswith("Verb : Qal") and "ACTION" in m[1]
+    assert conn.execute("SELECT short FROM original_morph WHERE code='V-IAI-3S'").fetchone()[0].startswith("Verb Imperfect Active")
+    # transliterations are searchable as typed: no macrons ("ēn" -> "en"), no dots
+    assert ("matthew", 1, 1) in find("translit:iesou") and ("genesis", 1, 1) in find("translit:elohim")
+    # idempotent, and reloaded when the format changes
+    assert O.ingest(conn, src)["words"] == info["words"] and info["format"] == O.FORMAT and info["morph"] >= 6
+    conn.execute("UPDATE meta SET value=json_set(value, '$.format', 1) WHERE key='originals'")
+    assert O.ingest(conn, src)["format"] == O.FORMAT

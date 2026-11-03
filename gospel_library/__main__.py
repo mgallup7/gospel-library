@@ -173,6 +173,7 @@ def cmd_bundle(args) -> int:
 
 def cmd_originals(args) -> int:
     """Load the Hebrew Bible and Greek New Testament, word by word, into the library."""
+    import json
     import sqlite3
 
     from . import db, originals
@@ -181,7 +182,7 @@ def cmd_originals(args) -> int:
     conn = sqlite3.connect(config.DB_PATH)
     conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
     have = conn.execute("SELECT value FROM meta WHERE key='originals'").fetchone()
-    if have and not args.force:
+    if have and not args.force and json.loads(have[0]).get("format") == originals.FORMAT:
         print(f"original languages already in the library: {have[0]}")
         return 0
     source = Path(args.source) if args.source else config.DATA_DIR / "originals-src"

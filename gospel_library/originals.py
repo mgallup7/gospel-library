@@ -51,7 +51,13 @@ FILES = {
     ],
     "lexicon_hebrew": ["Lexicons/TBESH - Translators Brief lexicon of Extended Strongs for Hebrew - STEPBible.org CC BY.txt"],
     "lexicon_greek": ["Lexicons/TBESG - Translators Brief lexicon of Extended Strongs for Greek - STEPBible.org CC BY.txt"],
+    "morph_hebrew": ["Morphology codes/TEHMC - Translators Expansion of Hebrew Morphology Codes - STEPBible.org CC BY.txt"],
+    "morph_greek": ["Morphology codes/TEGMC - Translators Expansion of Greek Morphhology Codes - STEPBible.org CC BY.txt"],
 }
+
+# Bumped whenever the tables or the way they are filled change, so a library
+# loaded by an older version of this module is reloaded by the next sync.
+FORMAT = 3
 
 # STEP's three-letter book codes to the library's book slugs.
 BOOKS = {
@@ -86,6 +92,7 @@ CREATE TABLE IF NOT EXISTS original_words(
 );
 CREATE INDEX IF NOT EXISTS original_words_ref ON original_words(book, chapter, verse, seq);
 CREATE INDEX IF NOT EXISTS original_words_root ON original_words(root);
+CREATE INDEX IF NOT EXISTS original_words_strongs ON original_words(strongs);
 -- The searchable form of each verse. Contentless: the index alone, with the
 -- reference kept in original_verse_refs under the same rowid.
 CREATE VIRTUAL TABLE IF NOT EXISTS original_verses USING fts5(
@@ -111,6 +118,15 @@ CREATE TABLE IF NOT EXISTS original_lexicon(
   relation TEXT
 );
 CREATE INDEX IF NOT EXISTS original_lexicon_base ON original_lexicon(base);
+-- What each grammar code means, in words (STEP's expansions of the codes).
+CREATE TABLE IF NOT EXISTS original_morph(
+  code TEXT PRIMARY KEY,
+  lang TEXT NOT NULL,
+  parse TEXT,
+  short TEXT,
+  meaning TEXT,
+  example TEXT
+);
 """
 
 _REF = re.compile(r"^([1-3]?[A-Za-z]{2,3})\.(\d+)\.(\d+)")
@@ -127,6 +143,13 @@ def strip_marks(text: str, lang: str) -> str:
     t = "".join(c for c in t if unicodedata.category(c) != "Mn")
     t = unicodedata.normalize("NFC", t).replace("ς", "σ")
     return re.sub(r"[^\w\s]", " ", t).strip()
+
+
+def ascii_translit(text: str) -> str:
+    """A transliteration as someone would type it: letters only, no macrons or dots ("agapē" -> "agape")."""
+    t = unicodedata.normalize("NFD", text or "")
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^A-Za-z]", "", t).lower()
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -242,6 +265,7 @@ def parse_greek(path: Path):
                 continue  # words found only in other editions
             m = re.match(r"^(.*?)\s*\(([^)]*)\)\s*$", cols[1].strip())
             word, translit = (m.group(1), m.group(2)) if m else (cols[1].strip(), "")
+            word = word.replace("¶", "").strip()  # STEP marks paragraph ends on the word; the text does not need it
             gloss = cols[2].strip()
             sm = re.match(r"^([GH]\d{4}[A-Za-z]?)(?:=(.*))?$", cols[3].strip())
             strongs = sm.group(1) if sm else cols[3].split("=")[0].strip()
@@ -260,7 +284,7 @@ def parse_lexicon(path: Path, lang: str):
             cols = line.rstrip("\n").split("\t")
             if len(cols) < 7 or not re.match(r"^[GH]\d{4}", cols[0]):
                 continue
-            base = cols[0].strip()
+            base = cols[0].strip()[:5]  # the plain Strong's number; "H2617a" and "H2617b" are two senses of H2617
             dpart = cols[1].strip()
             dm = re.match(r"^([GH]\d{4}[A-Za-z]?)\s*=?\s*(.*)$", dpart)
             ext = dm.group(1) if dm else base
@@ -269,18 +293,56 @@ def parse_lexicon(path: Path, lang: str):
                        gloss=cols[6].strip(), definition=(cols[7].strip() if len(cols) > 7 else ""), relation=relation)
 
 
+def parse_morph(path: Path, lang: str):
+    """Yield one dict per grammar code from STEP's expansion files.
+
+    After the introduction, each code is a block that starts with a "$" line:
+    the code and its parse, then a short phrase, a plain-English meaning and
+    an example, one per line.
+    """
+    with path.open(encoding="utf-8-sig") as f:
+        lines = [ln.rstrip("\n") for ln in f]
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() != "$":
+            i += 1
+            continue
+        block = []
+        i += 1
+        while i < len(lines) and lines[i].strip() != "$":
+            block.append(lines[i])
+            i += 1
+        if not block:
+            continue
+        head = block[0].split("\t")
+        code = head[0].strip()
+        if not code or " " in code:
+            continue
+        clean = lambda t: re.sub(r"\s+", " ", t).strip().strip('"').strip()
+        parse = clean(head[1]) if len(head) > 1 else ""
+        rest = [clean(b) for b in block[1:] if clean(b)]
+        short = rest[0] if rest else ""
+        meaning = rest[1] if len(rest) > 1 else ""
+        example = rest[2] if len(rest) > 2 else ""
+        example = re.sub(r"^Example:\s*", "", example)
+        yield dict(code=code, lang=lang, parse=parse, short=short, meaning=meaning, example=example)
+
+
 def ingest(conn: sqlite3.Connection, source: Path, *, force: bool = False) -> dict:
-    """Load the data into the library database. Idempotent unless force."""
+    """Load the data into the library database. Idempotent unless force or the format changed."""
     ensure_schema(conn)
     have = conn.execute("SELECT value FROM meta WHERE key='originals'").fetchone()
     if have and not force:
         info = json.loads(have[0])
-        log.info("original languages already in the library (%s words); use --force to reload", info.get("words"))
-        return info
+        if info.get("format") == FORMAT:
+            log.info("original languages already in the library (%s words); use --force to reload", info.get("words"))
+            return info
+        log.info("original languages were loaded in an older format; reloading")
     conn.execute("DELETE FROM original_words")
     conn.execute("INSERT INTO original_verses(original_verses) VALUES ('delete-all')")
     conn.execute("DELETE FROM original_verse_refs")
     conn.execute("DELETE FROM original_lexicon")
+    conn.execute("DELETE FROM original_morph")
 
     words = 0
     verse_rows: dict[tuple, dict] = {}
@@ -303,7 +365,7 @@ def ingest(conn: sqlite3.Connection, source: Path, *, force: bool = False) -> di
                 key = (w["book"], w["chapter"], w["verse"])
                 v = verse_rows.setdefault(key, {"plain": [], "translit": [], "strongs": [], "glosses": [], "lang": w["lang"]})
                 v["plain"].append(strip_marks(w["word"], w["lang"]))
-                v["translit"].append(re.sub(r"[^A-Za-z]", "", w["translit"] or "").lower())
+                v["translit"].append(ascii_translit(w["translit"]))
                 for s in (w["strongs"] or "").split():
                     v["strongs"].append(s)
                     base = re.sub(r"[A-Za-z]$", "", s)
@@ -337,8 +399,16 @@ def ingest(conn: sqlite3.Connection, source: Path, *, force: bool = False) -> di
                         (r["base"], r["base"], r["lang"], r["lemma"], r["translit"], r["type"], r["gloss"], r["definition"], r["relation"]),
                     )
             entries += len(rows)
+    morphs = 0
+    for group, lang in (("morph_hebrew", "he"), ("morph_greek", "gr")):
+        for path in _files(source, group):
+            log.info("reading %s", path.name)
+            rows = list(parse_morph(path, lang))
+            conn.executemany("INSERT OR REPLACE INTO original_morph(code, lang, parse, short, meaning, example) VALUES (?,?,?,?,?,?)",
+                             [(r["code"], r["lang"], r["parse"], r["short"], r["meaning"], r["example"]) for r in rows])
+            morphs += len(rows)
     info = {
-        "words": words, "verses": len(verse_rows), "lexicon": entries,
+        "format": FORMAT, "words": words, "verses": len(verse_rows), "lexicon": entries, "morph": morphs,
         "loaded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "STEP Bible (Tyndale House, Cambridge), https://STEPBible.github.io/STEPBible-Data", "license": "CC BY 4.0",
     }

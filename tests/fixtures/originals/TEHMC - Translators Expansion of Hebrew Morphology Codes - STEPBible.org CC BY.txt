@@ -1,0 +1,23 @@
+# fixture (STEP Bible, CC BY 4.0)
+FULL MORPHOLOGY CODES:
+$
+HVqp3ms	Function=Verb ; Stem=Qal (hence Action=Simple; Voice=Active); Form=Perfect (hence Tense=Past/present; Mood=Indicative); Person=Third; Gender=Masculine; Number=Singular
+	"Verb : Qal (Simple, Active) Perfect (Past/present Indicative) Third Singular Masculine"
+	performing an ACTION OR ACTIVITY that is done completely in the past or present by a male person or thing being discussed
+	Example: he/it did or does rise
+$
+HNcmpa	Function=Noun ; Form=Common ; Gender=Masculine; Number=Plural; State=Absolute
+	"Noun (Plural Masculine, Absolute)"
+	a reference to male PEOPLE OR THINGS 
+	Example: (male) people (or things)
+$
+HR	Function=Preposition 
+	Preposition
+	a RELATIONSHIP to another person or thing 
+	"_of‚ from‚ by‚ in_": "_of‚ to, from‚ in_"
+$
+HNcfsa	Function=Noun ; Form=Common ; Gender=Feminine; Number=Singular; State=Absolute
+	"Noun (Singular Feminine, Absolute)"
+	a reference to a female PERSON OR THING 
+	Example: a (female) person (or thing)
+$

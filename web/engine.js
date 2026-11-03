@@ -202,6 +202,13 @@ const methods = {
   async context({ doc_id, pid, before = 1, after = 1 }) { need(); return context(Number(doc_id), pid, before, after); },
   async verses({ words, volume = "all", limit = 400 }) { need(); return allVerses(words, volume, limit); },
   async matches(params) { need(); return allMatches(params || {}); },
+  // The Hebrew Bible and Greek New Testament, word by word.
+  async originalsInfo() { need(); return haveOriginals() ? metaValue("originals") : null; },
+  async original(params) { need(); return originalWords(params || {}); },
+  async lexicon({ strongs, limit = 80 }) { need(); return lexiconEntry(strongs, limit); },
+  async morph({ code }) { need(); return morphCodes(code); },
+  async originalSearch(params) { need(); return originalSearch(params || {}); },
+  async locate(params) { need(); return locate(params || {}); },
 };
 
 function need() { if (!db) throw new Error("no library is loaded yet"); }
@@ -323,6 +330,12 @@ function speakersBySurname() {
 function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, edition = null, exclude_edition = null, group = "passages" }) {
   const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [] };
   const t0 = performance.now();
+  // Hebrew or Greek letters, or a Strong's number, search the original texts.
+  if (group === "passages" && originalKind(q) && haveOriginals()) {
+    const r = originalSearch({ q, limit, offset, scope });
+    r.ms = Math.round((performance.now() - t0) * 10) / 10;
+    return r;
+  }
   if (isNatural(q) && group === "passages") {
     const r = naturalSearch(q, { scope, limit, offset, speaker, from, to, book, edition, exclude_edition });
     if (r) { r.ms = Math.round((performance.now() - t0) * 10) / 10; return r; }
@@ -384,6 +397,7 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
     return out;
   }
 
+  if (offset === 0 && !typeahead) out.original_hint = transliterationHint(q);
   if (offset === 0 && cq.terms.length) {
     const titleMatch = cq.terms.map((t) => ftsPhrase(t)).filter(Boolean).join(" ");
     const tw = ["documents_fts MATCH ?"];
@@ -438,6 +452,7 @@ function naturalSearch(q, { scope, limit, offset, speaker, from, to, book, editi
       snippet: r.kind === "verse" ? markTerms(r.text, expandTerms(n.terms)) : highlight(r.snip), citation: citation(r, r.verse) });
   }
   if (offset === 0) out.titles = titleMatches(n.terms, cq);
+  if (offset === 0) out.original_hint = transliterationHint(q);
   return out;
 }
 // A word the library has never seen ("spirt") is swapped for the nearest
@@ -681,6 +696,7 @@ function stats() {
   out.latest_conference = row("SELECT year, month FROM documents d JOIN collections c ON c.id=d.collection_id WHERE c.slug='general-conference' AND year IS NOT NULL ORDER BY year DESC, month DESC LIMIT 1");
   out.meta = Object.fromEntries(rows("SELECT key, value FROM meta").map((r) => [r.key, JSON.parse(r.value)]));
   out.engine = { mode, ...(current || {}) };
+  out.originals = haveOriginals() ? metaValue("originals") : null;
   return out;
 }
 
@@ -724,4 +740,269 @@ function shelf() {
     });
   }
   return { volumes: [...volumes.values()], have: have.size };
+}
+
+// -------------------------------------------------------------- originals ----
+// The Hebrew Bible and the Greek New Testament, word by word (STEP Bible data,
+// Tyndale House, CC BY 4.0), keyed to the KJV's chapters and verses. Psalm
+// titles are verse 0. Mirrors gospel_library/originals.py.
+let originalsKnown = null;
+function haveOriginals() {
+  if (originalsKnown === null) {
+    try { originalsKnown = !!value("SELECT 1 FROM sqlite_master WHERE name='original_words'") && !!metaValue("originals"); }
+    catch (_) { originalsKnown = false; }
+  }
+  return originalsKnown;
+}
+const HEBREW_RE = /[֐-׿]/, GREEK_RE = /[Ͱ-Ͽἀ-῿]/;
+const STRONGS_RE = /^\s*(?:strongs?\s*:?\s*)?([HGhg])\s*0*(\d{1,4})\s*([A-Za-z]?)\s*$/;
+// Letters only, the way the index stores them: Hebrew without points or
+// cantillation, Greek without accents or breathings and with one sigma.
+function plainText(text, lang) {
+  if (lang === "he") return text.replace(/[֑-ֽֿ-ׇ]/g, "").replace(/־/g, " ").replace(/׃/g, "").replace(/׀/g, " ").replace(/\s+/g, " ").trim();
+  return text.normalize("NFD").replace(/\p{M}/gu, "").normalize("NFC").replace(/ς/g, "σ").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+}
+function asciiTranslit(t) { return String(t || "").normalize("NFD").replace(/\p{M}/gu, "").replace(/[^A-Za-z]/g, "").toLowerCase(); }
+function normStrongs(x) {
+  const m = STRONGS_RE.exec(String(x || ""));
+  return m ? m[1].toUpperCase() + m[2].padStart(4, "0") + m[3].toUpperCase() : null;
+}
+// What kind of original-language query this is, if any.
+function originalKind(q) {
+  const t = String(q || "").trim();
+  if (!t) return null;
+  if (HEBREW_RE.test(t)) return "hebrew";
+  if (GREEK_RE.test(t)) return "greek";
+  if (STRONGS_RE.test(t)) return "strongs";
+  if (/^translit(?:eration)?\s*:/i.test(t)) return "translit";
+  return null;
+}
+function bookOrder(slug) { const b = S.book(slug); return b ? b.book_index ?? S.books.indexOf(b) : 999; }
+function langOf(slug) { const b = S.book(slug); return b && b.volume_slug === "new-testament" ? "gr" : "he"; }
+function langName(lang) { return lang === "gr" ? "Greek" : "Hebrew"; }
+const wordOut = (r) => ({ seq: r.seq, word: r.word, translit: r.translit, gloss: r.gloss, strongs: r.strongs, morph: r.morph, flags: r.flags, tags: r.tags || "" });
+
+function originalWords({ doc_id = null, book = null, chapter = null, verse = null, verse_to = null, parse = false, max_words = 0 }) {
+  if (!haveOriginals()) return { available: false };
+  if (doc_id !== null && doc_id !== undefined && !book) {
+    const d = row("SELECT book_slug, chapter FROM documents WHERE id=?", [Number(doc_id)]);
+    if (d) { book = d.book_slug; chapter = d.chapter; }
+  }
+  if (!book && typeof chapter === "string") {
+    const ref = S.parseReference(chapter);
+    if (ref) { book = ref.book.slug; chapter = ref.chapter; if (ref.verse && verse === null) { verse = ref.verse; verse_to = ref.verseEnd || ref.verse; } }
+  }
+  const ch = parseInt(chapter, 10);
+  if (!book || !Number.isFinite(ch)) return { available: true, verses: [], lang: null, error: "give a Bible chapter or verse" };
+  const where = ["book = ?", "chapter = ?"];
+  const params = [book, ch];
+  if (verse !== null && verse !== undefined) { where.push("verse BETWEEN ? AND ?"); params.push(Number(verse), Number(verse_to ?? verse)); }
+  const rs = rows(`SELECT verse, seq, lang, word, translit, gloss, strongs, root, morph, tags, flags FROM original_words WHERE ${where.join(" AND ")} ORDER BY verse, seq`, params);
+  const verses = [];
+  let cur = null, truncated = false;
+  for (const [i, r] of rs.entries()) {
+    if (max_words && i >= max_words) { truncated = true; break; }
+    if (!cur || cur.verse !== r.verse) { cur = { verse: r.verse, lang: r.lang, words: [] }; verses.push(cur); }
+    const w = wordOut(r);
+    if (parse) w.grammar = morphShort(r.morph);
+    cur.words.push(w);
+  }
+  if (truncated && verses.length > 1) verses.pop();
+  // the KJV's text of each verse, from the library's own chapter
+  const b = S.book(book);
+  const d = row("SELECT id, par_first, par_last FROM documents WHERE book_slug=? AND chapter=?", [book, String(ch)]);
+  if (d && d.par_first !== null) {
+    const texts = new Map(rows("SELECT verse, pid, text FROM paragraphs WHERE rowid BETWEEN ? AND ? AND kind='verse'", [d.par_first, d.par_last]).map((r) => [r.verse, r]));
+    for (const v of verses) { const t = texts.get(v.verse); if (t) { v.text = t.text; v.pid = t.pid; } }
+    for (const v of verses) v.citation = b ? (v.verse ? S.citation(b, ch, v.verse) : `${S.citation(b, ch)} (title)`) : `${book} ${ch}:${v.verse}`;
+  }
+  const lang = verses[0]?.lang || langOf(book);
+  return { available: true, book, book_name: b ? b.name : book, chapter: ch, doc_id: d ? d.id : null, lang, language: langName(lang), verses, truncated, credit: ORIGINALS_CREDIT };
+}
+// A grammar code in a few words, for a line of text ("preposition + noun, singular feminine, absolute").
+const morphCache = new Map();
+function morphShort(code) {
+  if (!code) return "";
+  if (morphCache.has(code)) return morphCache.get(code);
+  const parts = morphCodes(code).map((m) => (m.short || m.code).replace(/^"|"$/g, "").replace(/\s+/g, " ").trim());
+  const out = parts.join(" + ");
+  morphCache.set(code, out);
+  return out;
+}
+// Where a verse is in the library: for opening it from a lexicon's references.
+const STEP_BOOKS = { Gen: "genesis", Exo: "exodus", Lev: "leviticus", Num: "numbers", Deu: "deuteronomy", Jos: "joshua", Jdg: "judges", Rut: "ruth", "1Sa": "1-samuel", "2Sa": "2-samuel", "1Ki": "1-kings", "2Ki": "2-kings", "1Ch": "1-chronicles", "2Ch": "2-chronicles", Ezr: "ezra", Neh: "nehemiah", Est: "esther", Job: "job", Psa: "psalms", Pro: "proverbs", Ecc: "ecclesiastes", Sng: "song-of-solomon", Isa: "isaiah", Jer: "jeremiah", Lam: "lamentations", Ezk: "ezekiel", Dan: "daniel", Hos: "hosea", Jol: "joel", Amo: "amos", Oba: "obadiah", Jon: "jonah", Mic: "micah", Nam: "nahum", Hab: "habakkuk", Zep: "zephaniah", Hag: "haggai", Zec: "zechariah", Mal: "malachi", Mat: "matthew", Mrk: "mark", Luk: "luke", Jhn: "john", Act: "acts", Rom: "romans", "1Co": "1-corinthians", "2Co": "2-corinthians", Gal: "galatians", Eph: "ephesians", Php: "philippians", Col: "colossians", "1Th": "1-thessalonians", "2Th": "2-thessalonians", "1Ti": "1-timothy", "2Ti": "2-timothy", Tit: "titus", Phm: "philemon", Heb: "hebrews", Jas: "james", "1Pe": "1-peter", "2Pe": "2-peter", "1Jn": "1-john", "2Jn": "2-john", "3Jn": "3-john", Jud: "jude", Rev: "revelation" };
+function locate({ ref = null, book = null, chapter = null, verse = null }) {
+  if (ref) {
+    const m = /^([1-3]?[A-Za-z]{2,3})\.(\d+)(?:[.:](\d+))?/.exec(String(ref).trim());
+    if (!m) return { found: false };
+    book = STEP_BOOKS[m[1]] || null; chapter = Number(m[2]); verse = m[3] ? Number(m[3]) : null;
+  }
+  if (!book) return { found: false };
+  const d = row("SELECT id, par_first, par_last, title FROM documents WHERE book_slug=? AND chapter=?", [book, String(parseInt(chapter, 10))]);
+  if (!d) return { found: false };
+  let pid = null;
+  if (verse && d.par_first !== null) { const p = row("SELECT pid FROM paragraphs WHERE rowid BETWEEN ? AND ? AND kind='verse' AND verse=?", [d.par_first, d.par_last, Number(verse)]); pid = p ? p.pid : null; }
+  const b = S.book(book);
+  return { found: true, doc_id: d.id, pid, title: d.title, citation: b ? S.citation(b, parseInt(chapter, 10), verse || undefined) : d.title };
+}
+const ORIGINALS_CREDIT = "STEP Bible data from Tyndale House, Cambridge (CC BY 4.0), www.STEPBible.org";
+
+// A Strong's number: its lexicon entry, the senses the data tells apart, how
+// often it occurs and where, with the KJV's verse beside each occurrence.
+function lexiconEntry(strongs, limit = 80) {
+  if (!haveOriginals()) return null;
+  const key = normStrongs(strongs);
+  if (!key) return null;
+  let entry = row("SELECT * FROM original_lexicon WHERE strongs=?", [key]);
+  if (!entry) entry = row("SELECT * FROM original_lexicon WHERE base=? ORDER BY strongs LIMIT 1", [key.slice(0, 5)]);
+  const exact = /[A-Z]$/.test(key);
+  const cond = exact ? "strongs = ?" : "strongs >= ? AND strongs < ?";
+  const cp = exact ? [key] : [key, key + "~"];
+  const count = value(`SELECT COUNT(*) FROM original_words WHERE ${cond}`, cp) || 0;
+  if (!entry && !count) return null;
+  const glosses = rows(`SELECT gloss, COUNT(*) AS n FROM original_words WHERE ${cond} GROUP BY gloss ORDER BY n DESC LIMIT 12`, cp)
+    .map((g) => ({ gloss: (g.gloss || "").replace(/[<>\[\]]/g, "").trim(), n: g.n })).filter((g) => g.gloss);
+  const senses = entry ? rows("SELECT strongs, lemma, translit, type, gloss FROM original_lexicon WHERE base=? AND strongs != base ORDER BY strongs", [entry.base]) : [];
+  const books = rows(`SELECT book, COUNT(*) AS n FROM original_words WHERE ${cond} GROUP BY book`, cp)
+    .sort((a, b) => bookOrder(a.book) - bookOrder(b.book)).map((r) => ({ book: r.book, name: S.book(r.book)?.name || r.book, n: r.n }));
+  const occ = limit > 0 ? occurrences(cond, cp, limit) : { verses: [], total: value(`SELECT COUNT(DISTINCT book || '/' || chapter || '/' || verse) FROM original_words WHERE ${cond}`, cp) || 0 };
+  const lang = entry ? entry.lang : (key[0] === "G" ? "gr" : "he");
+  return { strongs: key, lang, language: langName(lang), entry: entry || null, senses, count, glosses, books, verses: occ.verses, verses_total: occ.total, credit: ORIGINALS_CREDIT };
+}
+// Verses holding words that satisfy a condition on original_words, in the
+// order of the books, each with the KJV's text and the words in question.
+function occurrences(cond, cp, limit) {
+  const rs = rows(`SELECT w.book, w.chapter, w.verse, w.seq, w.lang, w.word, w.translit, w.gloss, w.strongs, w.morph, w.flags, w.tags,
+                          d.id AS doc_id, d.uri, d.title, d.sort_key, d.volume, d.book_slug, d.book_name, p.pid, p.text
+                     FROM original_words w
+                     LEFT JOIN documents d ON d.book_slug = w.book AND d.chapter = CAST(w.chapter AS TEXT)
+                     LEFT JOIN paragraphs p ON p.rowid BETWEEN d.par_first AND d.par_last AND p.verse = w.verse AND p.kind = 'verse'
+                    WHERE ${cond} ORDER BY d.sort_key, w.chapter, w.verse, w.seq`, cp);
+  const verses = [];
+  const byKey = new Map();
+  for (const r of rs) {
+    const k = `${r.book}/${r.chapter}/${r.verse}`;
+    let v = byKey.get(k);
+    if (!v) {
+      if (verses.length >= limit) { byKey.set(k, { skip: true }); continue; }
+      v = { ...verseHit(r), words: [] };
+      byKey.set(k, v); verses.push(v);
+    }
+    if (!v.skip) v.words.push(wordOut(r));
+  }
+  return { verses, total: byKey.size };
+}
+function verseHit(r) {
+  const b = S.book(r.book);
+  const cite = b ? (r.verse ? S.citation(b, r.chapter, r.verse) : `${S.citation(b, r.chapter)} (title)`) : `${r.book} ${r.chapter}:${r.verse}`;
+  const lang = r.lang || langOf(r.book);
+  return { doc_id: r.doc_id ?? null, uri: r.uri || null, pid: r.pid || null, kind: "verse", book: r.book, chapter: r.chapter, verse: r.verse, lang,
+           title: r.title || cite, collection: "scriptures", book_slug: r.book, book_name: r.book_name || (b ? b.name : r.book), volume: r.volume || (b ? b.volume_name : null),
+           label: r.volume || (b ? b.volume_name : langName(lang)), citation: cite, text: r.text || "" };
+}
+
+// What a grammar code means, part by part ("HR/Ncfsa" is a preposition and a noun).
+function morphCodes(code) {
+  if (!haveOriginals() || !code) return [];
+  const parts = String(code).split("/");
+  const lang = /^[HA]/.test(parts[0]) && !parts[0].includes("-") ? parts[0][0] : null;
+  const out = [];
+  for (const [i, raw] of parts.entries()) {
+    const c = lang && i > 0 ? lang + raw : raw;
+    const r = row("SELECT code, parse, short, meaning, example FROM original_morph WHERE code=?", [c]);
+    out.push(r || { code: c, parse: "", short: c, meaning: "", example: "" });
+  }
+  return out;
+}
+
+// Search the original texts: Hebrew or Greek letters (with or without points
+// and accents), a Strong's number, or a transliteration ("translit: chesed").
+function originalSearch({ q, limit = 40, offset = 0, scope = null, kind = null }) {
+  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], original: null };
+  if (!haveOriginals()) return out;
+  const t = String(q || "").trim();
+  kind = kind || originalKind(t);
+  if (!kind) return out;
+  let cond = null, cp = [], lang = null, info = { kind };
+  if (kind === "strongs") {
+    const key = normStrongs(t);
+    const exact = /[A-Z]$/.test(key);
+    cond = exact ? "w.strongs = ?" : "w.strongs >= ? AND w.strongs < ?";
+    cp = exact ? [key] : [key, key + "~"];
+    lang = key[0] === "G" ? "gr" : "he";
+    const lex = row("SELECT strongs, base, lemma, translit, gloss, type FROM original_lexicon WHERE strongs=?", [key]) || row("SELECT strongs, base, lemma, translit, gloss, type FROM original_lexicon WHERE base=? ORDER BY strongs LIMIT 1", [key.slice(0, 5)]);
+    info = { kind, strongs: key, lang, lexicon: lex };
+  } else {
+    let column, tokens;
+    if (kind === "translit") { column = "translit"; tokens = t.replace(/^translit(?:eration)?\s*:/i, "").split(/\s+/).map(asciiTranslit).filter(Boolean); }
+    else { lang = kind === "hebrew" ? "he" : "gr"; column = "plain"; tokens = plainText(t, lang).split(/\s+/).filter(Boolean); }
+    if (!tokens.length) return out;
+    const match = `${column} : (${tokens.map((x) => `"${x.replace(/"/g, "")}"`).join(" ")})`;
+    info = { kind, lang, tokens, match };
+    // the verses the index finds, then every word of each (the ones carrying the query are kept)
+    cond = "w.id IN (SELECT w2.id FROM original_verses v JOIN original_verse_refs r ON r.id = v.rowid JOIN original_words w2 ON w2.book = r.book AND w2.chapter = r.chapter AND w2.verse = r.verse WHERE original_verses MATCH ?)";
+    cp = [match];
+    const wanted = new Set(tokens);
+    let occ;
+    try { occ = occurrences(cond, cp, 100000); } catch (err) { out.error = `could not run that query (${err.message})`; return out; }
+    for (const v of occ.verses) {
+      v.words = v.words.filter((w) => kind === "translit" ? wanted.has(asciiTranslit(w.translit)) : plainText(w.word, v.lang).split(/\s+/).some((x) => wanted.has(x)));
+    }
+    if (!info.lang && occ.verses.length) info.lang = occ.verses[0].lang;
+    return finishOriginal(out, occ, info, limit, offset, scope);
+  }
+  const occ = occurrences(cond, cp, 100000);
+  return finishOriginal(out, occ, info, limit, offset, scope);
+}
+function finishOriginal(out, occ, info, limit, offset, scope) {
+  let verses = occ.verses;
+  if (scope && VOLUMES[scope]) verses = verses.filter((v) => v.volume === VOLUMES[scope]);
+  out.total = verses.length;
+  out.original = { ...info, total: verses.length, language: langName(info.lang || (verses[0] && verses[0].lang) || "he") };
+  // The word behind the hits (the commonest Strong's number among them), so
+  // the results can offer every form of it and its lexicon entry.
+  if (!out.original.lexicon) {
+    const tally = new Map();
+    for (const v of verses.slice(0, 200)) for (const w of v.words) if (w.strongs) tally.set(w.strongs, (tally.get(w.strongs) || 0) + 1);
+    const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (top) {
+      const key = top[0];
+      out.original.strongs = key;
+      out.original.lexicon = row("SELECT strongs, base, lemma, translit, gloss, type FROM original_lexicon WHERE strongs=?", [key]) || row("SELECT strongs, base, lemma, translit, gloss, type FROM original_lexicon WHERE base=? ORDER BY strongs LIMIT 1", [key.slice(0, 5)]);
+      out.original.all_forms = value("SELECT COUNT(DISTINCT book || '/' || chapter || '/' || verse) FROM original_words WHERE strongs >= ? AND strongs < ?", [key.slice(0, 5), key.slice(0, 5) + "~"]) || 0;
+    }
+  }
+  for (const v of verses.slice(offset, offset + limit)) {
+    const shown = v.words.length ? v.words : [];
+    const lead = shown.map((w) => `<span class="ow-inline" lang="${v.lang === "he" ? "he" : "el"}">${esc(w.word)}</span> <i>${esc(w.translit || "")}</i>${w.gloss ? `, ${esc(w.gloss.replace(/[<>\[\]]/g, ""))}` : ""}`).join("; ");
+    out.hits.push({ ...v, paragraph_id: null, snippet: `${lead ? `<span class="ow-lead">${lead}</span> ` : ""}${esc(v.text)}` });
+  }
+  return out;
+}
+// "chesed" or "agape" typed into an ordinary search: the lexicon entry it
+// transliterates, so the results can offer the original word.
+let translitMap = null;
+function transliterationHint(q) {
+  if (!haveOriginals()) return null;
+  const words = String(q || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
+  if (words.length !== 1) return null;
+  if (!translitMap) {
+    translitMap = new Map();
+    try {
+      // the commonest word wins a transliteration several share ("hesed" is the covenant word, not the rare name)
+      const counts = new Map(rows("SELECT substr(strongs, 1, 5) AS b, COUNT(*) AS n FROM original_words WHERE strongs != '' GROUP BY b").map((r) => [r.b, r.n]));
+      for (const r of rows("SELECT strongs, base, lang, lemma, translit, gloss FROM original_lexicon WHERE strongs = base AND translit != ''")) {
+        const k = asciiTranslit(r.translit);
+        if (!k || k.length < 3) continue;
+        const prev = translitMap.get(k);
+        if (!prev || (counts.get(r.base) || 0) > (counts.get(prev.base) || 0)) translitMap.set(k, r);
+      }
+    } catch (_) { translitMap = new Map(); }
+  }
+  const w = words[0];
+  const r = translitMap.get(w) || translitMap.get(w.replace(/^h/, "ch")) || translitMap.get(w.replace(/^ch/, "h")) || translitMap.get(w.replace(/k/g, "q")) || translitMap.get(w.replace(/ts/g, "tz"));
+  if (!r) return null;
+  const count = value("SELECT COUNT(*) FROM original_words WHERE strongs >= ? AND strongs < ?", [r.base, r.base + "~"]) || 0;
+  if (!count) return null;
+  return { strongs: r.base, lang: r.lang, language: langName(r.lang), lemma: r.lemma, translit: r.translit, gloss: r.gloss, count };
 }
