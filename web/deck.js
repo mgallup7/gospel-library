@@ -1228,29 +1228,51 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     widthCache.set(key, w);
     return w;
   }
-  // Lines the text takes when wrapped in a box of boxW inches; "\n" breaks a line.
-  function countLines(text, font, size, boxW, bold, charSpacing = 0) {
-    const maxW = boxW * 72;
-    let lines = 0;
-    for (const para of String(text).split("\n")) {
-      const words = para.split(/\s+/).filter(Boolean);
-      if (!words.length) { lines++; continue; }
-      const space = textWidth(" ", font, size, bold) + charSpacing;
-      let w = 0, n = 1;
-      for (const word of words) {
-        const ww = textWidth(word, font, size, bold) + charSpacing * word.length;
-        if (w > 0 && w + space + ww > maxW) { n++; w = ww; } else w += (w > 0 ? space : 0) + ww;
-      }
-      lines += n;
+  // The words of a text or of text runs, each with its weight; a run's
+  // breakLine (or a "\n") ends a paragraph.
+  function fitWords(src, bold = false) {
+    const out = [];
+    const runs = typeof src === "string" ? [{ text: src, options: { bold } }] : src;
+    let carry = "";
+    for (const r of runs) {
+      const b = !!(r.options && r.options.bold) || bold;
+      const parts = String(r.text || "").split("\n");
+      parts.forEach((part, i) => {
+        if (i > 0) { if (carry) { out.push({ w: carry, bold: b }); carry = ""; } out.push({ nl: true }); }
+        const bits = part.split(/(\s+)/);
+        for (const bit of bits) {
+          if (!bit) continue;
+          if (/^\s+$/.test(bit)) { if (carry) { out.push({ w: carry, bold: b }); carry = ""; } }
+          else carry += bit;
+        }
+        if (carry && /\s$/.test(part)) { out.push({ w: carry, bold: b }); carry = ""; }
+      });
+      if (r.options && r.options.breakLine) { if (carry) { out.push({ w: carry, bold: b }); carry = ""; } out.push({ nl: true }); }
     }
-    return lines;
+    if (carry) out.push({ w: carry, bold });
+    return out;
+  }
+  // Lines the words take when wrapped in a box of boxW inches.
+  function countLines(src, font, size, boxW, bold = false, charSpacing = 0) {
+    const maxW = boxW * 72;
+    const words = Array.isArray(src) && src.length && ("w" in src[0] || "nl" in src[0]) ? src : fitWords(src, bold);
+    const space = textWidth(" ", font, size, false) + charSpacing;
+    let lines = 1, w = 0, any = false;
+    for (const t of words) {
+      if (t.nl) { lines++; w = 0; continue; }
+      any = true;
+      const ww = textWidth(t.w, font, size, !!t.bold) + charSpacing * t.w.length;
+      if (w > 0 && w + space + ww > maxW) { lines++; w = ww; } else w += (w > 0 ? space : 0) + ww;
+    }
+    return any || lines > 1 ? lines : 1;
   }
   // The largest size (points) from max down to min at which the text fits the box.
-  function fitSize({ text, font = SERIF, boxW, boxH, max, min, lineSpacing = 1, bold = false, charSpacing = 0, paraSpace = 0, safety = 0.94 }) {
-    const breaks = (String(text).match(/\n/g) || []).length;
+  function fitSize({ text, runs = null, font = SERIF, boxW, boxH, max, min, lineSpacing = 1, bold = false, charSpacing = 0, paraSpace = 0, safety = 0.94 }) {
+    const words = runs ? fitWords(runs) : fitWords(String(text ?? ""), bold);
+    const breaks = words.filter((t) => t.nl).length;
     let best = null;
     for (let size = max; size >= min; size -= 1) {
-      const lines = countLines(text, font, size, boxW * safety, bold, charSpacing);
+      const lines = countLines(words, font, size, boxW * safety, bold, charSpacing);
       const height = (lines * size * (LINE_EM[font] || 1.2) * lineSpacing + breaks * paraSpace) / 72;
       best = { size, lines, height, fits: height <= boxH };
       if (best.fits) return best;
@@ -1381,7 +1403,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
             const runs = ex.words.map((w, i) => ({ text: w.w + (i < ex.words.length - 1 ? " " : ""), options: hl && i >= ex.s && i <= ex.e ? { color: t.accent, bold: true } : { color: t.text } }));
             if (ex.before) runs.unshift({ text: "… ", options: { color: t.muted } });
             if (ex.after) runs.push({ text: " …", options: { color: t.muted } });
-            const fit = fitSize({ text: plainOfRuns(runs), font: SERIF, boxW: colW - 2 * pad, boxH: panelH - 0.95, max: 22, min: 13, lineSpacing: 1.12 });
+            const fit = fitSize({ runs, font: SERIF, boxW: colW - 2 * pad, boxH: panelH - 0.95, max: 22, min: 13, lineSpacing: 1.12 });
             const cand = { runs, fit, maxWords };
             if (fit.fits && fit.size >= 16) { best = cand; break; }
             if (fit.fits && (!best || fit.size > best.fit.size)) best = cand;
@@ -1414,7 +1436,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const boxH = isTalk && (it.citation || it.where) ? 3.05 : 3.5;
       // Chunks that fit the box at a size the room can read; a passage is cut into more pieces until they do.
       let chunks = chunksOf(it), limit = MAX_CHARS, fits = [];
-      const measure = (cs) => cs.map((chunk) => fitSize({ text: plainOfRuns(passageRuns(it, chunk, t)), font: SERIF, boxW: inner, boxH, max: fontSize(chunk.verses ? chunk.verses.reduce((a, v) => a + v.text.length, 0) : chunk.text.length), min: 20, lineSpacing: 1.15, paraSpace: 8 }));
+      const measure = (cs) => cs.map((chunk) => fitSize({ runs: passageRuns(it, chunk, t), font: SERIF, boxW: inner, boxH, max: fontSize(chunk.verses ? chunk.verses.reduce((a, v) => a + v.text.length, 0) : chunk.text.length), min: 20, lineSpacing: 1.15, paraSpace: 8 }));
       fits = measure(chunks);
       while (fits.some((f) => !f.fits || f.size < 22) && limit > 140) {
         limit = Math.round(limit * 0.8);
