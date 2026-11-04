@@ -517,7 +517,7 @@ class JspSync:
                     if self.out_of_time():
                         stopped = True
                         break
-                    if paper.slug in done:
+                    if self._have(done.get(paper.slug)):
                         continue
                     try:
                         info = self.fetch_paper(cid, book_id, paper, sort_base=p_i * 1000, section=[TITLE_PREFIX + title, vol.title])
@@ -540,6 +540,19 @@ class JspSync:
         self.store.set_meta("jsp_last", {"finished": now(), "stopped": stopped, **self.counts})
         log.info("Joseph Smith Papers: %s%s", self.counts, " (time budget reached)" if stopped else "")
         return dict(self.counts)
+
+    @staticmethod
+    def _have(entry: dict | None) -> bool:
+        """Fetched already; a paper that failed is tried again after a few days."""
+        if not entry:
+            return False
+        if "error" not in entry:
+            return True
+        try:
+            at = datetime.strptime(entry.get("at", ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return False
+        return (datetime.now(timezone.utc) - at).days < 3
 
     # The volumes and papers of a series, refreshed every catalog_days.
     def catalog(self, cid: int, path: str) -> list[Volume]:
