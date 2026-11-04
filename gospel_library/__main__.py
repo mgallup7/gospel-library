@@ -209,6 +209,30 @@ def cmd_jsp(args) -> int:
     return 0
 
 
+def cmd_embed(args) -> int:
+    """Embed every paragraph that has no vector yet (the search by meaning)."""
+    import sqlite3
+
+    from . import embed
+
+    config.ensure_dirs()
+    model = embed.ensure_model(Path(args.model) if args.model else None)
+    embedder = embed.Embedder(model, threads=args.threads)
+    conn = sqlite3.connect(config.DB_PATH)
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+        info = embed.embed_missing(conn, embedder, minutes=args.minutes)
+        print(f"meaning vectors: {info['count']:,} paragraphs ({info['left']:,} left for a later run), model {info['model']}")
+        if args.smoke:
+            for q, found in embed.smoke_test(conn, embedder, args.smoke):
+                print(f"\n  {q}")
+                for score, title, text in found:
+                    print(f"    {score:.3f}  {title}: {text}")
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_seal(args) -> int:
     """Encrypt any file (used for the nightly job's state)."""
     from . import bundle
@@ -309,6 +333,13 @@ def main(argv=None) -> int:
     s.add_argument("--series", nargs="*", help="only these series (journals, revelations-and-translations, histories, documents, ...)")
     s.add_argument("--catalog-days", type=float, default=7, help="how often to re-read the site's lists of papers")
     s.set_defaults(fn=cmd_jsp, to_file=False)
+
+    s = sub.add_parser("embed", help="embed the paragraphs for search by meaning (downloads the model once)")
+    s.add_argument("--minutes", type=float, default=None, help="time budget; what is left waits for a later run")
+    s.add_argument("--model", help="folder with the model files (downloaded when omitted)")
+    s.add_argument("--threads", type=int, default=None)
+    s.add_argument("--smoke", nargs="*", help="queries to try against the vectors afterwards, printed with their best passages")
+    s.set_defaults(fn=cmd_embed, to_file=False)
 
     s = sub.add_parser("seal", help="encrypt a file with the library passphrase")
     s.add_argument("src")

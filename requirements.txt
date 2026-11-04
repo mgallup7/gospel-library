@@ -2,3 +2,6 @@ requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0
 cryptography>=42
+numpy>=1.26
+onnxruntime>=1.18
+tokenizers>=0.19

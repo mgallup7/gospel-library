@@ -11,14 +11,34 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   about faith and knowledge" looks in Alma; "the holy spirit or spirit of god
   in PMG" searches each wording as the phrase it is; an exact phrase such as
   "plan of happiness" wins when it exists. A word the library has never seen
-  ("spirt") is swapped for the nearest word it has. The results say how the
-  question was read, with an "Exact words" switch. Open a shelf on the home
-  screen (Handbook, Missionary Standards, Preach My Gospel…) and the search
-  box searches only that shelf until you choose All again; the shelf names
-  under the search box show where you are. With a Claude API key set, pressing return
-  also has Claude propose a few more searches and folds their results in.
-  Power syntax still works: quotes, `-word`, `speaker:nelson`,
-  `year:2015-2020`, `book:alma`, `in:conference`.
+  ("spirt") is swapped for the nearest word it has. Power syntax still works:
+  quotes, `-word`, `speaker:nelson`, `year:2015-2020`, `book:alma`,
+  `in:conference`.
+- Search by meaning, on the device. The nightly job embeds every verse and
+  paragraph with a small sentence model (bge-small-en-v1.5, in its ONNX
+  form) and the library carries the sign bits of those vectors (48 bytes a
+  paragraph). The app fetches the same model once (35 MB, kept by the
+  service worker) and runs it in the worker with ONNX Runtime, so a search
+  is ranked by its words and by what it means, fused by reciprocal rank
+  (an exact phrase, when the library has it, is ranked first). A passage
+  that says "trust in the Lord's timing" turns up for "patience with God's
+  plan" even though no word is shared. Until the model has arrived, or on a
+  browser that cannot run it, search goes by words alone and says so.
+- Results with their context. The best match is shown in its place, with
+  the verse or paragraph before and after it, and Open, + Deck and Present
+  right there. The other hits from the same chapter or talk are folded
+  under it ("4 more in Alma 32"); hits found by meaning alone say so. The
+  line above the results says how the search was read ("Exact phrase
+  found, then by words and meaning: faith, perfect knowledge · all
+  shelves") with an "Only exact words" switch.
+- The home screen: where you were (the last chapter or talk, the deck in
+  progress), the shelves as tiles with what each holds, the latest
+  conference, and a box to ask the library a question. Open a shelf and the
+  search box searches only that shelf until you choose All again. With a
+  Claude API key set, pressing return also has Claude propose a few more
+  searches and folds their results in. On a phone the reader keeps its
+  tools at the bottom, under the thumb: Present, Hebrew or Greek, text
+  size, To deck, and the page on the Church's site.
 - Type a reference (`Alma 32:21`, `d&c 76 22`, `js-h 1:17`) and jump straight to it.
 - The Bible in its own languages. Open any chapter of the Old or New
   Testament and tap Hebrew (or Greek) in the reader bar: under every verse,
@@ -121,8 +141,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
 | Piece | Where it runs | What it does |
 |---|---|---|
 | `gospel_library/` (Python) | GitHub Actions, nightly | Walks the site's tables of contents, fetches new and changed pages through the same content API the site's own reader uses, parses them into SQLite with an FTS5 full-text index. |
-| `bundle` | end of the nightly job | Compacts the database, gzips it, encrypts it with your passphrase (AES-256-GCM, key from PBKDF2), publishes it with the app to GitHub Pages. |
-| `web/` | your devices | The app. `engine.js` runs SQLite compiled to WebAssembly inside a Web Worker and keeps the library in the browser's private storage (OPFS). `app.js` is the interface; `ask.js` is the Claude layer (search planning with Haiku, answers with the model you pick, streamed straight from api.anthropic.com). |
+| `embed` | nightly, after the fetch | Embeds every new verse and paragraph with bge-small-en-v1.5 through onnxruntime (45 minutes a night until it has caught up; the model is cached between runs) and keeps the int8 vectors in the working database. `--smoke` prints the top passages for a few test questions into the job log. |
+| `bundle` | end of the nightly job | Compacts the database, packs the vectors' sign bits, gzips it, encrypts it with your passphrase (AES-256-GCM, key from PBKDF2), publishes it with the app, the model and ONNX Runtime to GitHub Pages. |
+| `web/` | your devices | The app. `engine.js` runs SQLite compiled to WebAssembly inside a Web Worker and keeps the library in the browser's private storage (OPFS); `semantic.js` runs the search model in the same worker, with a WordPiece tokenizer written to match the one the nightly job uses. `app.js` is the interface; `ask.js` is the Claude layer (search planning with Haiku, answers with the model you pick, streamed straight from api.anthropic.com). |
 
 The code is public and ordinary. The library file is public too, but unreadable
 without the passphrase, which exists only in your GitHub secret and on your
@@ -185,6 +206,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m gospel_library seed                        # public-domain scripture text in seconds
 .venv/bin/python -m gospel_library sync --collections scriptures --max-requests 50
 .venv/bin/python -m gospel_library search "plan of happiness"
+.venv/bin/python -m gospel_library embed --minutes 5 --smoke          # meaning vectors (downloads the model once, 35 MB)
 LIBRARY_PASSPHRASE=test .venv/bin/python -m gospel_library bundle --out data/bundle
 .venv/bin/python -m gospel_library serve                       # app at http://localhost:8777 using data/bundle
 .venv/bin/python -m gospel_library discover /manual            # see what the site offers under a URI

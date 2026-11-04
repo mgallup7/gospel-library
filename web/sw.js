@@ -1,7 +1,9 @@
 /* Keeps the app shell available offline. The library itself lives in the
-   browser's private storage; the data files are never cached here. */
-const SHELL = "gospel-shell-v24";
-const FILES = ["./", "./index.html", "./app.css", "./app.js", "./ask.js", "./original.js", "./deck.js", "./engine.js", "./vendor/pptxgen.bundle.js", "./lib/query.js", "./lib/scriptures.js",
+   browser's private storage; the data files are never cached here. The search
+   model and ONNX Runtime (model/, vendor/ort/) are cached the first time the
+   engine fetches them, like any other file of the app. */
+const SHELL = "gospel-shell-v25";
+const FILES = ["./", "./index.html", "./app.css", "./app.js", "./ask.js", "./original.js", "./deck.js", "./engine.js", "./semantic.js", "./lib/wordpiece.js", "./vendor/pptxgen.bundle.js", "./lib/query.js", "./lib/scriptures.js",
   "./lib/scriptures-data.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
 
 self.addEventListener("install", (e) => {

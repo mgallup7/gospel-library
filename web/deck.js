@@ -299,11 +299,12 @@
     subtitle.addEventListener("input", () => { deck.subtitle = subtitle.value; save({ redraw: false }); });
     const themes = el("div", { class: "themes" });
     const download = el("button", { type: "button", class: "primary", text: "Download PowerPoint", onclick: () => downloadFile() });
-    const present = el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => presentDeck() });
+    const present = el("button", { type: "button", class: "primary quiet", text: "Present", onclick: () => presentDeck() });
     const think = el("button", { type: "button", class: "text-btn", text: "Think it through", title: "Claude studies the chain: labels, connections, a caption", onclick: () => thinkChain() });
     const md = el("button", { type: "button", class: "text-btn", text: "Markdown", title: "The deck as Markdown, for Bear or any notes app", onclick: () => exportMarkdown() });
     const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); } });
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
+      think, md,
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
@@ -315,7 +316,7 @@
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
     const thinkBox = el("div", { class: "board-think", hidden: true });
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, think, md, more]), moreRow, banner, thinkBox]);
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, more]), moreRow, banner, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");

@@ -35,6 +35,14 @@
     btn.addEventListener("click", () => (body.classList.contains("with-orig") ? hide(body, btn) : show(doc, body, btn)));
     const anchor = bar.querySelector('[aria-label="Present"]');
     if (anchor) anchor.before(btn); else bar.append(btn);
+    // the same switch on the phone's bottom bar
+    const slot = bar.parentElement && bar.parentElement.querySelector(".reader-foot .slot-orig");
+    if (slot) {
+      const fb = el("button", { type: "button", class: "foot-btn", "aria-label": NAME[lang], onclick: () => btn.click() }, [
+        el("span", { class: "ic", html: `<span class="glyph" lang="${langAttr(lang)}" style="font:600 18px/22px var(--serif)">${lang === "he" ? "אב" : "αβ"}</span>` }), el("span", { class: "lb", text: NAME[lang] })]);
+      slot.replaceWith(fb);
+      new MutationObserver(() => fb.classList.toggle("on", btn.classList.contains("on"))).observe(btn, { attributes: true, attributeFilter: ["class"] });
+    }
     if (store.get("orig")) show(doc, body, btn);
   }
 

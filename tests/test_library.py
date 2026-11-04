@@ -359,6 +359,10 @@ def test_originals_ingest(tmp_path):
     assert conn.execute("SELECT short FROM original_morph WHERE code='V-IAI-3S'").fetchone()[0].startswith("Verb Imperfect Active")
     # transliterations are searchable as typed: no macrons ("ēn" -> "en"), no dots
     assert ("matthew", 1, 1) in find("translit:iesou") and ("genesis", 1, 1) in find("translit:elohim")
+    # the lexicon carries the typed form and how common each word is (the app's "In the Greek: agapē" hint looks these up)
+    assert conn.execute("SELECT ascii FROM original_lexicon WHERE strongs='G0026'").fetchone()[0] == "agape"
+    assert conn.execute("SELECT occurrences FROM original_lexicon WHERE strongs='G0976'").fetchone()[0] >= 1
+    assert conn.execute("SELECT occurrences FROM original_lexicon WHERE strongs='H7225'").fetchone()[0] >= 1
     # idempotent, and reloaded when the format changes
     assert O.ingest(conn, src)["words"] == info["words"] and info["format"] == O.FORMAT and info["morph"] >= 6
     conn.execute("UPDATE meta SET value=json_set(value, '$.format', 1) WHERE key='originals'")
@@ -449,3 +453,90 @@ def test_joseph_smith_papers(tmp_path):
     assert fake.requests_made == before
     assert set(store.get_meta("jsp_papers")) >= {"journal-1832-1834", "letter-to-emma-smith-4-june-1834"}
     store.close()
+
+
+def _stub_model(dest: Path) -> Path:
+    """A tiny model with the real one's inputs and outputs, for the plumbing."""
+    import numpy as np
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+    from tokenizers import BertWordPieceTokenizer
+
+    dest.mkdir(parents=True, exist_ok=True)
+    vocab = ["[PAD]", "[unused0]"] + [f"[unused{i}]" for i in range(1, 99)] + ["[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+    words = "the of and to in a is that it faith hope charity god lord jesus christ perfect knowledge things not have ##s ##ed ##ing , . ; : ! ?".split()
+    vocab += words
+    (dest / "vocab.txt").write_text("\n".join(vocab) + "\n", encoding="utf-8")
+    BertWordPieceTokenizer(str(dest / "vocab.txt"), lowercase=True).save(str(dest / "tokenizer.json"))
+    rng = np.random.default_rng(1)
+    freq = (rng.random((1, 1, 384)) * 0.4 + 0.01).astype(np.float32)
+    nodes = [
+        helper.make_node("Cast", ["input_ids"], ["idf"], to=TensorProto.FLOAT),
+        helper.make_node("Unsqueeze", ["idf", "axes"], ["id3"]),
+        helper.make_node("Mul", ["id3", "freq"], ["m"]),
+        helper.make_node("Sin", ["m"], ["s"]),
+        helper.make_node("Cast", ["attention_mask"], ["mf"], to=TensorProto.FLOAT),
+        helper.make_node("Unsqueeze", ["mf", "axes"], ["mf3"]),
+        helper.make_node("Mul", ["s", "mf3"], ["sm"]),
+        helper.make_node("ReduceMean", ["sm"], ["mean"], axes=[1], keepdims=1),
+        helper.make_node("Add", ["sm", "mean"], ["last_hidden_state"]),
+    ]
+    graph = helper.make_graph(nodes, "stub", [
+        helper.make_tensor_value_info("input_ids", TensorProto.INT64, ["b", "s"]),
+        helper.make_tensor_value_info("attention_mask", TensorProto.INT64, ["b", "s"]),
+        helper.make_tensor_value_info("token_type_ids", TensorProto.INT64, ["b", "s"]),
+    ], [helper.make_tensor_value_info("last_hidden_state", TensorProto.FLOAT, ["b", "s", 384])],
+        initializer=[numpy_helper.from_array(freq, "freq"), numpy_helper.from_array(np.array([2], dtype=np.int64), "axes")])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 8
+    onnx.save(model, str(dest / "model_quantized.onnx"))
+    return dest
+
+
+def test_embeddings(tmp_path):
+    """Vectors for every paragraph, packed as bits for the bundle; stale rows dropped."""
+    import sqlite3
+
+    import numpy as np
+
+    from gospel_library import embed
+
+    model = _stub_model(tmp_path / "model")
+    e = embed.Embedder(model, threads=1)
+    v = e.encode(["Now faith is the substance of things hoped for", "the lord is my shepherd"])
+    assert v.shape == (2, 384) and abs(float(np.linalg.norm(v[0])) - 1) < 1e-5
+    q = e.encode(["faith is the substance"], query=True)[0]
+    assert abs(float(np.linalg.norm(q)) - 1) < 1e-5
+    # a small library
+    conn = sqlite3.connect(tmp_path / "lib.sqlite")
+    conn.executescript("""
+      CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE documents(id INTEGER PRIMARY KEY, title TEXT);
+      CREATE VIRTUAL TABLE paragraphs USING fts5(text, document_id UNINDEXED, seq UNINDEXED, pid UNINDEXED, kind UNINDEXED, verse UNINDEXED, tokenize='porter unicode61');
+      INSERT INTO documents VALUES (1, 'Alma 32'), (2, 'Hebrews 11');
+      INSERT INTO paragraphs(rowid, text, document_id, seq, pid, kind, verse) VALUES
+        (10, 'faith is not to have a perfect knowledge of things', 1, 1, 'p21', 'verse', 21),
+        (11, 'Now faith is the substance of things hoped for', 2, 1, 'p1', 'verse', 1),
+        (12, 'Chapter heading', 1, 0, 'h', 'heading', NULL),
+        (13, 'one', 1, 2, 'p22', 'verse', 22);
+    """)
+    info = embed.embed_missing(conn, e)
+    assert info["count"] == 2 and info["model"] == embed.MODEL_NAME and info["left"] == 0  # a heading and a one-word verse are skipped
+    rows = conn.execute("SELECT paragraph_id, length(v) FROM vectors ORDER BY paragraph_id").fetchall()
+    assert rows == [(10, 384), (11, 384)]
+    # unchanged on a second pass, a vanished paragraph's vector dropped
+    conn.execute("DELETE FROM paragraphs WHERE rowid = 11")
+    assert embed.embed_missing(conn, e)["count"] == 1
+    # the bits
+    v10 = conn.execute("SELECT v FROM vectors WHERE paragraph_id = 10").fetchone()[0]
+    bits = embed.to_bits(v10)
+    assert len(bits) == 48
+    arr = np.frombuffer(v10, dtype=np.int8)
+    assert ((np.unpackbits(np.frombuffer(bits, dtype=np.uint8)) == 1) == (arr >= 0)).all()
+    # the smoke test: the best passages for a query, scored against the int8 vectors (in chunks)
+    smoke = embed.smoke_test(conn, e, ["faith", "hope"], k=3, chunk=1)
+    assert [q for q, _ in smoke] == ["faith", "hope"] and len(smoke[0][1]) == 1 and isinstance(smoke[0][1][0][0], float)
+    n = embed.pack_bits(conn)
+    assert n == 1 and conn.execute("SELECT length(bits) FROM vecbits").fetchone()[0] == 48
+    assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='vectors'").fetchone()
+    conn.close()

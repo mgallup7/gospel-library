@@ -4,6 +4,12 @@
 import sqlite3InitModule from "./vendor/sqlite3.mjs";
 import * as S from "./lib/scriptures.js";
 import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections } from "./lib/query.js";
+// Search by meaning lives in its own module; if it fails to load (a broken
+// download, an old browser), search by words carries on without it. The
+// message handler waits for this to settle, so the first call sees the outcome.
+let Sem = null;
+const semLoaded = import("./semantic.js").then((m) => { Sem = m; }).catch((err) => { console.warn("search by meaning is unavailable:", err?.message); });
+const semReady = () => !!(Sem && Sem.ready());
 
 const HL_OPEN = "\u0001", HL_CLOSE = "\u0002";
 const LABELS = { handbook: "General Handbook", "come-follow-me": "Come, Follow Me", "preach-my-gospel": "Preach My Gospel", "missionary-standards": "Missionary Standards", manuals: "Manual", "study-helps": "Study Helps", scriptures: "Scriptures" };
@@ -19,6 +25,7 @@ self.onmessage = async (e) => {
   const { id, method, params } = e.data;
   const progress = (p) => self.postMessage({ id, progress: p });
   try {
+    await semLoaded;
     const fn = methods[method];
     if (!fn) throw new Error(`unknown method ${method}`);
     const result = await fn(params || {}, progress);
@@ -45,10 +52,19 @@ async function boot() {
   }
 }
 
+// Closes the open library and forgets everything derived from it (search
+// caches, the speaker index, the meaning index), so a newer library starts clean.
+function closeDb() {
+  if (db) { try { db.close(); } catch (_) {} db = null; }
+  speakerIndex = null; vocab = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
+  lastRanked = null; originalsKnown = null; translitMap = null; lexiconAscii = null;
+  bitIndex = null; bitIndexTried = false; docOfIndex = null; scopeMasks = new Map();
+}
+
 const methods = {
   async open({ slot }) {
     await boot();
-    if (db) { try { db.close(); } catch (_) {} db = null; }
+    closeDb();
     if (mode === "opfs" && slot && pool.getFileNames().includes(slot)) {
       db = new pool.OpfsSAHPoolDb(slot);
       tune(db);
@@ -116,7 +132,7 @@ const methods = {
       return value;
     };
 
-    if (db) { try { db.close(); } catch (_) {} db = null; }
+    closeDb();
     if (mode === "opfs") {
       const target = slot || "/library-a.sqlite";
       if (pool.getFileNames().includes(target)) pool.unlink(target);
@@ -158,7 +174,7 @@ const methods = {
 
   async forget({ slot }) {
     if (!slot || (current && current.slot === slot)) {
-      if (db) { try { db.close(); } catch (_) {} db = null; }
+      closeDb();
       current = null;
     }
     if (mode === "opfs" && slot && pool.getFileNames().includes(slot)) pool.unlink(slot);
@@ -192,6 +208,10 @@ const methods = {
     return await plain.text();
   },
   async search(params) { need(); return search(params); },
+  // Search by meaning: the model's state, and loading it (35 MB once).
+  async semanticStatus() { return semanticStatus(); },
+  async loadSemantic({ base }, progress) { need(); return loadSemantic(base, progress); },
+  async semanticEmbed({ text }) { return Array.from(await embedQuery(String(text || ""))); },
   async doc({ id, uri }) { need(); return document(id, uri); },
   async resolve({ href }) { need(); return resolve(href); },
   async speakers({ q }) { need(); return speakers(q); },
@@ -302,12 +322,15 @@ function summary(r) {
   };
 }
 function highlight(snip) { return esc(snip).replaceAll(HL_OPEN, "<mark>").replaceAll(HL_CLOSE, "</mark>"); }
+let markCache = { key: "", re: null };
 function markTerms(text, terms) {
   const escaped = esc(text);
-  const stems = [...new Set(terms.map((t) => t.toLowerCase()).filter((t) => t.length >= 2))].sort((a, b) => b.length - a.length);
-  if (!stems.length) return escaped;
-  const re = new RegExp("\\b(" + stems.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi");
-  return escaped.replace(re, "<mark>$1</mark>");
+  const key = terms.join("\u0001");
+  if (markCache.key !== key) {
+    const stems = [...new Set(terms.map((t) => t.toLowerCase()).filter((t) => t.length >= 2))].sort((a, b) => b.length - a.length);
+    markCache = { key, re: stems.length ? new RegExp("\\b(" + stems.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi") : null };
+  }
+  return markCache.re ? escaped.replace(markCache.re, "<mark>$1</mark>") : escaped;
 }
 
 // ----------------------------------------------------------------- search ----
@@ -328,8 +351,8 @@ function speakersBySurname() {
   return speakerIndex;
 }
 
-function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, edition = null, exclude_edition = null, group = "passages" }) {
-  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [] };
+async function search(params) {
+  const { q, scope = null, typeahead = false, light = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, edition = null, exclude_edition = null, group = "passages" } = params;
   const t0 = performance.now();
   // Hebrew or Greek letters, or a Strong's number, search the original texts.
   if (group === "passages" && originalKind(q) && haveOriginals()) {
@@ -337,125 +360,199 @@ function search({ q, scope = null, typeahead = false, limit = 40, offset = 0, sp
     r.ms = Math.round((performance.now() - t0) * 10) / 10;
     return r;
   }
-  if (isNatural(q) && group === "passages") {
-    const r = naturalSearch(q, { scope, limit, offset, speaker, from, to, book, edition, exclude_edition });
-    if (r) { r.ms = Math.round((performance.now() - t0) * 10) / 10; return r; }
-  }
-  const cq = compileQuery(q, { typeahead, scope });
+  const filters = { scope, speaker, from, to, book, edition, exclude_edition };
+  if (group === "documents") return searchDocuments(q, { ...filters, typeahead, limit, offset, t0 });
+  // Pressing return on a question or a few words: the words and the meaning
+  // together, the exact phrase first, hits folded by chapter or talk. The
+  // list is kept so "show more" needs no second embedding.
+  // (a "light" search, the kind Claude's widening pass runs, goes by words alone and is not kept)
+  const key = JSON.stringify([q, scope, speaker, from, to, book, edition, exclude_edition, semReady()]);
+  if (!typeahead && !light && lastRanked && lastRanked.key === key) return page(lastRanked.out, offset, limit, t0);
+  const out = await rankedSearch(q, { ...filters, typeahead, light });
+  if (!typeahead && !light) lastRanked = { key, out };
+  return page(out, offset, limit, t0);
+}
+let lastRanked = null;
+function page(out, offset, limit, t0) {
+  return { ...out, hits: out.hits.slice(offset, offset + limit), ms: Math.round((performance.now() - t0) * 10) / 10 };
+}
+
+// Which paragraphs a search may return, and how much each shelf and kind of
+// paragraph counts. A chosen shelf is searched as an equal; otherwise the
+// scriptures and the prophets rank above lists and study helps.
+const SHELF_PRIOR = { scriptures: 1, "general-conference": 1, "preach-my-gospel": 0.95, "missionary-standards": 0.95, handbook: 0.9, "come-follow-me": 0.9, manuals: 0.85, "study-helps": 0.7 };
+function prior(hit, scoped) {
+  let p = scoped ? 1 : (SHELF_PRIOR[hit.collection] ?? (hit.collection && hit.collection.startsWith("jsp-") ? 0.85 : 0.9));
+  const words = hit.text ? hit.text.split(/\s+/).length : 0;
+  if (words < 6) p *= 0.6; else if (words < 12) p *= 0.85;
+  if (hit.kind === "summary" || hit.kind === "heading") p *= 0.8;
+  return p;
+}
+
+function baseQuery(q, { scope, speaker, from, to, book, edition, exclude_edition, typeahead }) {
+  // the compiled query also carries any explicit syntax (quotes, -word, speaker:, year:, in:)
+  const cq = compileQuery(q, { typeahead, scope: VOLUMES[scope] ? "scriptures" : scope });
+  if (VOLUMES[scope]) cq.volume = VOLUMES[scope];
   if (speaker) cq.speaker = speaker;
   if (from) cq.yearFrom = Number(from);
   if (to) cq.yearTo = Number(to);
   if (book) { const ref = S.parseReference(book); if (ref) cq.bookSlug = ref.book.slug; }
   if (edition) cq.edition = edition;
   if (exclude_edition) cq.excludeEdition = exclude_edition;
+  return cq;
+}
 
-  if (!(cq.speaker || cq.yearFrom || cq.collections.length)) {
-    const ref = S.parseReference(q);
+async function rankedSearch(q, opts) {
+  const { scope, typeahead, light = false } = opts;
+  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], smart: null };
+  const raw = String(q || "").trim();
+  const explicit = /"|(^|\s)-\w|\b(OR|AND|NOT)\b|\w+:\S/.test(raw);
+  const natural = !explicit && isNatural(raw);
+  const fixed = !explicit ? correctTypos(raw, { typeahead }) : { text: raw, changes: [] };
+  const n = natural ? naturalQuery(fixed.text, speakersBySurname()) : null;
+  const cq = baseQuery(natural ? termsOnly(n) : fixed.text, opts);
+  if (n) {
+    if (n.scope) cq.collections = scopeCollections(n.scope);
+    if (!cq.speaker && n.speaker) cq.speaker = n.speaker;
+    if (!cq.yearFrom && n.yearFrom) { cq.yearFrom = n.yearFrom; cq.yearTo = n.yearTo; }
+    if (!cq.bookSlug && n.bookSlug) cq.bookSlug = n.bookSlug;
+    cq.terms = n.terms;
+  }
+  const scoped = cq.collections.length > 0;
+  // a reference typed ("Alma 32:21", "d&c 76 22") opens the chapter
+  if (!(cq.speaker || cq.yearFrom)) {
+    const ref = S.parseReference(raw);
     if (ref) {
       const r = row("SELECT id, title FROM documents WHERE uri=?", [ref.uri]);
       out.jump = { label: ref.label, uri: ref.uri, pid: ref.pid, doc_id: r ? r.id : null, title: r ? r.title : S.citation(ref.book, ref.chapter), verse_end: ref.verseEnd };
     }
   }
-  if (!cq.match) return out;
+  const terms = (n ? n.terms : cq.terms) || [];
+  if (!cq.match && !terms.length) return out;
+  const words = cq.terms && cq.terms.length ? expandTerms(cq.terms) : [];
 
-  const where = ["paragraphs MATCH ?"];
-  const params = [cq.match];
-  if (cq.collections.length) { where.push(`c.slug IN (${cq.collections.map(() => "?").join(",")})`); params.push(...cq.collections); }
-  if (cq.speaker) { where.push("d.author LIKE ?"); params.push(`%${cq.speaker}%`); }
-  if (cq.yearFrom) { where.push("d.year >= ?"); params.push(cq.yearFrom); }
-  if (cq.yearTo) { where.push("d.year <= ?"); params.push(cq.yearTo); }
-  if (cq.bookSlug) { where.push("d.book_slug = ?"); params.push(cq.bookSlug); }
-  if (cq.edition) { where.push("b.title LIKE ?"); params.push(`%${cq.edition}%`); }
-  if (cq.excludeEdition) { where.push("(b.title IS NULL OR b.title NOT LIKE ?)"); params.push(`%${cq.excludeEdition}%`); }
-  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id WHERE ${where.join(" AND ")}`;
-
-  try {
-    if (group === "documents") {
-      const rs = rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume,
-                              c.slug AS collection, b.title AS book_title, COUNT(*) AS hits, MIN(p.rank) AS best ${base} GROUP BY d.id ORDER BY best LIMIT ? OFFSET ?`,
-        [...params, limit, offset]);
-      out.documents = rs.map((r) => ({ ...summary(r), hits: r.hits }));
-      out.total = value(`SELECT COUNT(DISTINCT d.id) ${base}`, params);
-      out.ms = Math.round((performance.now() - t0) * 10) / 10;
-      return out;
+  // 1. The exact phrase as typed, when the query is plain words (no question around them).
+  const ranked = new Map();  // paragraph_id -> {hit, lex, sem, exact}
+  const take = (r, slot, rank) => {
+    let e = ranked.get(r.paragraph_id);
+    if (!e) { e = { hit: hitOf(r, words), lex: null, sem: null, exact: false }; ranked.set(r.paragraph_id, e); }
+    if (slot === "lex" && e.lex === null) e.lex = rank;
+    if (slot === "sem" && e.sem === null) e.sem = rank;
+    if (slot === "exact") { e.exact = true; if (e.lex === null) e.lex = rank; }
+    return e;
+  };
+  const phraseWords = raw.split(/\s+/).filter(Boolean);
+  const plain = !explicit && phraseWords.length >= 2 && phraseWords.length <= 14 && !/[?]/.test(raw);
+  let exactTotal = 0;
+  if (plain) {
+    const phrase = ftsPhrase(fixed.text.replace(/[^\p{L}\p{N}\s'’]/gu, " "));
+    if (phrase) {
+      try {
+        const rs = passageRows(phrase, cq, 30, 0);
+        rs.forEach((r, i) => take(r, "exact", i));
+        exactTotal = rs.length;
+      } catch (_) { /* a phrase the index cannot take is simply not an exact match */ }
     }
-    const rs = rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
-                            snippet(paragraphs, 0, ?, ?, ' … ', 48) AS snip, bm25(paragraphs) AS rank,
-                            d.uri, d.title, d.author, d.author_role, d.year, d.month, d.session, d.date,
-                            d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title
-                     ${base} ORDER BY rank LIMIT ? OFFSET ?`,
-      [HL_OPEN, HL_CLOSE, ...params, limit, offset]);
-    out.total = value(`SELECT COUNT(*) ${base}`, params);
-    for (const r of rs) {
-      out.hits.push({
-        ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse,
-        snippet: r.kind === "verse" ? markTerms(r.text, cq.terms) : highlight(r.snip),
-        citation: citation(r, r.verse),
-      });
-    }
-  } catch (err) {
-    out.error = `could not run that query (${err.message})`;
-    return out;
   }
-
-  if (offset === 0 && !typeahead && !out.jump) out.original_hint = transliterationHint(q);
-  if (offset === 0 && cq.terms.length) {
-    const titleMatch = cq.terms.map((t) => ftsPhrase(t)).filter(Boolean).join(" ");
-    const tw = ["documents_fts MATCH ?"];
-    const tp = [`title : (${titleMatch})`];
-    if (cq.collections.length) { tw.push(`c.slug IN (${cq.collections.map(() => "?").join(",")})`); tp.push(...cq.collections); }
-    if (cq.speaker) { tw.push("d.author LIKE ?"); tp.push(`%${cq.speaker}%`); }
+  // 2. The words: the natural tiers (phrase of the ideas, all of them, any of them) or the compiled query.
+  let lexTotal = 0;
+  if (n) {
+    const tiers = [n.phrase, n.strict, n.loose].filter(Boolean).filter((m, i, arr) => arr.indexOf(m) === i);
+    let rank = exactTotal;
+    for (const match of tiers) {
+      let rs;
+      try { rs = passageRows(match, cq, typeahead ? 40 : 80, 0); } catch (_) { continue; }
+      for (const r of rs) { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", rank++); }
+      if (rank >= (typeahead ? 40 : 120)) break;
+    }
+    const last = tiers[tiers.length - 1];
+    if (typeahead) lexTotal = rank;
+    else { try { lexTotal = last ? countRows(last, cq) : 0; } catch (_) { lexTotal = rank; } }
+  } else if (cq.match) {
     try {
-      const trs = rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection
-                         FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN collections c ON c.id=d.collection_id
-                        WHERE ${tw.join(" AND ")} ORDER BY bm25(documents_fts) LIMIT 6`, tp);
-      out.titles = trs.map(summary);
-    } catch (_) { /* a malformed title query is not worth failing the search for */ }
+      const rs = passageRows(cq.match, cq, typeahead ? 40 : 100, 0);
+      rs.forEach((r, i) => { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", exactTotal + i); });
+      lexTotal = typeahead ? rs.length : countRows(cq.match, cq);
+    } catch (err) { out.error = `could not run that query (${err.message})`; return out; }
   }
+  // 3. The meaning, when the model is here and this is a real search, not a keystroke or a request for exact words.
+  let semantic = false;
+  if (!typeahead && !light && !explicit && semReady() && semanticIndex()) {
+    try {
+      const cands = await semanticCandidates(fixed.text, cq, 150);
+      if (!db) throw new Error("the library was replaced during the search");
+      if (cands) { semantic = true; cands.forEach((r, i) => take(r, "sem", i)); }
+    } catch (err) { if (!db) throw err; console.warn("meaning search failed:", err?.message); }
+  }
+  // 4. Fuse: reciprocal ranks, the exact phrase on top, then the shelf and length priors.
+  const K = 60;
+  const scored = [];
+  for (const e of ranked.values()) {
+    let s = 0;
+    if (e.lex !== null) s += 1 / (K + e.lex);
+    if (e.sem !== null) s += 1 / (K + e.sem);
+    if (e.exact) s += 1 / K;
+    s *= prior(e.hit, scoped);
+    e.hit.why = e.exact ? "exact" : e.lex !== null && e.sem !== null ? "both" : e.sem !== null ? "meaning" : "words";
+    scored.push({ s, e });
+  }
+  scored.sort((a, b) => b.s - a.s || a.e.hit.paragraph_id - b.e.hit.paragraph_id);
+  // 5. Fold hits from one chapter or talk under its best one.
+  const heads = [], byDoc = new Map();
+  for (const { e } of scored) {
+    const h = e.hit;
+    const head = byDoc.get(h.doc_id);
+    if (head) { if (head.more.length < 6) head.more.push(h); continue; }
+    h.more = [];
+    byDoc.set(h.doc_id, h);
+    heads.push(h);
+  }
+  // 6. Context around the best few: the verse or paragraph before and after.
+  for (const h of heads.slice(0, typeahead || light ? 0 : 3)) Object.assign(h, neighbors(h));
+  out.hits = heads;
+  out.total = heads.length;
+  out.lexical_total = Math.max(lexTotal, exactTotal);
+  out.smart = { terms: n ? n.terms : cq.terms, speaker: cq.speaker, scope: n && n.scope ? n.scope : (scope && scope !== "all" ? scope : null), book: cq.bookSlug, years: cq.yearFrom ? [cq.yearFrom, cq.yearTo] : null, corrected: fixed.changes, exact: exactTotal > 0, semantic, natural: !!n };
+  if (terms.length) out.titles = titleMatches(terms, cq);
+  if (!typeahead && !light) out.original_hint = transliterationHint(raw);
+  return out;
+}
+function termsOnly(n) { return (n.terms || []).join(" "); }
+function hitOf(r, words) {
+  return { ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text,
+    snippet: r.kind === "verse" || (r.text && r.text.length <= 900) ? markTerms(r.text, words) : (r.snip ? highlight(r.snip) : markTerms(r.text, words)),
+    citation: citation(r, r.verse) };
+}
+// The paragraph before and after a hit, for showing it in its place.
+function neighbors(h) {
+  const d = row("SELECT par_first, par_last FROM documents WHERE id=?", [h.doc_id]);
+  if (!d || d.par_first === null) return {};
+  const me = row("SELECT seq FROM paragraphs WHERE rowid=?", [h.paragraph_id]);
+  if (!me) return {};
+  const rs = rows("SELECT seq, kind, verse, text FROM paragraphs WHERE rowid BETWEEN ? AND ? AND seq BETWEEN ? AND ? AND kind IN ('verse','para') ORDER BY seq", [d.par_first, d.par_last, me.seq - 1, me.seq + 1]);
+  const before = rs.find((r) => r.seq < me.seq), after = rs.find((r) => r.seq > me.seq);
+  const line = (r) => (r ? { verse: r.verse, text: r.text } : null);
+  return { before: line(before), after: line(after) };
+}
+
+// Talks and chapters, ranked by their best passage (the "Talks and chapters" filter).
+function searchDocuments(q, { scope, speaker, from, to, book, edition, exclude_edition, typeahead, limit, offset, t0 }) {
+  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [] };
+  const cq = baseQuery(q, { scope, speaker, from, to, book, edition, exclude_edition, typeahead });
+  if (!cq.match) { out.ms = 0; return out; }
+  const { where, params } = whereParts(cq);
+  const base = ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id WHERE ${["paragraphs MATCH ?", ...where].join(" AND ")}`;
+  try {
+    const rs = rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume,
+                            c.slug AS collection, b.title AS book_title, COUNT(*) AS hits, MIN(p.rank) AS best ${base} GROUP BY d.id ORDER BY best LIMIT ? OFFSET ?`,
+      [cq.match, ...params, limit, offset]);
+    out.documents = rs.map((r) => ({ ...summary(r), hits: r.hits }));
+    out.total = value(`SELECT COUNT(DISTINCT d.id) ${base}`, [cq.match, ...params]);
+  } catch (err) { out.error = `could not run that query (${err.message})`; }
   out.ms = Math.round((performance.now() - t0) * 10) / 10;
   return out;
 }
 
-// A question, answered in tiers: the exact phrase first, then passages with
-// every idea, then passages with any of them, best matches first within each.
-function naturalSearch(q, { scope, limit, offset, speaker, from, to, book, edition, exclude_edition }) {
-  const fixed = correctTypos(q);
-  const n = naturalQuery(fixed.text, speakersBySurname());
-  if (!n.terms.length) return null;
-  const cq = { collections: scopeCollections(n.scope || scope || "all"), speaker: speaker || n.speaker, yearFrom: from ? Number(from) : n.yearFrom, yearTo: to ? Number(to) : n.yearTo, bookSlug: n.bookSlug, terms: n.terms, edition: edition || null, excludeEdition: exclude_edition || null };
-  if (book) { const ref = S.parseReference(book); if (ref) cq.bookSlug = ref.book.slug; }
-  const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], smart: { terms: n.terms, speaker: cq.speaker, scope: n.scope, book: cq.bookSlug, years: n.yearFrom ? [n.yearFrom, n.yearTo] : null, corrected: fixed.changes } };
-  const seen = new Set();
-  const want = limit + offset;
-  const tiers = [n.phrase, n.strict, n.loose].filter(Boolean).filter((m, i, arr) => arr.indexOf(m) === i);
-  let collected = [];
-  for (const match of tiers) {
-    if (collected.length >= want) break;
-    let rs;
-    try { rs = passageRows(match, cq, want - collected.length + seen.size, 0); } catch (_) { continue; }
-    for (const r of rs) {
-      if (seen.has(r.paragraph_id)) continue;
-      seen.add(r.paragraph_id);
-      collected.push(r);
-    }
-  }
-  const last = tiers[tiers.length - 1];
-  try { out.total = Math.max(collected.length, last ? value(`SELECT COUNT(*) ${baseSql(cq)}`, [last, ...whereParams(cq)]) : 0); } catch (_) { out.total = collected.length; }
-  // Show a corrected word as it is written in the text, not as the index stores it ("charity", not "chariti").
-  for (const c of fixed.changes) {
-    for (const r of collected.slice(0, 30)) {
-      const w = (r.text || "").split(/[^\p{L}'’]+/u).find((x) => x.length >= 3 && stem(x.toLowerCase()) === c.to);
-      if (w) { c.to = w.toLowerCase(); break; }
-    }
-  }
-  for (const r of collected.slice(offset, offset + limit)) {
-    out.hits.push({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse,
-      snippet: r.kind === "verse" ? markTerms(r.text, expandTerms(n.terms)) : highlight(r.snip), citation: citation(r, r.verse) });
-  }
-  if (offset === 0) out.titles = titleMatches(n.terms, cq);
-  if (offset === 0) out.original_hint = transliterationHint(q);
-  return out;
-}
 // A word the library has never seen ("spirt") is swapped for the nearest
 // word it has, measured against the index's own vocabulary; everything else
 // is left exactly as typed.
@@ -492,22 +589,33 @@ function stem(w) {
     return value("SELECT term FROM temp.stemv LIMIT 1") || w;
   } catch (_) { return w; }
 }
-function correctTypos(q) {
+let typoCache = new Map(); // word -> the correction, or null when the word is known or has none
+function correctTypos(q, { typeahead = false } = {}) {
   const changes = [];
-  if (!db || /["']|\w+:/.test(q)) return { text: q, changes };
-  const text = q.replace(/\b([A-Za-z][a-z]{2,})\b/g, (word) => {
+  if (!db || /"|\w+:/.test(q)) return { text: q, changes };
+  const unfinished = typeahead && !/\s$/.test(q);
+  const text = q.replace(/\b([A-Za-z][a-z]{2,})\b/g, (word, _w, at) => {
+    if (unfinished && at + word.length === q.trimEnd().length) return word; // still being typed
     const w = word.toLowerCase();
     if (QUESTION_WORDS_LOCAL.has(w)) return word;
-    let known = true;
-    try { known = !!row("SELECT rowid FROM paragraphs WHERE paragraphs MATCH ? LIMIT 1", [`"${w}"`]); } catch (_) { return word; }
-    if (known) return word;
-    const sw = stem(w);
-    const limit = sw.length >= 6 ? 2 : 1;
-    let best = null, bestD = limit + 1, bestCnt = 0;
-    for (const [term, cnt] of loadVocab()) {
-      if (term[0] !== sw[0] || Math.abs(term.length - sw.length) > limit) continue;
-      const d = editDistance(sw, term);
-      if (d < bestD || (d === bestD && cnt > bestCnt)) { best = term; bestD = d; bestCnt = cnt; }
+    let best;
+    if (typoCache.has(w)) best = typoCache.get(w);
+    else {
+      best = null;
+      let known = true;
+      try { known = !!row("SELECT rowid FROM paragraphs WHERE paragraphs MATCH ? LIMIT 1", [`"${w}"`]); } catch (_) { return word; }
+      if (!known) {
+        const sw = stem(w);
+        const limit = sw.length >= 6 ? 2 : 1;
+        let bestD = limit + 1, bestCnt = 0;
+        for (const [term, cnt] of loadVocab()) {
+          if (term[0] !== sw[0] || Math.abs(term.length - sw.length) > limit) continue;
+          const d = editDistance(sw, term);
+          if (d < bestD || (d === bestD && cnt > bestCnt)) { best = term; bestD = d; bestCnt = cnt; }
+        }
+      }
+      if (typoCache.size > 2000) typoCache = new Map();
+      typoCache.set(w, best);
     }
     if (!best) return word;
     changes.push({ from: word, to: best });
@@ -529,31 +637,55 @@ function whereParts(cq) {
   if (cq.yearFrom) { where.push("d.year >= ?"); params.push(cq.yearFrom); }
   if (cq.yearTo) { where.push("d.year <= ?"); params.push(cq.yearTo); }
   if (cq.bookSlug) { where.push("d.book_slug = ?"); params.push(cq.bookSlug); }
+  if (cq.volume) { where.push("d.volume = ?"); params.push(cq.volume); }
   // An edition or volume by words in its title ("Service Missionaries", "Supplement", "Old Testament 2026").
   if (cq.edition) { where.push("b.title LIKE ?"); params.push(`%${cq.edition}%`); }
   if (cq.excludeEdition) { where.push("(b.title IS NULL OR b.title NOT LIKE ?)"); params.push(`%${cq.excludeEdition}%`); }
   return { where, params };
 }
-function whereParams(cq) { return whereParts(cq).params; }
-function baseSql(cq) {
-  const { where } = whereParts(cq);
-  return ` FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id WHERE ${["paragraphs MATCH ?", ...where].join(" AND ")}`;
-}
-function passageRows(match, cq, limit, offset) {
-  return rows(`SELECT p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
-                      snippet(paragraphs, 0, ?, ?, ' \u2026 ', 48) AS snip, bm25(paragraphs) AS rank,
+// The matching paragraphs, best first. Ranking touches every match, so that
+// pass carries only rowids and ranks (and the joins only when a filter needs
+// them); the text, the snippet and the document come afterwards for the few
+// rows that made the cut.
+const PASSAGE_COLS = `p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
                       d.uri, d.title, d.author, d.author_role, d.year, d.month, d.session, d.date,
-                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title
-               ${baseSql(cq)} ORDER BY rank LIMIT ? OFFSET ?`, [HL_OPEN, HL_CLOSE, match, ...whereParams(cq), limit, offset]);
+                      d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title`;
+const PASSAGE_FROM = " FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id";
+function passageRows(match, cq, limit, offset) {
+  const { where, params } = whereParts(cq);
+  const top = where.length
+    ? rows(`SELECT p.rowid AS id, bm25(paragraphs) AS rank${PASSAGE_FROM} WHERE ${["paragraphs MATCH ?", ...where].join(" AND ")} ORDER BY rank LIMIT ? OFFSET ?`, [match, ...params, limit, offset])
+    : rows("SELECT rowid AS id, bm25(paragraphs) AS rank FROM paragraphs WHERE paragraphs MATCH ? ORDER BY rank LIMIT ? OFFSET ?", [match, limit, offset]);
+  if (!top.length) return [];
+  const ids = top.map((r) => r.id);
+  const marks = new Map();
+  try {
+    for (const r of rows(`SELECT rowid AS id, snippet(paragraphs, 0, ?, ?, ' \u2026 ', 48) AS snip FROM paragraphs WHERE paragraphs MATCH ? AND rowid IN (${ids.map(() => "?").join(",")})`, [HL_OPEN, HL_CLOSE, match, ...ids])) marks.set(r.id, r.snip);
+  } catch (_) { /* no snippets, then; hitOf marks the terms itself */ }
+  const details = new Map(rows(`SELECT ${PASSAGE_COLS}${PASSAGE_FROM} WHERE p.rowid IN (${ids.map(() => "?").join(",")})`, ids).map((r) => [r.paragraph_id, r]));
+  const out = [];
+  for (const t of top) { const r = details.get(t.id); if (r) { r.rank = t.rank; r.snip = marks.get(t.id) ?? null; out.push(r); } }
+  return out;
 }
+// How many paragraphs match, counted without the joins when no filter needs them.
+function countRows(match, cq) {
+  const { where, params } = whereParts(cq);
+  return where.length ? value(`SELECT COUNT(*)${PASSAGE_FROM} WHERE ${["paragraphs MATCH ?", ...where].join(" AND ")}`, [match, ...params]) : value("SELECT COUNT(*) FROM paragraphs WHERE paragraphs MATCH ?", [match]);
+}
+// Titles that carry the search: most of its words, not just one of them
+// ("faith" alone should not bring up Articles of Faith for every question about faith).
 function titleMatches(terms, cq) {
   const titleMatch = terms.map((t) => ftsPhrase(t)).filter(Boolean).join(" OR ");
   if (!titleMatch) return [];
   const { where, params } = whereParts(cq);
+  const need = Math.max(1, Math.ceil(terms.length * 0.6));
+  const stems = terms.map((t) => t.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean);
   try {
     return rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title
                    FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN collections c ON c.id=d.collection_id LEFT JOIN books b ON b.id = d.book_id
-                  WHERE ${["documents_fts MATCH ?", ...where].join(" AND ")} ORDER BY bm25(documents_fts) LIMIT 6`, [`title : (${titleMatch})`, ...params]).map(summary);
+                  WHERE ${["documents_fts MATCH ?", ...where].join(" AND ")} ORDER BY bm25(documents_fts) LIMIT 24`, [`title : (${titleMatch})`, ...params])
+      .filter((r) => { const words = String(r.title || "").toLowerCase().split(/[^\p{L}\p{N}]+/u); return stems.filter((t) => words.some((w) => w.startsWith(t))).length >= need; })
+      .slice(0, 6).map(summary);
   } catch (_) { return []; }
 }
 
@@ -985,28 +1117,134 @@ function finishOriginal(out, occ, info, limit, offset, scope) {
 }
 // "chesed" or "agape" typed into an ordinary search: the lexicon entry it
 // transliterates, so the results can offer the original word.
-let translitMap = null;
+let translitMap = null, lexiconAscii = null;
+function lexiconHasAscii() {
+  if (lexiconAscii === null) { try { lexiconAscii = !!value("SELECT COUNT(*) FROM pragma_table_info('original_lexicon') WHERE name = 'ascii'"); } catch (_) { lexiconAscii = false; } }
+  return lexiconAscii;
+}
 function transliterationHint(q) {
   if (!haveOriginals() || /\d|["':]/.test(String(q || ""))) return null;
   const words = String(q || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
   if (words.length !== 1) return null;
+  const w = words[0];
+  const forms = [...new Set([w, w.replace(/^h/, "ch"), w.replace(/^ch/, "h"), w.replace(/k/g, "q"), w.replace(/ts/g, "tz")])];
+  if (lexiconHasAscii()) {
+    // the library carries the typed form and how common each word is: one indexed lookup
+    const r = row(`SELECT strongs, base, lang, lemma, translit, gloss, occurrences FROM original_lexicon WHERE strongs = base AND ascii IN (${forms.map(() => "?").join(",")}) AND occurrences > 0 ORDER BY occurrences DESC LIMIT 1`, forms);
+    return r ? { strongs: r.base, lang: r.lang, language: langName(r.lang), lemma: r.lemma, translit: r.translit, gloss: r.gloss, count: r.occurrences } : null;
+  }
   if (!translitMap) {
+    // an older library file: every lexicon entry under its ASCII transliteration, read once;
+    // which of several sharing one is meant is decided below, by how often each occurs
     translitMap = new Map();
     try {
-      // the commonest word wins a transliteration several share ("hesed" is the covenant word, not the rare name)
-      const counts = new Map(rows("SELECT substr(strongs, 1, 5) AS b, COUNT(*) AS n FROM original_words WHERE strongs != '' GROUP BY b").map((r) => [r.b, r.n]));
       for (const r of rows("SELECT strongs, base, lang, lemma, translit, gloss FROM original_lexicon WHERE strongs = base AND translit != ''")) {
         const k = asciiTranslit(r.translit);
         if (!k || k.length < 3) continue;
-        const prev = translitMap.get(k);
-        if (!prev || (counts.get(r.base) || 0) > (counts.get(prev.base) || 0)) translitMap.set(k, r);
+        const list = translitMap.get(k);
+        if (list) list.push(r); else translitMap.set(k, [r]);
       }
     } catch (_) { translitMap = new Map(); }
   }
-  const w = words[0];
-  const r = translitMap.get(w) || translitMap.get(w.replace(/^h/, "ch")) || translitMap.get(w.replace(/^ch/, "h")) || translitMap.get(w.replace(/k/g, "q")) || translitMap.get(w.replace(/ts/g, "tz"));
-  if (!r) return null;
-  const count = value("SELECT COUNT(*) FROM original_words WHERE strongs >= ? AND strongs < ?", [r.base, r.base + "~"]) || 0;
-  if (!count) return null;
+  const list = forms.map((f) => translitMap.get(f)).find(Boolean);
+  if (!list) return null;
+  // the commonest word wins a transliteration several share ("hesed" is the covenant word, not the rare name)
+  let best = null, count = 0;
+  for (const r of list.slice(0, 12)) {
+    const n = value("SELECT COUNT(*) FROM original_words WHERE strongs >= ? AND strongs < ?", [r.base, r.base + "~"]) || 0;
+    if (n > count) { best = r; count = n; }
+  }
+  if (!best) return null;
+  const r = best;
   return { strongs: r.base, lang: r.lang, language: langName(r.lang), lemma: r.lemma, translit: r.translit, gloss: r.gloss, count };
+}
+
+// --------------------------------------------------------------- semantic ----
+// The paragraphs' vectors (their sign bits) and the model that embeds a query.
+let bitIndex = null, bitIndexTried = false, docOfIndex = null, scopeMasks = new Map();
+const queryVectors = new Map();
+function embeddingsInfo() { try { return metaValue("embeddings"); } catch (_) { return null; } }
+function haveVectors() {
+  try { return !!value("SELECT 1 FROM sqlite_master WHERE name='vecbits'") && !!embeddingsInfo(); } catch (_) { return false; }
+}
+function semanticStatus() {
+  const info = db ? embeddingsInfo() : null;
+  if (!Sem) return { available: false, ready: false, loaded: false, count: 0, model: null, failed: "the search module did not load" };
+  return { available: !!db && haveVectors() && !!info && info.model === Sem.MODEL.name, ready: Sem.ready(), loaded: !!bitIndex, count: info ? info.count : 0, model: info ? info.model : null, failed: Sem.failed() ? String(Sem.failed().message || Sem.failed()) : null };
+}
+async function loadSemantic(base, progress) {
+  if (!Sem || !haveVectors()) return semanticStatus();
+  await Sem.load({ base, onProgress: (p) => progress && progress({ phase: "model", ...p }) });
+  progress && progress({ phase: "index", loaded: 0, total: 1 });
+  semanticIndex();
+  progress && progress({ phase: "index", loaded: 1, total: 1 });
+  return semanticStatus();
+}
+// Reads every paragraph's bits once per session (a second or two).
+function semanticIndex() {
+  if (bitIndex) return bitIndex;
+  if (bitIndexTried || !Sem || !haveVectors()) return null;
+  bitIndexTried = true;
+  try {
+    const info = embeddingsInfo();
+    const dims = info.dims || Sem.MODEL.dims, bytes = dims >> 3;
+    const n = value("SELECT COUNT(*) FROM vecbits") || 0;
+    if (!n) return null;
+    const ids = new Int32Array(n), bits = new Uint8Array(n * bytes);
+    const st = db.prepare("SELECT paragraph_id, bits FROM vecbits ORDER BY paragraph_id");
+    let i = 0;
+    try {
+      while (st.step() && i < n) {
+        ids[i] = st.get(0);
+        const b = st.get(1);
+        if (b && b.length === bytes) bits.set(b, i * bytes);
+        i++;
+      }
+    } finally { st.finalize(); }
+    bitIndex = new Sem.BitIndex(ids.subarray(0, i), bits.subarray(0, i * bytes), dims);
+    // which document each entry belongs to, for searching one shelf
+    const maxId = value("SELECT MAX(rowid) FROM paragraphs") || 0;
+    const docByRow = new Int32Array(maxId + 1);
+    const st2 = db.prepare("SELECT rowid, document_id FROM paragraphs");
+    try { while (st2.step()) docByRow[st2.get(0)] = st2.get(1); } finally { st2.finalize(); }
+    docOfIndex = new Int32Array(i);
+    for (let k = 0; k < i; k++) docOfIndex[k] = ids[k] <= maxId ? docByRow[ids[k]] : 0;
+    return bitIndex;
+  } catch (err) {
+    console.warn("could not load the meaning index:", err?.message);
+    return null;
+  }
+}
+function scopeMask(cq) {
+  if (!cq.collections.length || !bitIndex) return null;
+  const key = cq.collections.slice().sort().join(",");
+  if (scopeMasks.has(key)) return scopeMasks.get(key);
+  const allowed = new Set(rows(`SELECT d.id FROM documents d JOIN collections c ON c.id = d.collection_id WHERE c.slug IN (${cq.collections.map(() => "?").join(",")})`, cq.collections).map((r) => r.id));
+  const mask = new Uint8Array(bitIndex.size);
+  for (let k = 0; k < mask.length; k++) mask[k] = allowed.has(docOfIndex[k]) ? 1 : 0;
+  scopeMasks.set(key, mask);
+  return mask;
+}
+async function embedQuery(text) {
+  const key = text.trim().toLowerCase();
+  if (queryVectors.has(key)) return queryVectors.get(key);
+  const v = await Sem.embed(text, { query: true });
+  if (queryVectors.size > 200) queryVectors.clear();
+  queryVectors.set(key, v);
+  return v;
+}
+// The k paragraphs nearest the query in meaning, as rows like the word search's, in order.
+async function semanticCandidates(text, cq, k) {
+  const idx = semanticIndex();
+  if (!idx) return null;
+  const qv = await embedQuery(text);
+  const mask = scopeMask(cq);
+  const top = idx.topK(qv, k, mask ? (i) => mask[i] === 1 : null);
+  if (!top.length) return [];
+  const ids = top.map((t) => t.id);
+  const { where, params } = whereParts(cq);
+  const rs = rows(`SELECT ${PASSAGE_COLS}${PASSAGE_FROM} WHERE p.rowid IN (${ids.map(() => "?").join(",")})${where.length ? " AND " + where.join(" AND ") : ""}`, [...ids, ...params]);
+  const order = new Map(ids.map((id, i) => [id, i]));
+  rs.sort((a, b) => order.get(a.paragraph_id) - order.get(b.paragraph_id));
+  return rs;
 }

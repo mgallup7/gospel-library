@@ -21,6 +21,10 @@ on:
         description: "Minutes to spend on the Joseph Smith Papers this run (default 75; 0 to skip)"
         required: false
         default: ""
+      embed_minutes:
+        description: "Minutes to spend embedding paragraphs for search by meaning (default 45)"
+        required: false
+        default: ""
 
 concurrency:
   group: library-sync
@@ -95,6 +99,17 @@ jobs:
         timeout-minutes: 110
         run: python -m gospel_library jsp --minutes "${{ inputs.jsp_minutes || 75 }}"
 
+      # The search model (35 MB), kept between runs; the vectors live in the state.
+      - name: Search model
+        uses: actions/cache@v4
+        with:
+          path: data/model
+          key: search-model-bge-small-en-v1.5-v1
+      - name: Meaning vectors for new paragraphs
+        continue-on-error: true
+        timeout-minutes: 70
+        run: python -m gospel_library embed --minutes "${{ inputs.embed_minutes || 45 }}" --smoke "faith is not to have a perfect knowledge" "what did the prophets say about covenants and identity" "how a missionary can deal with discouragement" "Joseph Smith on the Nauvoo Legion"
+
       - name: Save state for tomorrow
         if: always()
         run: bin/ci-save.sh
@@ -103,6 +118,14 @@ jobs:
         run: |
           mkdir -p site
           cp -R web/. site/
+          # the search model and its runtime, served beside the app (fetched once by a device, kept offline)
+          if [ -f data/model/bge-small-en-v1.5/model_quantized.onnx ]; then
+            mkdir -p site/model site/vendor/ort
+            cp data/model/bge-small-en-v1.5/model_quantized.onnx data/model/bge-small-en-v1.5/vocab.txt site/model/
+            ( cd "$(mktemp -d)" && npm pack onnxruntime-web@1.31.1 >/dev/null 2>&1 && tar xzf onnxruntime-web-*.tgz \
+              && cp package/dist/ort.wasm.min.mjs package/dist/ort-wasm-simd-threaded.mjs package/dist/ort-wasm-simd-threaded.wasm "$GITHUB_WORKSPACE/site/vendor/ort/" )
+            ls -la site/model site/vendor/ort
+          fi
           python -m gospel_library bundle --out site/data | tee bundle.txt
           python -m gospel_library stats | tee stats.txt
           # The numbers, where they can be read without opening the log.

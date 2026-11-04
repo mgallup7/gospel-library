@@ -55,7 +55,7 @@
   // ------------------------------------------------------------- state ----
   const state = {
     q: "", scope: "all", speaker: "", from: "", to: "", book: "", group: "passages",
-    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, view: "home", browse: null, ready: false,
+    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false,
   };
   let searchSeq = 0;
   let typeTimer = null;
@@ -77,7 +77,8 @@
     if (state.pid) p.set("p", state.pid);
     const qs = p.toString();
     if (state.docId) return `#read/${state.docId}${qs ? "?" + qs : ""}`;
-    return qs ? `#search?${qs}` : "#";
+    if (qs) return `#search?${qs}`;
+    return state.browse?.tab ? `#${state.browse.tab}` : "#";
   }
   function push(replace = false) {
     const url = urlFor();
@@ -87,7 +88,9 @@
   function readUrl() {
     const h = location.hash.replace(/^#/, "");
     const m = h.match(/^read\/(\d+)(?:\?(.*))?$/);
-    const qs = m ? (m[2] || "") : h.replace(/^search\??/, "");
+    const shelf = !m && /^[a-z][\w-]*$/.test(h) && !h.startsWith("search") ? h : null;   // #scriptures, #ask, #deck
+    state.browse = shelf ? { tab: shelf } : null;
+    const qs = m ? (m[2] || "") : shelf ? "" : h.replace(/^search\??/, "");
     const p = new URLSearchParams(qs);
     state.q = p.get("q") || "";
     state.scope = p.get("scope") || "all";
@@ -109,7 +112,7 @@
     for (const b of document.querySelectorAll(".scopes button")) b.classList.toggle("on", b.dataset.scope === state.scope);
     const on = $(".scopes button.on");
     if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {} }
-    input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : "Search, or type a reference like Alma 32:21";
+    input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : wide() ? "Search, or type a reference like Alma 32:21" : "Search, or a reference";
     $("#fSpeaker").value = state.speaker;
     $("#fFrom").value = state.from;
     $("#fTo").value = state.to;
@@ -237,8 +240,10 @@
       if (active?.slot && active.slot !== result.slot) call("forget", { slot: active.slot }).catch(() => {});
       banner.remove();
       currentDoc = null;
+      statsCache = null;
       try { window.dispatchEvent(new CustomEvent("library:change")); } catch (_) {}
       render();
+      setTimeout(loadSemantic, 1500);
     } catch (err) {
       label.textContent = `Update failed: ${err.message}`;
       for (const b of banner.querySelectorAll("button")) b.disabled = false;
@@ -250,10 +255,19 @@
     clearTimeout(typeTimer);
     typeTimer = setTimeout(() => runSearch({ typeahead: true }), 120);
   }
+  // Leaving the results (home, a shelf, Ask, Deck): a search still in flight is dropped, and the reader stops marking its words.
+  function leaveSearch() {
+    clearTimeout(typeTimer);
+    searchSeq++;
+    state.lastSearch = null;
+    state.terms = [];
+  }
 
   async function runSearch({ typeahead = false, silent = false, more = false } = {}) {
     const q = state.q.trim();
-    if (q.length < 2) { state.lastSearch = null; renderHome(); if (!silent) push(true); return; }
+    if (q.length < 2) { leaveSearch(); renderHome(); if (!silent) push(true); return; }
+    // "Show more" under a list that came from typing is a fresh, full search: the pages must come from one ranking
+    if (more && (!state.lastSearch || state.lastSearch.typeahead)) more = false;
     if (!more) state.offset = 0;
     const mySeq = ++searchSeq;
     try {
@@ -262,18 +276,21 @@
         speaker: state.speaker, from: state.from, to: state.to, book: state.book, group: state.group,
       });
       if (mySeq !== searchSeq) return;
+      data.typeahead = typeahead;
       if (more && state.lastSearch) {
-        data.hits = state.lastSearch.hits.concat(data.hits);
-        data.documents = state.lastSearch.documents.concat(data.documents);
-        data.titles = state.lastSearch.titles;
-        data.jump = state.lastSearch.jump;
+        const prev = state.lastSearch;
+        data.hits = prev.hits.slice(0, prev.hits.length - (prev.extra || 0)).concat(data.hits);
+        data.documents = prev.documents.concat(data.documents);
+        data.titles = prev.titles;
+        data.jump = prev.jump;
       }
       state.lastSearch = data;
-      state.terms = termsFrom(q);
+      state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
       renderResults(data);
       if (!silent) push(true);
       if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
+      if (mySeq !== searchSeq) return;
       listPane.replaceChildren(el("div", { class: "status error", text: `Search failed: ${e.message}` }));
     }
   }
@@ -291,7 +308,7 @@
     for (const [i, pq] of (plan.queries || []).entries()) {
       if (pq.q.trim().toLowerCase() === q.trim().toLowerCase()) continue;
       try {
-        const r = await api("search", { q: pq.q, scope: pq.scope && pq.scope !== "all" ? pq.scope : state.scope, limit: 10, speaker: state.speaker, from: state.from, to: state.to, book: state.book });
+        const r = await api("search", { q: pq.q, scope: pq.scope && pq.scope !== "all" ? pq.scope : state.scope, limit: 10, light: true, speaker: state.speaker, from: state.from, to: state.to, book: state.book });
         r.hits.forEach((h, rank) => { if (!have.has(h.paragraph_id)) { const prev = extra.get(h.paragraph_id); const score = 1 / (rank + 2 + i); if (prev) prev.score += score; else extra.set(h.paragraph_id, { hit: h, score }); } });
       } catch (_) {}
     }
@@ -300,7 +317,7 @@
     const added = [...extra.values()].sort((a, b) => b.score - a.score).slice(0, 20).map((x) => x.hit);
     if (!added.length) return;
     data.hits = data.hits.concat(added);
-    data.total = Math.max(data.total, data.hits.length);
+    data.extra = added.length;
     data.widened = (plan.queries || []).map((x) => x.q);
     state.lastSearch = data;
     renderResults(data);
@@ -313,7 +330,7 @@
   }
 
   function renderResults(data) {
-    state.view = "results";
+    setOverview(false);
     const frag = document.createDocumentFragment();
     if (data.error) frag.append(el("div", { class: "status error", text: data.error }));
     if (data.jump) {
@@ -324,16 +341,19 @@
       ]));
     }
     if (data.smart) {
+      const sm = data.smart;
       const bits = [];
-      if (data.smart.terms?.length) bits.push(data.smart.terms.join(", "));
-      if (data.smart.speaker) bits.push(`by ${data.smart.speaker}`);
-      if (data.smart.book) bits.push(`in ${data.smart.book.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace("Sections", "D&C")}`);
-      if (data.smart.scope) bits.push(`in ${SCOPE_NAME[data.smart.scope] || data.smart.scope}`);
-      if (data.smart.years) bits.push(data.smart.years[0] === data.smart.years[1] ? String(data.smart.years[0]) : `${data.smart.years[0]} to ${data.smart.years[1]}`);
-      if (data.smart.corrected?.length) bits.push(data.smart.corrected.map((c) => `${c.from} → ${c.to}`).join(", "));
+      if (sm.terms?.length) bits.push(sm.terms.join(", "));
+      if (sm.speaker) bits.push(`by ${sm.speaker}`);
+      if (sm.book) bits.push(`in ${sm.book.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace("Sections", "D&C")}`);
+      if (sm.scope) bits.push(`in ${SCOPE_NAME[sm.scope] || sm.scope}`);
+      if (sm.years) bits.push(sm.years[0] === sm.years[1] ? String(sm.years[0]) : `${sm.years[0]} to ${sm.years[1]}`);
+      if (sm.corrected?.length) bits.push(sm.corrected.map((c) => `${c.from} → ${c.to}`).join(", "));
+      if (!sm.scope && !sm.book && state.scope === "all") bits.push("all shelves");
+      const how = `${sm.exact ? "Exact phrase found, then " : ""}${sm.semantic ? "by words and meaning" : "by words"}`;
       const line = el("div", { class: "smart-line" }, [
-        el("span", { text: `Reading this as: ${bits.join(" · ")}` }),
-        el("button", { type: "button", class: "text-btn small", text: "Exact words", onclick: () => { state.q = `"${data.query.trim()}"`; syncControls(); runSearch({ typeahead: false }); } }),
+        el("span", { text: `${how.charAt(0).toUpperCase() + how.slice(1)}: ${bits.join(" · ") || data.query}` }),
+        /^".*"$/.test(data.query.trim()) ? null : el("button", { type: "button", class: "text-btn small", text: "Only exact words", onclick: () => { state.q = `"${data.query.trim().replace(/"/g, "")}"`; syncControls(); runSearch({ typeahead: false }); } }),
       ]);
       if (data.widened) line.append(el("span", { class: "widened", text: ` · Claude also searched: ${data.widened.join("; ")}` }));
       frag.append(line);
@@ -346,7 +366,8 @@
     }
     const total = data.total || 0;
     if (data.hits.length || data.documents.length) {
-      frag.append(el("div", { class: "group-title", text: `${total.toLocaleString()} ${state.group === "documents" ? "talks and chapters" : "passages"}${data.ms ? ` in ${data.ms} ms` : ""}` }));
+      const whole = data.lexical_total && data.lexical_total > total ? ` · ${data.lexical_total.toLocaleString()} with these words` : "";
+      frag.append(el("div", { class: "group-title", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}${whole}` }));
     } else if (!data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty" }, [
         el("div", { text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, a different spelling, or ask the question instead:` }),
@@ -354,10 +375,10 @@
       ]));
     }
     if (state.group === "documents") for (const d of data.documents) frag.append(docRow(d, d.hits));
-    else for (const h of data.hits) frag.append(hitRow(h));
-    const shown = state.group === "documents" ? data.documents.length : data.hits.length;
+    else data.hits.forEach((h, i) => frag.append(i === 0 && !data.original && (h.before || h.after || h.why === "exact") ? bestCard(h) : hitRow(h)));
+    const shown = state.group === "documents" ? data.documents.length : data.hits.length - (data.extra || 0);
     if (shown < total) {
-      frag.append(el("button", { class: "more", text: `Show more (${(total - shown).toLocaleString()} left)`, onclick: () => { state.offset = shown; runSearch({ more: true, silent: true }); } }));
+      frag.append(el("button", { class: "more", text: data.typeahead ? `All ${total.toLocaleString()}` : `Show more (${(total - shown).toLocaleString()} left)`, onclick: () => { state.offset = shown; runSearch({ more: true, silent: true }); } }));
     }
     listPane.replaceChildren(frag);
     listPane.scrollTop = 0;
@@ -365,31 +386,67 @@
   }
   function scopeLabel() { return state.scope === "all" ? "" : ` in ${SCOPE_NAME[state.scope] || state.scope}`; }
 
-  function hitRow(h) {
-    const row = el("div", { class: "hit-row" }, [
-      el("button", { class: "hit", "data-doc": h.doc_id, "data-pid": h.pid, onclick: () => openDoc(h.doc_id, h.pid) }, [
-        el("div", { class: "cite", text: h.citation }),
-        el("div", { class: "snip", html: h.snippet }),
-        el("div", { class: "where", text: h.collection === "general-conference" ? [h.session, h.label].filter(Boolean).join(", ") : h.label }),
+  // The best hit, in its place: the passage before and after it, and what to do with it.
+  function bestCard(h) {
+    const card = el("div", { class: "best", "data-doc": h.doc_id }, [
+      el("div", { class: "best-head" }, [el("span", { class: "best-label", text: h.why === "exact" ? "Best match · the phrase as typed" : "Best match" }), el("span", { class: "best-where", text: whereOf(h) })]),
+      h.before ? el("div", { class: "ctx", text: `${h.before.verse ? h.before.verse + " " : ""}${h.before.text}` }) : null,
+      el("div", { class: "best-text" }, [el("b", { class: "best-cite", text: h.citation }), el("span", { html: h.snippet })]),
+      h.after ? el("div", { class: "ctx", text: `${h.after.verse ? h.after.verse + " " : ""}${h.after.text}` }) : null,
+      el("div", { class: "best-actions" }, [
+        el("button", { type: "button", class: "primary", text: h.collection === "scriptures" ? "Open the chapter" : "Open", onclick: () => openDoc(h.doc_id, h.pid) }),
+        el("button", { type: "button", class: "text-btn", text: window.Deck?.has(h.doc_id, h.pid) ? "On the deck" : "+ Deck", onclick: (e) => addHit(h, e.currentTarget) }),
+        el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => startPresentingUnits([{ text: h.text, kind: h.kind, where: h.citation, doc_id: h.doc_id }]) }),
+        h.more && h.more.length ? moreToggle(h) : null,
       ]),
-      el("button", { class: "add", "aria-label": "Add to deck", title: "Add to deck", text: window.Deck?.has(h.doc_id, h.pid) ? "\u2713" : "+", onclick: async (e) => {
-        e.stopPropagation();
-        const btn = e.currentTarget;
-        if (window.Deck?.has(h.doc_id, h.pid)) { window.Deck.remove(h.doc_id, h.pid); btn.textContent = "+"; toast("Taken off the deck."); return; }
-        // The snippet is a search excerpt; the deck wants the whole verse or paragraph.
-        let text = el("div", { html: h.snippet }).textContent, verses = null;
-        try {
-          const ctx = await api("context", { doc_id: h.doc_id, pid: h.pid, before: 0, after: 0 });
-          if (ctx?.paragraphs?.length) {
-            text = ctx.paragraphs.map((x) => x.text).join(" ");
-            const vs = ctx.paragraphs.filter((x) => x.kind === "verse" && x.verse);
-            if (vs.length) verses = vs.map((x) => ({ n: x.verse, text: x.text }));
-          }
-        } catch (_) { /* the snippet will do */ }
-        window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: true });
-        btn.textContent = "\u2713";
-        if (!wide()) toast("On the deck.");
-      } }),
+    ]);
+    return card;
+  }
+  function whereOf(h) { return h.collection === "general-conference" ? [h.session, h.label].filter(Boolean).join(", ") : h.label; }
+  // "4 more in Alma 32": the other hits from the same chapter or talk, shown on request.
+  function moreToggle(h) {
+    const btn = el("button", { type: "button", class: "text-btn more-in", text: `${h.more.length} more in ${shortTitle(h)} ›` });
+    btn.addEventListener("click", () => {
+      const holder = btn.closest(".hit-row, .best");
+      let list = holder.nextElementSibling;
+      if (list && list.classList.contains("more-list")) { list.remove(); btn.textContent = `${h.more.length} more in ${shortTitle(h)} ›`; return; }
+      list = el("div", { class: "more-list" }, h.more.map((m) => hitRow(m, { nested: true })));
+      holder.after(list);
+      btn.textContent = `Hide the other ${h.more.length} ⌃`;
+    });
+    return btn;
+  }
+  function shortTitle(h) {
+    if (h.collection === "scriptures") return h.citation.replace(/:\d.*$/, "");
+    if (h.collection === "general-conference") return "this talk";
+    return h.title.length > 36 ? "this page" : h.title;
+  }
+  async function addHit(h, btn) {
+    if (window.Deck?.has(h.doc_id, h.pid)) { window.Deck.remove(h.doc_id, h.pid); btn.textContent = btn.classList.contains("add") ? "+" : "+ Deck"; toast("Taken off the deck."); return; }
+    // The snippet is a search excerpt; the deck wants the whole verse or paragraph.
+    let text = h.text || el("div", { html: h.snippet }).textContent, verses = null;
+    try {
+      const ctx = await api("context", { doc_id: h.doc_id, pid: h.pid, before: 0, after: 0 });
+      if (ctx?.paragraphs?.length) {
+        text = ctx.paragraphs.map((x) => x.text).join(" ");
+        const vs = ctx.paragraphs.filter((x) => x.kind === "verse" && x.verse);
+        if (vs.length) verses = vs.map((x) => ({ n: x.verse, text: x.text }));
+      }
+    } catch (_) { /* the text will do */ }
+    window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: true });
+    btn.textContent = btn.classList.contains("add") ? "\u2713" : "On the deck";
+    if (!wide()) toast("On the deck.");
+  }
+  function hitRow(h, { nested = false } = {}) {
+    const row = el("div", { class: "hit-row" + (nested ? " nested" : "") }, [
+      el("div", { class: "hit-main" }, [
+        el("button", { class: "hit", "data-doc": h.doc_id, "data-pid": h.pid, onclick: () => openDoc(h.doc_id, h.pid) }, [
+          el("div", { class: "cite" }, [el("span", { text: h.citation }), el("span", { class: "where", text: h.why === "meaning" ? `by meaning · ${whereOf(h)}` : whereOf(h) })]),
+          el("div", { class: "snip", html: h.snippet }),
+        ]),
+        h.more && h.more.length && !nested ? moreToggle(h) : null,
+      ]),
+      el("button", { class: "add", "aria-label": "Add to deck", title: "Add to deck", text: window.Deck?.has(h.doc_id, h.pid) ? "\u2713" : "+", onclick: (e) => { e.stopPropagation(); addHit(h, e.currentTarget); } }),
     ]);
     return row;
   }
@@ -408,37 +465,56 @@
   }
 
   // -------------------------------------------------------------- home ----
+  // The shelf a tile stands for, and what it says underneath.
+  // [key, title, what it says underneath on a wide screen, and on a phone]
+  const SHELVES = [
+    ["scriptures", "Scriptures", (st) => `${st.verses.toLocaleString()} verses, with footnotes${st.originals ? "; Hebrew and Greek under every Bible verse" : ""}`, (st) => st.originals ? "With Hebrew and Greek" : "With footnotes"],
+    ["conference", "General Conference", (st) => st.talks ? `${st.talks.toLocaleString()} talks, 1971 to ${latestName(st)}` : "Arrives with the nightly build", (st) => st.talks ? `1971 to ${latestName(st, true)}` : "Arriving nightly"],
+    ["preach-my-gospel", "Preach My Gospel", () => "2023 edition", () => "2023 edition"],
+    ["missionary-standards", "Missionary Standards", () => "The booklet, its supplement, the service missionary edition", () => "All three editions"],
+    ["handbook", "General Handbook", (st) => `${count(st, "handbook")} chapters`, (st) => `${count(st, "handbook")} chapters`],
+    ["come-follow-me", "Come, Follow Me", () => "This year and last", () => "This year and last"],
+    ["manuals", "Manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
+    ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
+    ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Arriving, a series a night"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Arriving nightly"],
+  ];
+  function jspPages(st) { return st.collections.filter((c) => c.slug.startsWith("jsp-")).reduce((a, c) => a + c.docs, 0); }
+  function latestName(st, short = false) {
+    const l = st.latest_conference;
+    if (!l) return "today";
+    const m = monthName(l.month);
+    return `${short ? m.slice(0, 3) : m} ${l.year}`;
+  }
+  function count(st, slug) { return (st.collections.find((c) => c.slug === slug) || {}).docs || 0; }
+  // a shelf with nothing on it yet stays off the home screen (the conference shelf and the Papers say what is coming)
+  function hasShelf(st, key) {
+    if (key === "jsp") return st.collections.some((c) => c.slug.startsWith("jsp-") && c.docs > 0);
+    if (key === "conference") return true;
+    return count(st, key) > 0;
+  }
+  const TAB_TITLE = Object.fromEntries(SHELVES.map(([k, t]) => [k, t]));
+
+  let statsCache = null;
+  async function libraryStats() { if (!statsCache) statsCache = await api("stats"); return statsCache; }
+
   async function renderHome() {
-    state.view = "home";
+    const tab = state.browse?.tab || null;
+    setOverview(!tab);
     const frag = document.createDocumentFragment();
-    frag.append(el("div", { class: "status", id: "homeStatus", text: "" }));
-    const tabs = el("div", { class: "shelf", id: "homeTabs" });
-    const sections = [["ask", "Ask"], ["deck", "Deck"], ["conference", "Latest conference"], ["scriptures", "Scriptures"], ["preach-my-gospel", "Preach My Gospel"], ["missionary-standards", "Missionary Standards"], ["come-follow-me", "Come, Follow Me"], ["handbook", "Handbook"], ["manuals", "Manuals"], ["study-helps", "Study helps"], ["jsp", "JS Papers"]];
-    for (const [key, label] of sections) {
-      tabs.append(el("button", { class: "chip" + ((state.browse?.tab || "conference") === key ? " on" : ""), text: label, onclick: () => {
-        state.browse = { tab: key };
-        if (TAB_SCOPE[key]) { state.scope = TAB_SCOPE[key]; syncControls(); }
-        renderHome();
-      } }));
-    }
-    frag.append(tabs);
-    const body = el("div", { id: "homeBody" });
+    const body = el("div", { id: "homeBody", class: "home" + (tab ? "" : " overview") });
     frag.append(body);
     listPane.replaceChildren(frag);
+    let st;
+    try { st = await libraryStats(); }
+    catch (e) { body.append(el("div", { class: "status error", text: `The library is not answering (${e.message}).` })); return; }
     try {
-      const s = await api("stats");
-      const built = s.meta?.bundle?.built_at ? new Date(s.meta.bundle.built_at) : null;
-      const when = built ? `Library built ${built.toLocaleDateString([], { month: "short", day: "numeric" })}.` : "";
-      $("#homeStatus").textContent = `${s.verses.toLocaleString()} verses and ${s.talks.toLocaleString()} talks on this device. ${when}`;
-    } catch (e) {
-      $("#homeStatus").textContent = `The library is not answering (${e.message}).`;
-      $("#homeStatus").classList.add("error");
-      return;
-    }
-    const tab = state.browse?.tab || "conference";
-    try {
-      if (tab === "ask") { window.Ask?.render(body); return; }
+      if (!tab) return renderOverview(body, st);
+      if (tab === "ask") { const q = state.browse.question; state.browse = { tab: "ask" }; window.Ask?.render(body, q ? { question: q } : {}); return; }
       if (tab === "deck") { window.Deck?.render(body); return; }
+      body.append(el("div", { class: "home-head" }, [
+        el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => { state.browse = null; state.scope = "all"; syncControls(); renderHome(); push(); } }),
+        el("h2", { text: TAB_TITLE[tab] || tab }),
+      ]));
       if (tab === "conference") await browseConference(body);
       else if (tab === "scriptures") await browseScriptures(body);
       else if (tab === "jsp") await browseJsp(body);
@@ -446,6 +522,61 @@
     } catch (e) {
       body.append(el("div", { class: "status error", text: e.message }));
     }
+  }
+  function setOverview(on) { document.body.classList.toggle("overview", !!on); }
+  function openShelf(key) {
+    leaveSearch();
+    state.q = ""; syncControls();
+    state.browse = { tab: key };
+    if (TAB_SCOPE[key]) { state.scope = TAB_SCOPE[key]; syncControls(); }
+    renderHome();
+    push();
+  }
+
+  // The home screen: where you were, the shelves, the latest conference, a word about Ask.
+  async function renderOverview(body, st) {
+    const last = store.get("lastRead");
+    const deckN = window.Deck?.count ? window.Deck.count() : 0;
+    if (last || deckN) {
+      const sec = el("section", { class: "home-sec sec-continue" }, [el("h2", { text: "Continue" })]);
+      if (last) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openDoc(last.id, last.pid || null) }, [
+        el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: last.title }), el("span", { class: "hc-s", text: [last.where, last.verse ? `at verse ${last.verse}` : null].filter(Boolean).join(" · ") })]), el("span", { class: "hc-go", text: "›" })]));
+      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => { state.browse = { tab: "deck" }; renderHome(); showList(); push(); } }, [
+        el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
+      body.append(sec);
+    }
+    const shelves = el("section", { class: "home-sec sec-shelves" }, [el("div", { class: "home-sec-head" }, [el("h2", { text: "Shelves" }), el("span", { class: "hint", text: "Open one to browse it; the search box then searches only that shelf" })])]);
+    const grid = el("div", { class: "shelf-grid" });
+    for (const [key, title, sub, short] of SHELVES) {
+      if (!hasShelf(st, key) && key !== "jsp") continue;
+      grid.append(el("button", { type: "button", class: "shelf-tile", onclick: () => openShelf(key) }, [el("span", { class: "st-t", text: title }), el("span", { class: "st-s", text: (wide() ? sub : short)(st) })]));
+    }
+    shelves.append(grid);
+    body.append(shelves);
+    try {
+      const latest = await api("recent");
+      if (latest.conference && latest.talks.length) {
+        const sec = el("section", { class: "home-sec sec-latest" }, [el("div", { class: "home-sec-head" }, [el("h2", { text: `Latest conference · ${latest.conference.title}` }), el("button", { type: "button", class: "text-btn small", text: "All sessions", onclick: () => openShelf("conference") })])]);
+        const list = el("div", { class: "home-list" });
+        for (const t of latest.talks.slice(0, 6)) list.append(el("button", { class: "toc-row", "data-doc": t.id, onclick: () => openDoc(t.id, null) }, [el("div", { class: "t", text: t.title }), el("div", { class: "s", text: [t.author, t.session].filter(Boolean).join(" · ") })]));
+        if (latest.talks.length > 6) list.append(el("button", { class: "toc-row more-talks", onclick: () => openShelf("conference") }, [el("div", { class: "t", text: `All ${latest.talks.length} talks ›` })]));
+        sec.append(list);
+        body.append(sec);
+      }
+    } catch (_) { /* no conference yet */ }
+    if (window.Ask) {
+      const q = el("input", { type: "text", class: "ask-teaser-q", placeholder: "What have the prophets taught about covenants and identity?", "aria-label": "A question for the library" });
+      const go = () => { state.browse = { tab: "ask", question: q.value.trim() }; state.q = ""; syncControls(); renderHome(); showList(); push(); };
+      q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+      body.append(el("section", { class: "home-sec sec-ask ask-teaser" }, [
+        el("div", { class: "hc-t", text: "Ask the library" }),
+        el("div", { class: "hc-s", text: "A question or a draft: Claude searches these shelves itself and answers with the passages, which you can open, present, or put on the deck." }),
+        el("div", { class: "ask-teaser-row" }, [q, el("button", { type: "button", class: "primary", text: "Ask", onclick: go })]),
+      ]));
+    }
+    const built = st.meta?.bundle?.built_at ? new Date(st.meta.bundle.built_at) : null;
+    const sem = await semanticNote();
+    body.append(el("div", { class: "home-foot", id: "homeStatus", text: `${built ? `Library built ${built.toLocaleDateString([], { month: "short", day: "numeric" })} · ` : ""}${st.documents.toLocaleString()} pages on this device · works offline${sem ? ` · ${sem}` : ""}` }));
   }
 
   async function browseConference(body) {
@@ -552,6 +683,8 @@
       renderDoc(currentDoc);
     }
     focusParagraph(state.pid);
+    const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(state.pid || "") ? Number(state.pid.slice(1)) : null;
+    store.set("lastRead", { id: currentDoc.id, title: currentDoc.title, where: crumbFor(currentDoc), pid: state.pid || null, verse });
   }
 
   function renderDoc(doc) {
@@ -578,7 +711,26 @@
       doc.next ? el("button", { text: `${doc.next.title} ›`, onclick: () => openDoc(doc.next.id, null) }) : el("span"),
     ]);
     const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
-    readerPane.replaceChildren(bar, body, nav, foot);
+    // On a phone the tools sit at the bottom, under the thumb; the top bar keeps the way back and the crumb.
+    const sizeRow = el("div", { class: "size-row", hidden: true }, [
+      el("span", { text: "Text size" }),
+      el("button", { type: "button", "aria-label": "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
+      el("button", { type: "button", "aria-label": "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
+    ]);
+    const rfoot = el("div", { class: "reader-foot" }, [
+      footBtn("Present", ICON_PRESENT, () => startPresenting()),
+      el("span", { class: "slot-orig" }),
+      footBtn("Text size", "<span class='glyph' style='font-size:20px;font-weight:700'>A</span>", (e) => { sizeRow.hidden = !sizeRow.hidden; e.currentTarget.classList.toggle("on", !sizeRow.hidden); }),
+      footBtn("To deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
+        const units = selectedUnits();
+        if (!units.length) { toast("Tap a verse or paragraph to select it, then To deck."); return; }
+        const added = window.Deck?.addFromDoc(currentDoc, units);
+        clearSelection();
+        toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck." : `${added} passages on the deck.`);
+      }),
+      el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
+    ]);
+    readerPane.replaceChildren(bar, body, nav, foot, sizeRow, rfoot);
     readerPane.scrollTop = 0;
     body.addEventListener("click", onBodyClick);
     body.addEventListener("click", onSelectClick);
@@ -588,6 +740,10 @@
       if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
     });
     highlightTerms(body);
+  }
+
+  function footBtn(label, icon, onclick) {
+    return el("button", { type: "button", class: "foot-btn", "aria-label": label, onclick }, [el("span", { class: "ic", html: icon }), el("span", { class: "lb", text: label })]);
   }
 
   // Tap a verse or paragraph to select it for the deck; a bar offers what to do with the selection.
@@ -628,7 +784,8 @@
         el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
         el("button", { type: "button", class: "text-btn", text: "Clear", onclick: clearSelection }),
       ]);
-      readerPane.append(bar);
+      const rf = $(".reader-foot", readerPane);
+      if (rf) rf.before(bar); else readerPane.append(bar);
     }
     $(".n", bar).textContent = `${n} selected`;
   }
@@ -922,10 +1079,10 @@
   for (const b of document.querySelectorAll(".scopes button")) {
     b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
   }
-  $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.docId = null; state.pid = null; state.browse = null; state.scope = "all"; syncControls(); renderHome(); showList(); push(); });
+  $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; leaveSearch(); state.q = ""; state.docId = null; state.pid = null; state.browse = null; state.scope = "all"; syncControls(); renderHome(); showList(); push(); });
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
-  $("#askBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.browse = { tab: "ask" }; syncControls(); renderHome(); showList(); push(); });
-  $("#deckBtn").addEventListener("click", () => { if (!state.ready) return; state.q = ""; state.browse = { tab: "deck" }; syncControls(); renderHome(); showList(); push(); });
+  $("#askBtn").addEventListener("click", () => { if (!state.ready) return; leaveSearch(); state.q = ""; state.browse = { tab: "ask" }; syncControls(); renderHome(); showList(); push(); });
+  $("#deckBtn").addEventListener("click", () => { if (!state.ready) return; leaveSearch(); state.q = ""; state.browse = { tab: "deck" }; syncControls(); renderHome(); showList(); push(); });
   const applyFilters = () => {
     if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
@@ -958,6 +1115,31 @@
   const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
+
+  // Search by meaning: the model (35 MB, once) and the paragraphs' vectors load
+  // quietly after the library is open; until then search goes by words alone.
+  let semState = null;
+  async function semanticNote() {
+    try { semState = await api("semanticStatus", {}); } catch (_) { return ""; }
+    return semState.available && semState.ready ? "search by meaning is on" : "";
+  }
+  async function loadSemantic() {
+    try { semState = await api("semanticStatus", {}); } catch (_) { return; }
+    if (!semState.available || semState.ready) return;
+    // the home screen's footer line shows the download, then that meaning search is on
+    const note = (text) => { const f = $("#homeStatus"); if (!f) return; if (!f.dataset.base) f.dataset.base = f.textContent; f.textContent = text ? `${f.dataset.base} · ${text}` : f.dataset.base; };
+    try {
+      await call("loadSemantic", { base: new URL("./", BASE).href }, (p) => {
+        if (p.phase === "model" && p.total) note(`getting the search model (${mb(p.loaded)} of ${mb(p.total)}, once)…`);
+        else if (p.phase === "index") note("preparing search by meaning…");
+      });
+      semState = await api("semanticStatus", {});
+      note(semState.ready ? "search by meaning is on" : "");
+    } catch (err) {
+      note("");
+      console.warn("search by meaning is off:", err?.message);
+    }
+  }
 
   // The owner's private writing skills, published sealed beside the library
   // and unlocked with the same passphrase; kept on the device until the
@@ -1015,5 +1197,6 @@
     if (!state.q && !state.docId && wide()) input.focus();
     setTimeout(checkForUpdate, 1500);
     setTimeout(loadSkills, 400);
+    setTimeout(loadSemantic, 2500);
   })();
 })();

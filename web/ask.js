@@ -121,9 +121,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   };
 
   // --------------------------------------------------------------- render --
-  function render(container) {
+  let handed = null; // a question typed on the home screen, asked as soon as the tab can
+  function render(container, { question = null } = {}) {
     view = container;
     container.replaceChildren();
+    if (question) handed = question;
     if (!settings.key) { renderKeySetup(container); return; }
     const box = el("div", { class: "ask" });
     const modes = el("div", { class: "seg ask-mode" }, [
@@ -152,6 +154,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     gear.addEventListener("click", () => renderSettings(container));
     box.append(el("div", { class: "ask-top" }, [modes, gear]), input, el("div", { class: "ask-actions" }, [go, el("button", { type: "button", class: "text-btn", text: "New thread", onclick: () => { thread = []; log.replaceChildren(); } })]), hint, log);
     container.append(box);
+    if (handed) { input.value = handed; handed = null; submit(input, modes, log); return; }
     if (GL().wide) input.focus();
   }
 

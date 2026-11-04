@@ -57,7 +57,7 @@ FILES = {
 
 # Bumped whenever the tables or the way they are filled change, so a library
 # loaded by an older version of this module is reloaded by the next sync.
-FORMAT = 3
+FORMAT = 4
 
 # STEP's three-letter book codes to the library's book slugs.
 BOOKS = {
@@ -115,9 +115,12 @@ CREATE TABLE IF NOT EXISTS original_lexicon(
   type TEXT,
   gloss TEXT,
   definition TEXT,
-  relation TEXT
+  relation TEXT,
+  ascii TEXT,              -- the transliteration as someone would type it ("agape", "chesed")
+  occurrences INTEGER      -- how many words of the text carry this number (its base), for ranking shared transliterations
 );
 CREATE INDEX IF NOT EXISTS original_lexicon_base ON original_lexicon(base);
+CREATE INDEX IF NOT EXISTS original_lexicon_ascii ON original_lexicon(ascii);
 -- What each grammar code means, in words (STEP's expansions of the codes).
 CREATE TABLE IF NOT EXISTS original_morph(
   code TEXT PRIMARY KEY,
@@ -386,8 +389,8 @@ def ingest(conn: sqlite3.Connection, source: Path, *, force: bool = False) -> di
             log.info("reading %s", path.name)
             rows = list(parse_lexicon(path, lang))
             conn.executemany(
-                "INSERT OR REPLACE INTO original_lexicon(strongs, base, lang, lemma, translit, type, gloss, definition, relation) VALUES (?,?,?,?,?,?,?,?,?)",
-                [(r["strongs"], r["base"], r["lang"], r["lemma"], r["translit"], r["type"], r["gloss"], r["definition"], r["relation"]) for r in rows],
+                "INSERT OR REPLACE INTO original_lexicon(strongs, base, lang, lemma, translit, type, gloss, definition, relation, ascii) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [(r["strongs"], r["base"], r["lang"], r["lemma"], r["translit"], r["type"], r["gloss"], r["definition"], r["relation"], ascii_translit(r["translit"])) for r in rows],
             )
             # a plain number looks up its first entry
             seen = set()
@@ -395,10 +398,12 @@ def ingest(conn: sqlite3.Connection, source: Path, *, force: bool = False) -> di
                 if r["base"] not in seen and r["base"] != r["strongs"]:
                     seen.add(r["base"])
                     conn.execute(
-                        "INSERT OR IGNORE INTO original_lexicon(strongs, base, lang, lemma, translit, type, gloss, definition, relation) VALUES (?,?,?,?,?,?,?,?,?)",
-                        (r["base"], r["base"], r["lang"], r["lemma"], r["translit"], r["type"], r["gloss"], r["definition"], r["relation"]),
+                        "INSERT OR IGNORE INTO original_lexicon(strongs, base, lang, lemma, translit, type, gloss, definition, relation, ascii) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (r["base"], r["base"], r["lang"], r["lemma"], r["translit"], r["type"], r["gloss"], r["definition"], r["relation"], ascii_translit(r["translit"])),
                     )
             entries += len(rows)
+    # how common each number is, so a transliteration several words share goes to the usual one
+    conn.execute("UPDATE original_lexicon SET occurrences = (SELECT COUNT(*) FROM original_words w WHERE w.strongs >= original_lexicon.base AND w.strongs < original_lexicon.base || '~')")
     morphs = 0
     for group, lang in (("morph_hebrew", "he"), ("morph_greek", "gr")):
         for path in _files(source, group):

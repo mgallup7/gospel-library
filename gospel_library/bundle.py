@@ -20,6 +20,7 @@ import base64
 import gzip
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import struct
@@ -29,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
+
+log = logging.getLogger("gospel.bundle")
 from .db import counts as db_counts
 
 MAGIC = b"GLIB1\n"
@@ -187,9 +190,21 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
                  (json.dumps({"version": version, "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}),))
     conn.commit()
     orig_row = conn.execute("SELECT value FROM meta WHERE key='originals'").fetchone()
+    emb_row = conn.execute("SELECT value FROM meta WHERE key='embeddings'").fetchone()
     compact = out_dir / "library.compact.sqlite"
     compact.unlink(missing_ok=True)
     conn.execute("VACUUM INTO ?", (str(compact),))
+    # The device gets each vector's sign bits, not the vectors themselves.
+    if emb_row:
+        from . import embed
+        cc = sqlite3.connect(compact)
+        try:
+            if cc.execute("SELECT 1 FROM sqlite_master WHERE name='vectors'").fetchone():
+                n = embed.pack_bits(cc)
+                cc.execute("VACUUM")
+                log.info("%d paragraph vectors packed as bits", n)
+        finally:
+            cc.close()
     conn.close()
 
     extra = {"version": version, "kind": "library"}
@@ -212,6 +227,8 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
     }
     if orig_row:
         manifest["originals"] = json.loads(orig_row[0])
+    if emb_row:
+        manifest["embeddings"] = json.loads(emb_row[0])
     if skills_path.exists():
         json.loads(skills_path.read_text(encoding="utf-8"))  # must be valid JSON before it is sealed
         sh = encrypt_file(skills_path, out_dir / "skills.bin", passphrase, extra={"kind": "skills"})
