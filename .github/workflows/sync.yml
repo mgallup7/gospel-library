@@ -90,7 +90,7 @@ jobs:
       # A little of the Joseph Smith Papers each night, within a time budget;
       # what is not reached tonight comes on a later night.
       - name: Joseph Smith Papers
-        if: inputs.jsp_minutes != '0'
+        if: github.event_name != 'workflow_dispatch' || inputs.jsp_minutes != '0'
         continue-on-error: true
         timeout-minutes: 110
         run: python -m gospel_library jsp --minutes "${{ inputs.jsp_minutes || 75 }}"
