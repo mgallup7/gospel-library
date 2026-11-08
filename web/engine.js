@@ -557,6 +557,29 @@ function prior(hit, scoped) {
   return p;
 }
 
+// A short prefix typed ("fai", "the lo") would make the index walk every term that starts
+// with it; instead the vocabulary (already in memory for the spell-corrector) names the
+// most common words that do, and the query asks for those, so a keystroke costs the same
+// as a word. Longer prefixes are left to the index, which handles them well.
+const PREFIX_WORDS = 12;
+function expandPrefix(match) {
+  const m = /"([^"]*)"\*$/.exec(match);
+  if (!m) return match;
+  const parts = m[1].split(/\s+/).filter(Boolean);
+  const last = parts[parts.length - 1];
+  if (!last || last.length > 4 || last.length < 2) return match;
+  let candidates = [];
+  try { candidates = loadVocab().filter(([t]) => t.startsWith(last)).sort((a, b) => b[1] - a[1]).slice(0, PREFIX_WORDS).map(([t]) => t); } catch (_) { return match; }
+  if (!candidates.length) return match;
+  if (!candidates.includes(last) && candidates.length >= PREFIX_WORDS) candidates[candidates.length - 1] = last; // the word itself, if it is one
+  const head = parts.slice(0, -1).join(" ");
+  const alts = candidates.map((t) => `"${head ? head + " " : ""}${t}"`);
+  // FTS5 takes two phrases side by side as AND, but not a phrase beside a group: say AND
+  const before = match.slice(0, m.index).trimEnd();
+  const glue = !before ? "" : /\b(OR|AND|NOT)$|\($/.test(before) ? " " : " AND ";
+  return before + glue + `(${alts.join(" OR ")})`;
+}
+
 function baseQuery(q, { scope, speaker, from, to, book, edition, exclude_edition, typeahead }) {
   // the compiled query also carries any explicit syntax (quotes, -word, speaker:, year:, in:)
   const cq = compileQuery(q, { typeahead, scope: VOLUMES[scope] ? "scriptures" : scope });
@@ -600,6 +623,7 @@ async function rankedSearch(q, opts) {
   }
   const terms = (n ? n.terms : cq.terms) || [];
   if (!cq.match && !terms.length) return out;
+  if (typeahead && cq.match) cq.match = expandPrefix(cq.match);
   const words = cq.terms && cq.terms.length ? expandTerms(cq.terms) : [];
 
   // 1. The exact phrase as typed, when the query is plain words (no question around them).
