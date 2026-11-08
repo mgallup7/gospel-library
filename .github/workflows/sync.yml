@@ -110,10 +110,6 @@ jobs:
         timeout-minutes: 70
         run: python -m gospel_library embed --minutes "${{ inputs.embed_minutes || 45 }}" --smoke "faith is not to have a perfect knowledge" "what did the prophets say about covenants and identity" "how a missionary can deal with discouragement" "Joseph Smith on the Nauvoo Legion"
 
-      - name: Save state for tomorrow
-        if: always()
-        run: bin/ci-save.sh
-
       - name: Build the device bundle
         run: |
           mkdir -p site
@@ -132,6 +128,12 @@ jobs:
           echo "::notice title=Library built::$(cat bundle.txt)"
           while IFS= read -r line; do echo "::notice title=Collection::$line"; done < <(grep -E "^  [A-Z].* pages " stats.txt | sed 's/^ *//')
           { echo "## Library"; echo; echo '```'; cat bundle.txt stats.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # After the bundle: the bundle step records a snapshot of what it published in the
+      # working database, which tomorrow's deltas are computed against.
+      - name: Save state for tomorrow
+        if: always()
+        run: bin/ci-save.sh
 
       - name: Keep the sync log
         if: always()
