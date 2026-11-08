@@ -18,7 +18,8 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   paragraph with a small sentence model (bge-small-en-v1.5, in its ONNX
   form) and the library carries the sign bits of those vectors (48 bytes a
   paragraph). The app fetches the same model once (35 MB, kept by the
-  service worker) and runs it in the worker with ONNX Runtime, so a search
+  service worker) and runs it in a worker of its own with ONNX Runtime
+  (loading it never stalls the search engine), so a search
   is ranked by its words and by what it means, fused by reciprocal rank
   (an exact phrase, when the library has it, is ranked first). A passage
   that says "trust in the Lord's timing" turns up for "patience with God's

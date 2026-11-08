@@ -9,7 +9,42 @@ import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections } fr
 // message handler waits for this to settle, so the first call sees the outcome.
 let Sem = null;
 const semLoaded = import("./semantic.js").then((m) => { Sem = m; }).catch((err) => { console.warn("search by meaning is unavailable:", err?.message); });
-const semReady = () => !!(Sem && Sem.ready());
+// The model itself runs in a worker of its own when the app has handed one over
+// (model-worker.js, attachModel), so loading it never stalls a search here; without
+// one it runs in this worker, as it used to.
+let modelPort = null, modelReady = false, modelFailed = null, modelLoading = null, modelSeq = 0;
+const modelPending = new Map();
+function modelCall(method, params, onProgress) {
+  return new Promise((resolve, reject) => {
+    const id = ++modelSeq;
+    modelPending.set(id, { resolve, reject, onProgress });
+    modelPort.postMessage({ id, method, params });
+  });
+}
+function attachModel(port) {
+  modelPort = port;
+  port.onmessage = (e) => {
+    const { id, result, error, progress } = e.data || {};
+    const p = modelPending.get(id);
+    if (!p) return;
+    if (progress) { p.onProgress && p.onProgress(progress); return; }
+    modelPending.delete(id);
+    if (error) p.reject(new Error(error.message)); else p.resolve(result);
+  };
+}
+const semReady = () => modelPort ? modelReady : !!(Sem && Sem.ready());
+const semFailed = () => modelPort ? modelFailed : (Sem && Sem.failed()) || null;
+function loadModel(base, onProgress) {
+  if (!modelPort) return Sem.load({ base, onProgress });
+  if (modelReady) return Promise.resolve(true);
+  if (modelLoading) return modelLoading;
+  modelLoading = modelCall("load", { base }, onProgress).then(() => { modelReady = true; return true; }, (err) => { modelFailed = err; modelLoading = null; throw err; });
+  return modelLoading;
+}
+async function embedText(text) {
+  if (!modelPort) return Sem.embed(text, { query: true });
+  return new Float32Array(await modelCall("embed", { text }));
+}
 
 const HL_OPEN = "\u0001", HL_CLOSE = "\u0002";
 const LABELS = { handbook: "General Handbook", "come-follow-me": "Come, Follow Me", "preach-my-gospel": "Preach My Gospel", "missionary-standards": "Missionary Standards", manuals: "Manual", "study-helps": "Study Helps", scriptures: "Scriptures" };
@@ -230,6 +265,8 @@ const methods = {
   },
 
   async stats() { need(); return stats(); },
+  // The app hands over one end of a channel to the model worker (see model-worker.js).
+  async attachModel({ port }) { if (port) attachModel(port); return { ok: !!port }; },
   // A small sealed file published beside the library (the owner's private
   // writing skills), unlocked with the same passphrase and returned as text.
   async unseal({ url, passphrase }) {
@@ -1379,12 +1416,13 @@ function haveVectors() {
 function semanticStatus() {
   const info = db ? embeddingsInfo() : null;
   if (!Sem) return { available: false, ready: false, loaded: false, count: 0, model: null, failed: "the search module did not load" };
-  return { available: !!db && haveVectors() && !!info && info.model === Sem.MODEL.name, ready: Sem.ready(), loaded: !!bitIndex, count: info ? info.count : 0, model: info ? info.model : null, failed: Sem.failed() ? String(Sem.failed().message || Sem.failed()) : null };
+  const failed = semFailed();
+  return { available: !!db && haveVectors() && !!info && info.model === Sem.MODEL.name, ready: semReady(), loaded: !!bitIndex, count: info ? info.count : 0, model: info ? info.model : null, failed: failed ? String(failed.message || failed) : null, worker: !!modelPort };
 }
 async function loadSemantic(base, progress) {
   if (!Sem || !haveVectors()) return semanticStatus();
-  await Sem.load({ base, onProgress: (p) => progress && progress({ phase: "model", ...p }) });
-  await buildSemanticIndex(progress);
+  // the model and the index load side by side: the index here, the model in its worker
+  await Promise.all([loadModel(base, (p) => progress && progress({ phase: "model", ...p })), buildSemanticIndex(progress)]);
   return semanticStatus();
 }
 // The index: every paragraph's sign bits, read once per session. It is built in slices with a
@@ -1405,7 +1443,7 @@ function buildSemanticIndex(progress) {
       const n = value("SELECT COUNT(*) FROM vecbits") || 0;
       if (!n) return null;
       const ids = new Int32Array(n), bits = new Uint8Array(n * bytes);
-      const SLICE = 20000;
+      const SLICE = 6000;
       let i = 0, after = -1;
       while (i < n) {
         if (!db) return null;
@@ -1433,7 +1471,7 @@ function buildSemanticIndex(progress) {
         if (!db) return null;
         const st2 = db.prepare("SELECT rowid, document_id FROM paragraphs WHERE rowid > ? ORDER BY rowid LIMIT ?");
         let got = 0;
-        try { st2.bind([row0, 40000]); while (st2.step()) { const r = st2.get(0); docByRow[r] = st2.get(1); row0 = r; got++; } } finally { st2.finalize(); }
+        try { st2.bind([row0, 15000]); while (st2.step()) { const r = st2.get(0); docByRow[r] = st2.get(1); row0 = r; got++; } } finally { st2.finalize(); }
         if (!got) break;
         await breathe();
       }
@@ -1465,7 +1503,7 @@ function scopeMask(cq) {
 async function embedQuery(text) {
   const key = text.trim().toLowerCase();
   if (queryVectors.has(key)) return queryVectors.get(key);
-  const v = await Sem.embed(text, { query: true });
+  const v = await embedText(text);
   if (queryVectors.size > 200) queryVectors.clear();
   queryVectors.set(key, v);
   return v;

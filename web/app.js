@@ -51,6 +51,17 @@
     });
   }
   const api = (method, params) => call(method, params);
+  // The search model gets a worker of its own; the engine and it share a channel.
+  (() => {
+    try {
+      const modelWorker = new Worker(new URL("model-worker.js", BASE), { type: "module" });
+      const channel = new MessageChannel();
+      modelWorker.postMessage({ port: channel.port1 }, [channel.port1]);
+      const id = ++seq;
+      pending.set(id, { resolve: () => {}, reject: () => {}, onProgress: null });
+      worker.postMessage({ id, method: "attachModel", params: { port: channel.port2 } }, [channel.port2]);
+    } catch (err) { console.warn("the model runs inside the engine:", err?.message); }
+  })();
 
   // ------------------------------------------------------------- state ----
   const state = {
