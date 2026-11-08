@@ -419,6 +419,13 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .sheet .peek-row .primary { height: 40px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 15px; }
 .sheet .peek-row .text-btn { height: 40px; font-size: 15px; }
 
+.ow-stress { font-size: 12px; color: var(--ink-3); margin: -2px 0 4px; }
+.ow-helps { display: flex; flex-wrap: wrap; gap: 6px; }
+.ow-helps .chip { height: 34px; padding: 0 12px; border-radius: 17px; background: var(--chrome); color: var(--accent); font: 600 14px var(--sans); }
+.legend { margin: 8px 0 12px; padding-left: 18px; font-size: 15px; line-height: 1.45; }
+.legend li { margin: 0 0 8px; }
+.orig-credit .orig-legend-btn { display: inline; height: auto; padding: 0; font-size: inherit; }
+
 /* ---- highlights and notes ---------------------------------------------- */
 :root { --hl-y: #fff1a3; --hl-g: #d6f3cf; --hl-b: #d7e7ff; --hl-p: #ffd9ea; --hl-y-dot: #f3cf3a; --hl-g-dot: #6cbf6a; --hl-b-dot: #6b9ff0; --hl-p-dot: #f08bb5; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --hl-y: rgba(243, 207, 58, .26); --hl-g: rgba(108, 191, 106, .26); --hl-b: rgba(107, 159, 240, .28); --hl-p: rgba(240, 139, 181, .26); } }

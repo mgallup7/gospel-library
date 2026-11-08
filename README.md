@@ -87,7 +87,14 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   search box takes Hebrew or Greek letters (points and accents optional), a
   Strong's number (`H2617`, `G26`) or `translit: chesed`, and an English
   search that is really a transliteration ("logos", "shalom") offers the
-  word behind it. Ask has the same text as tools (`original`, `lexicon`).
+  word behind it. "What the marks mean", under the tiles, explains how to
+  read them (the capital letter in a Hebrew word's sound is its stressed
+  syllable, brackets are words the translators supplied, what the dotted
+  and dashed marks say); a word's sheet links to the Topical Guide, Bible
+  Dictionary and Guide to the Scriptures entries on its English word. The
+  gloss on a tile is STEP's translators' reading of the word in that
+  verse, not always the KJV's own word for it (the data carries no KJV
+  alignment). Ask has the same text as tools (`original`, `lexicon`).
   The data is the STEP Bible's (Tyndale House, Cambridge; the Leningrad
   Codex, and the Greek of NA28 together with the Textus Receptus and the
   other editions, each word tagged and glossed), used under CC BY 4.0; see

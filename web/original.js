@@ -70,7 +70,35 @@
     const first = body.querySelector("p.verse");
     if (title && first) { first.before(block(title, data, true)); placed++; }
     if (!placed) { GL().toast("The verses here could not be matched to the original text."); }
-    if (!body.querySelector(".orig-credit")) body.append(el("div", { class: "orig-credit", text: CREDIT }));
+    if (!body.querySelector(".orig-credit")) body.append(el("div", { class: "orig-credit" }, [
+      el("span", { text: CREDIT + ". " }),
+      el("button", { type: "button", class: "text-btn small orig-legend-btn", text: "What the marks mean", onclick: () => legendSheet(data.lang || BIBLE[doc.volume]) }),
+    ]));
+  }
+  // The legend: how to read a tile, what the colors and marks say.
+  function legendSheet(lang) {
+    const sheet = $("#sheet");
+    const bodyEl = $(".sheet-body", sheet);
+    if (!sheet || !bodyEl) return;
+    const he = lang === "he";
+    const item = (mark, text) => el("li", {}, [el("b", { text: mark + " " }), el("span", { text })]);
+    bodyEl.replaceChildren(
+      el("div", { class: "nm", text: `Reading the ${NAME[lang] || "original"} tiles` }),
+      el("p", { class: "ow-fine", text: he
+        ? "Each tile is one Hebrew word in the order of the Hebrew (right to left): the word with its vowel points and accents, how it sounds, and what it means here. Tap a tile for its dictionary entry, its grammar in plain words, and every verse that uses it."
+        : "Each tile is one Greek word in the order of the Greek: the word with its accents, how it sounds, and what it means here. Tap a tile for its dictionary entry, its grammar in plain words, and every verse that uses it." }),
+      el("ul", { class: "legend" }, [
+        he ? item("CAPITAL letter", "in the sound marks the stressed syllable (be.re.SHIT is stressed on its last syllable); dots divide syllables.") : item("(Sound)", "is a plain transliteration; stress follows the Greek accent on the word itself."),
+        item("[brackets]", "around an English word mean the translators supplied it; the original has no separate word for it."),
+        he ? item("Dotted underline", "under the Hebrew word: either qere (the scribes' marginal reading, which the translators follow, where the written text differs) or a word restored from a parallel passage or the Septuagint; the word's sheet says which.") : item("Dashed edge", "a word in the Greek the KJV translators used (the Textus Receptus) that the critical text (NA28) behind modern translations does not have."),
+        he ? null : item("Faded word", "a word in the critical text (NA28) that the KJV translators' Greek did not have, so the KJV has no word for it."),
+        he ? item("Aramaic", "marks a verse written in Aramaic rather than Hebrew (parts of Daniel and Ezra).") : item("Editions", "in a word's sheet lists the Greek editions that have the word: NA28, SBL, Textus Receptus (TR), Byzantine (Byz) and others."),
+        he ? item("Title (verse 0)", "a psalm's heading, which the Hebrew counts as its own verse.") : null,
+        item("Strong's number", "names the dictionary word (H for Hebrew, G for Greek); a letter after it tells senses apart. Searching the number finds every verse with the word."),
+      ].filter(Boolean)),
+      el("p", { class: "ow-credit", text: CREDIT }),
+    );
+    openSheet(sheet);
   }
   function hide(body, btn) {
     store.set("orig", false);
@@ -143,8 +171,9 @@
       el("div", { class: "ow-word", lang: langAttr(lang), dir: lang === "he" ? "rtl" : "ltr", text: w.word }),
       el("div", { class: "ow-meta" }, [
         el("div", { class: "ow-translit", text: w.translit || "" }),
+        lang === "he" && /[A-Z]/.test(w.translit || "") ? el("div", { class: "ow-stress", text: "The capital marks the stressed syllable" }) : null,
         el("div", { class: "ow-gloss", text: cleanGloss(w.gloss) ? `“${cleanGloss(w.gloss)}” here, in ${cite}` : cite }),
-      ]),
+      ].filter(Boolean)),
     ]);
     const details = el("div", { class: "ow-details" }, [el("div", { class: "status", text: "Looking it up…" })]);
     bodyEl.replaceChildren(head, details);
@@ -193,7 +222,25 @@
       details.append(el("p", { class: "ow-fine", text: `Strong's ${w.strongs}` }));
     }
     if (w.tags && lang === "gr" && w.tags !== "") details.append(el("p", { class: "ow-fine", text: `Editions with this word: ${w.tags.replace(/\+/g, ", ")}` }));
+    // the Topical Guide, Bible Dictionary and Guide to the Scriptures on the English word
+    const helps = await studyHelpsFor(w, lex);
+    if (helps.length && sheet.contains(details)) {
+      details.append(el("div", { class: "ow-section" }, [
+        el("div", { class: "nm", text: "In the study helps" }),
+        el("div", { class: "ow-helps" }, helps.map((h) => el("button", { type: "button", class: "chip", text: `${h.book}: ${h.title}`, onclick: () => { closeSheet(); GL().openDoc(h.id, null); } }))),
+      ]));
+    }
     details.append(el("p", { class: "ow-credit", text: CREDIT }));
+  }
+  const STOP = new Set(["the", "and", "that", "with", "for", "from", "unto", "into", "they", "them", "their", "his", "her", "him", "she", "you", "your", "who", "which", "what", "this", "these", "those", "there", "then", "than", "but", "not", "all", "any", "one", "two", "are", "was", "were", "been", "have", "has", "had", "will", "shall", "upon", "when", "also", "out", "over", "under", "before", "after", "because", "about", "through"]);
+  async function studyHelpsFor(w, lex) {
+    const words = [];
+    const take = (text) => { for (const t of String(text || "").toLowerCase().replace(/[^a-z' -]/g, " ").split(/[\s-]+/)) { if (t.length >= 3 && !STOP.has(t)) { words.push(t); if (t.endsWith("s")) words.push(t.replace(/(ie)?s$/, (m) => m === "ies" ? "y" : "")); } } };
+    take(cleanGloss(w.gloss));
+    if (lex && lex.entry) take(lex.entry.gloss);
+    for (const g of (lex && lex.glosses) || []) take(g.gloss);
+    if (!words.length) return [];
+    try { return await GL().api("studyHelps", { words: [...new Set(words)].slice(0, 12) }); } catch (_) { return []; }
   }
   // STEP's examples: "giving to‚ rich _and_ poor": "and" — the sentence, with the word in question marked.
   function exampleOf(ex) {

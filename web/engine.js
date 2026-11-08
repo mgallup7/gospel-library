@@ -277,6 +277,8 @@ const methods = {
   async morph({ code }) { need(); return morphCodes(code); },
   async originalSearch(params) { need(); return originalSearch(params || {}); },
   async locate(params) { need(); return locate(params || {}); },
+  // Topical Guide, Bible Dictionary and Guide to the Scriptures entries for some English words
+  async studyHelps({ words = [] }) { need(); return studyHelps(words); },
 };
 
 function need() { if (!db) throw new Error("no library is loaded yet"); }
@@ -1004,6 +1006,18 @@ const EDITIONS = [
   ["/manual/preach-my-gospel-a-guide-to-missionary-service", "/manual/preach-my-gospel-2023"],
   ["/manual/missionary-standards-for-disciples-of-jesus-christ", "/manual/missionary-standards-for-disciples-of-jesus-christ-2023"],
 ];
+
+// The study-help entries (Topical Guide, Bible Dictionary, Guide to the Scriptures) whose title
+// is one of the words given, for a word's sheet: "beginning" finds TG "Beginning" if there is one.
+const HELP_BOOK = { tg: "Topical Guide", bd: "Bible Dictionary", gs: "Guide to the Scriptures" };
+function studyHelps(words) {
+  const want = [...new Set(words.map((w) => String(w || "").toLowerCase().replace(/[^a-z' -]/g, "").trim()).filter((w) => w.length >= 3))].slice(0, 12);
+  if (!want.length) return [];
+  const q = want.map(() => "?").join(",");
+  const rs = rows(`SELECT d.id, d.uri, d.title FROM documents d JOIN collections c ON c.id = d.collection_id WHERE c.slug = 'study-helps' AND lower(d.title) IN (${q}) ORDER BY d.uri LIMIT 12`, want);
+  return rs.map((r) => ({ id: r.id, uri: r.uri, title: r.title, book: HELP_BOOK[(r.uri.match(/^\/scriptures\/(tg|bd|gs)\//) || [])[1]] || "Study helps" }))
+    .sort((a, b) => want.indexOf(a.title.toLowerCase()) - want.indexOf(b.title.toLowerCase()) || a.book.localeCompare(b.book));
+}
 
 function speakers(prefix) {
   let where = "WHERE c.slug='general-conference' AND d.author IS NOT NULL AND d.author != ''";
