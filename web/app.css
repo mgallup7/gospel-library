@@ -544,6 +544,11 @@ body.first-run .bar, body.first-run #filters { display: none; }
 /* B, or a period, blanks the screen while the teacher talks; any step brings it back */
 .stage.blank .stage-body, .stage.blank .stage-foot { visibility: hidden; }
 .stage-controls .stage-smaller { font-size: 14px; }
+/* The timer and the next passage sit with the buttons, in the count's muted type, so they fade with them */
+.stage-controls { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 16px); }
+.stage-controls .stage-timer { width: auto; min-width: 56px; padding: 0 10px; font-size: 15px; font-variant-numeric: tabular-nums; opacity: .7; }
+.stage-upnext { flex-basis: 100%; text-align: right; padding: 4px 4px 0; font: 14px/1.35 var(--sans); opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage-upnext:empty { display: none; }
 body.presenting { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .stage-controls { transition: none; } }
 

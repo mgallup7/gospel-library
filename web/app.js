@@ -295,7 +295,30 @@
 
   // ------------------------------------------------------------- setup ----
   // The library is downloaded once per device and unlocked with the passphrase.
+  // The engine keeps the library in OPFS through sync access handles in a worker, which iOS has
+  // from 16.4. Returns [major, minor] on an iPhone or iPad, else null. iPadOS asks for desktop
+  // pages and reports itself as a Mac, so a Mac with a touch screen is read by its Safari version.
+  function iosVersion(ua, touch) {
+    let m = /(?:iPhone|iPad|iPod)[^)]*? OS (\d+)(?:_(\d+))?/.exec(ua);
+    if (!m && touch && /Macintosh/.test(ua)) m = /Version\/(\d+)(?:\.(\d+))?.*Safari\//.exec(ua);
+    return m ? [Number(m[1]), Number(m[2] || 0)] : null;
+  }
+  const iosTooOld = (v) => !!v && (v[0] < 16 || (v[0] === 16 && v[1] < 4));
+  const IOS_UPDATE = "To update, open Settings, then General, then Software Update. Meanwhile it works in Safari on a Mac.";
+  function showTooOld(v) {
+    readerPane.hidden = true;
+    listPane.hidden = false;
+    document.body.classList.add("first-run");
+    listPane.replaceChildren(el("div", { class: "setup" }, [
+      el("h1", { text: "Update this iPhone or iPad first" }),
+      el("p", { class: "lede", text: `This app needs iOS 16.4 or later to keep the library on the device; this one has iOS ${v[0]}.${v[1]}.` }),
+      el("p", { class: "lede", text: IOS_UPDATE }),
+    ]));
+  }
+
   async function ensureLibrary() {
+    const ios = iosVersion(navigator.userAgent, "ontouchend" in document);
+    if (iosTooOld(ios)) { showTooOld(ios); return false; }
     const active = store.get("active");
     let status;
     try { status = await call("open", { slot: active?.slot }); }
@@ -378,7 +401,10 @@
   }
 
   function showFatal(text) {
-    listPane.replaceChildren(el("div", { class: "setup" }, [el("h1", { text: "Something is wrong" }), el("p", { class: "lede", text })]));
+    // on an iPhone or iPad the likeliest cause is an iOS without what the engine needs
+    const ios = iosVersion(navigator.userAgent, "ontouchend" in document);
+    const hint = ios ? el("p", { class: "fine", text: `This app needs iOS 16.4 or later. ${IOS_UPDATE}` }) : null;
+    listPane.replaceChildren(el("div", { class: "setup" }, [el("h1", { text: "Something is wrong" }), el("p", { class: "lede", text }), hint].filter(Boolean)));
   }
 
   // A newer library on the server? Offer it. When the server has a delta from this device's
@@ -1607,9 +1633,33 @@
   }
   stage.addEventListener("pointerdown", wakeControls, { passive: true });
   stage.addEventListener("pointermove", wakeControls, { passive: true });
+  // The elapsed time since Present began, for the speaker only: it sits in the controls and
+  // keeps counting while the screen is blanked. Tapping it starts it again from 0:00.
+  let stageClock = null, stageT0 = 0;
+  const stageTimer = $(".stage-timer", stage);
+  function tickStage() {
+    const s = Math.max(0, Math.floor((Date.now() - stageT0) / 1000));
+    stageTimer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+  function resetStageClock() {
+    stageT0 = Date.now();
+    tickStage();
+    clearInterval(stageClock);
+    stageClock = setInterval(tickStage, 1000);
+  }
+  stageTimer.addEventListener("click", () => { resetStageClock(); wakeControls(); });
+  // The first words of a passage, for the "Next:" line: plain text, without a verse's number.
+  function firstWords(u, n = 6) {
+    let t = u.text || new DOMParser().parseFromString(u.html || "", "text/html").body.textContent || "";
+    t = t.replace(/\s+/g, " ").trim();
+    if (u.kind === "verse") t = t.replace(/^\d+\s+/, "");
+    const words = t.split(" ").filter(Boolean);
+    return words.slice(0, n).join(" ") + (words.length > n ? "…" : "");
+  }
   let stageOpener = null;
   function openStage(next) {
     show = { ...next, scale: store.get("stageScale", 1) };
+    resetStageClock();
     stageOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     document.body.classList.add("presenting");
     wakeControls();
@@ -1629,6 +1679,7 @@
     const atPid = show.doc ? show.units[show.i]?.pid : null;
     show.lock?.release?.();
     show = null;
+    clearInterval(stageClock); stageClock = null;
     stage.hidden = true;
     stage.classList.remove("blank");
     updateThinkFab();
@@ -1663,6 +1714,9 @@
     $(".stage-count", stage).textContent = `${show.i + 1} / ${show.units.length}`;
     $(".stage-prev", stage).disabled = show.i === 0;
     $(".stage-next", stage).disabled = show.i === show.units.length - 1;
+    const after = show.units[show.i + 1];
+    const peek = after ? firstWords(after) : "";
+    $(".stage-upnext", stage).textContent = peek ? `Next: ${peek}` : "";
     fitStage();
   }
 

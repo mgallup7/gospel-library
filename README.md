@@ -115,6 +115,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   a projector, a TV over AirPlay, or a tablet turned toward the room. Tap the
   screen icon in the reader (or press P, or double-tap a paragraph). Arrow
   keys, space, taps and swipes move through the text; Esc returns to reading.
+  The controls, seen only by the speaker, carry a timer since Present began
+  (tap it to reset) and the first words of the next passage.
+- On an iPhone or iPad older than iOS 16.4, setup says so in plain words and
+  how to update, instead of an engine error.
 - Deck: the passages you pick for a presentation. Tick a card under an Ask
   answer, tap + on a search result, or select verses while reading and choose
   Add to deck. On an iPad in landscape or a Mac the deck is a board on the
