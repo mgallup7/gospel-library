@@ -775,6 +775,18 @@
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
       body.append(sec);
     }
+    // Come, Follow Me: the lesson for this week, one tap away
+    try {
+      const wk = count(st, "come-follow-me") ? await api("thisWeek", {}) : null;
+      if (wk && wk.lesson) {
+        const l = wk.lesson;
+        const sec = el("section", { class: "home-sec sec-week" }, [el("div", { class: "home-sec-head" }, [el("h2", { text: "Come, Follow Me this week" }), wk.next ? el("button", { type: "button", class: "text-btn small", text: "Next week", title: wk.next.title, onclick: () => openDoc(wk.next.id, null) }) : null].filter(Boolean))]);
+        sec.append(el("button", { type: "button", class: "home-card week-card", onclick: () => openDoc(l.id, null) }, [
+          el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: l.title }), el("span", { class: "hc-s", text: (l.book_title || "Come, Follow Me").replace(/^Come, Follow Me—?/i, "Come, Follow Me: ").replace(/\s+/g, " ").trim() })]),
+          el("span", { class: "hc-go", text: "Open" })]));
+        body.append(sec);
+      }
+    } catch (_) { /* no lesson, no card */ }
     const shelves = el("section", { class: "home-sec sec-shelves" }, [el("div", { class: "home-sec-head" }, [el("h2", { text: "Shelves" }), el("span", { class: "hint", text: "Open one to browse it; the search box then searches only that shelf" })])]);
     const grid = el("div", { class: "shelf-grid" });
     for (const [key, title, sub, short] of SHELVES) {

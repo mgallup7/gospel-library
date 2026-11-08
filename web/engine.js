@@ -303,6 +303,8 @@ const methods = {
   async browse({ collection }) { need(); return browse(collection); },
   async book({ uri, id }) { need(); return bookToc(uri, id); },
   async recent() { need(); return recent(); },
+  // The Come, Follow Me lesson for this week (and the next), from the lesson titles' dates.
+  async thisWeek({ today = null } = {}) { need(); return thisWeek(today ? new Date(today) : new Date()); },
   async scriptures() { need(); return shelf(); },
   async context({ doc_id, pid, before = 1, after = 1 }) { need(); return context(Number(doc_id), pid, before, after); },
   async verses({ words, volume = "all", limit = 400 }) { need(); return allVerses(words, volume, limit); },
@@ -1133,6 +1135,34 @@ function recent() {
                        ORDER BY b.year DESC, b.month DESC LIMIT 1`);
   if (!latest) return { conference: null, talks: [] };
   return { conference: latest, talks: rows("SELECT id, uri, title, author, author_role, session, description FROM documents WHERE book_id=? ORDER BY sort_key, id", [latest.id]) };
+}
+
+// Come, Follow Me lessons carry their week in the title ("November 3–9. Ether 12–15: …",
+// "December 29–January 4. …"); the manual's year is in its address. This week's lesson is the
+// one whose span holds today; the next one follows it in the manual.
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const WEEK_RE = new RegExp(`^\\s*(${MONTH_NAMES.join("|")})\\s+(\\d{1,2})(?:\\s*[–—-]\\s*(?:(${MONTH_NAMES.join("|")})\\s+)?(\\d{1,2}))?`, "i");
+function thisWeek(today) {
+  const docs = rows(`SELECT d.id, d.uri, d.title, d.description, d.sort_key, b.title AS book_title, b.uri AS book_uri, b.year AS book_year
+                       FROM documents d JOIN books b ON b.id = d.book_id JOIN collections c ON c.id = d.collection_id WHERE c.slug = 'come-follow-me' ORDER BY b.uri, d.sort_key, d.id`);
+  const lessons = [];
+  for (const d of docs) {
+    const m = WEEK_RE.exec(d.title || "");
+    if (!m) continue;
+    const year = d.book_year || Number((d.book_uri.match(/(20\d\d)/) || [])[1]) || today.getFullYear();
+    const m1 = MONTH_NAMES.indexOf(m[1].toLowerCase()), m2 = m[3] ? MONTH_NAMES.indexOf(m[3].toLowerCase()) : m1;
+    // a manual's first lesson begins in the December before its year ("December 29–January 4")
+    const wraps = m1 === 11 && m2 === 0;
+    const start = new Date(wraps ? year - 1 : year, m1, Number(m[2]));
+    const end = new Date(year, m2, Number(m[4] || m[2]), 23, 59, 59);
+    lessons.push({ id: d.id, uri: d.uri, title: d.title, description: d.description, book_title: d.book_title, book_uri: d.book_uri, start: start.getTime(), end: end.getTime() });
+  }
+  lessons.sort((a, b) => a.start - b.start);
+  const now = today.getTime();
+  const current = lessons.filter((l) => l.start <= now && now <= l.end);
+  const lesson = current.sort((a, b) => Math.abs(new Date(a.start).getFullYear() - today.getFullYear()) - Math.abs(new Date(b.start).getFullYear() - today.getFullYear()))[0] || null;
+  const next = lessons.find((l) => l.start > now && (!lesson || l.book_uri === lesson.book_uri || l.start - now < 8 * 86400000)) || null;
+  return { lesson, next };
 }
 
 function shelf() {

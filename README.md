@@ -69,8 +69,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   scriptures or to a talk opens the library's copy. Think it through works
   on it too.
 - The home screen: where you were (the last chapter or talk, the deck in
-  progress), the shelves as tiles with what each holds, the latest
-  conference, and a box to ask the library a question. Open a shelf and the
+  progress), this week's Come, Follow Me lesson (read from the lessons'
+  own dates, with Next week beside it), the shelves as tiles with what each
+  holds, the latest conference, and a box to ask the library a question. Open a shelf and the
   search box searches only that shelf until you choose All again. With a
   Claude API key set, pressing return also has Claude propose a few more
   searches and folds their results in. On a phone the reader keeps its
