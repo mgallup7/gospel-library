@@ -9,6 +9,8 @@
    work): its own styles and scripts run, but it cannot see the app or the library key.
    A small script added to the page hands its links to the web over to the app, which
    resolves them against the library (app.js followLink). */
+import { markdown as renderMarkdown } from "./lib/markdown.js";
+
 (() => {
   "use strict";
   const DB = "gospel-studies", STORE = "studies", MAX_BYTES = 12 * 1024 * 1024;
@@ -106,37 +108,9 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
   }
   function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   // Enough Markdown for notes and lessons: headings, paragraphs, lists, quotes, emphasis, links.
-  function markdown(src) {
-    const inline = (t) => esc(t)
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>")
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => /^(https?:\/\/|\/)/i.test(url) ? `<a href="${url.replace(/"/g, "%22")}">${text}</a>` : text);
-    const out = [];
-    let para = [], listKind = null, quote = [];
-    const flushPara = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
-    const flushList = () => { if (listKind) { out.push(`</${listKind}>`); listKind = null; } };
-    const flushQuote = () => { if (quote.length) { out.push(`<blockquote>${inline(quote.join(" "))}</blockquote>`); quote = []; } };
-    for (const raw of src.split(/\r?\n/)) {
-      const line = raw.replace(/\s+$/, "");
-      let m;
-      if (!line.trim()) { flushPara(); flushList(); flushQuote(); continue; }
-      if ((m = line.match(/^(#{1,3})\s+(.+)$/))) { flushPara(); flushList(); flushQuote(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue; }
-      if (/^(-{3,}|\*{3,})$/.test(line.trim())) { flushPara(); flushList(); flushQuote(); out.push("<hr>"); continue; }
-      if ((m = line.match(/^\s*>\s?(.*)$/))) { flushPara(); flushList(); quote.push(m[1]); continue; }
-      if ((m = line.match(/^\s*([-*•]|\d+[.)])\s+(.+)$/))) {
-        flushPara(); flushQuote();
-        const kind = /^\d/.test(m[1]) ? "ol" : "ul";
-        if (listKind !== kind) { flushList(); listKind = kind; out.push(`<${kind}>`); }
-        out.push(`<li>${inline(m[2])}</li>`);
-        continue;
-      }
-      flushList(); flushQuote();
-      para.push(line.trim());
-    }
-    flushPara(); flushList(); flushQuote();
-    return out.join("\n");
-  }
+  // The renderer is Ask's (lib/markdown.js) in its page mode: no citation buttons and no
+  // quotation check, since the frame has neither the passages nor the app.
+  function markdown(src) { return renderMarkdown(src, { page: true }); }
   // The words of the page, for Think it through
   function plainText(rec) {
     if (rec.kind !== "html") return rec.text || "";

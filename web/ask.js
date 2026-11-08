@@ -2,6 +2,9 @@
    Retrieval happens on this device (the library's own full-text index); only
    the question and the passages it turns up go to Claude, using the person's
    own API key, which is stored here and sent nowhere but api.anthropic.com. */
+import { markdown as renderMarkdown, unverifiedQuotes } from "./lib/markdown.js";
+import { shortCitation, chapterOf } from "./lib/cite.js";
+
 (() => {
   "use strict";
 
@@ -425,7 +428,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         if (!ctx) return { error: "not found" };
         const out = [];
         for (const x of ctx.paragraphs) {
-          if (x.kind === "verse" || x.kind === "para") out.push(this.add({ doc_id: p.doc_id, pid: x.pid, kind: x.kind, citation: x.kind === "verse" && x.verse ? `${(p.citation || "").replace(/:\d.*$/, "")}:${x.verse}` : p.citation, label: p.label, text: x.text, plain: x.text, verses: x.kind === "verse" && x.verse ? [{ n: x.verse, text: x.text }] : null, author: p.author, title: p.title, collection: p.collection, conf: p.conf }));
+          if (x.kind === "verse" || x.kind === "para") out.push(this.add({ doc_id: p.doc_id, pid: x.pid, kind: x.kind, citation: x.kind === "verse" && x.verse ? `${chapterOf(p.citation)}:${x.verse}` : p.citation, label: p.label, text: x.text, plain: x.text, verses: x.kind === "verse" && x.verse ? [{ n: x.verse, text: x.text }] : null, author: p.author, title: p.title, collection: p.collection, conf: p.conf }));
         }
         return { out };
       }
@@ -449,7 +452,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
           const textU = c.textContent.replace(/\s+/g, " ").trim();
           if (!textU) continue;
           const verse = num ? parseInt(num.textContent, 10) : null;
-          out.push(this.add({ doc_id: doc.id, pid: n.id, kind: verse ? "verse" : "para", citation: verse ? `${doc.citation.replace(/:\d.*$/, "")}:${verse}` : doc.citation, label: doc.label, text: textU, plain: textU, verses: verse ? [{ n: verse, text: textU }] : null, author: doc.author, title: doc.title, collection: doc.collection, conf: doc.label }));
+          out.push(this.add({ doc_id: doc.id, pid: n.id, kind: verse ? "verse" : "para", citation: verse ? `${chapterOf(doc.citation)}:${verse}` : doc.citation, label: doc.label, text: textU, plain: textU, verses: verse ? [{ n: verse, text: textU }] : null, author: doc.author, title: doc.title, collection: doc.collection, conf: doc.label }));
           if (out.length >= 80) break;
         }
         return { out, title: doc.title };
@@ -793,80 +796,15 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return reply + (notes ? `\n\nSources\n${notes}` : "");
   }
 
-  // A small markdown renderer: paragraphs, headings, lists, bold, italic, and [n] citations.
-  // ---------------------------------------------------------- quotations --
-  // Every quotation in an answer is checked, word for word, against the
-  // passages the tools returned. One that is not there is underlined, and
-  // the answer gets a note with a button that asks Claude to put it right.
-  const normText = (t) => String(t || "").toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
-  const QUOTE_RE = /[“"]([^”"]{12,}?)[”"]/g;
-  function quoteFound(q, passages) {
-    const parts = q.split(/\s*(?:\.\.\.|…)\s*/).map(normText).filter((x) => x.split(" ").length >= 3);
-    if (!parts.length) return true;
-    for (const p of passages) {
-      if (p._norm === undefined) p._norm = " " + normText(p.plain || p.text) + " ";
-      if (parts.every((x) => p._norm.includes(" " + x + " "))) return true;
-    }
-    return false;
-  }
-  function unverifiedQuotes(src, passages) {
-    const out = [];
-    for (const m of src.matchAll(QUOTE_RE)) if (m[1].split(/\s+/).length >= 4 && !quoteFound(m[1], passages)) out.push(m[1]);
-    return [...new Set(out)];
-  }
-
+  // Answers are rendered by lib/markdown.js, which also checks every quotation word for
+  // word against the passages (QUOTE_RE, quoteFound, unverifiedQuotes); here a citation [n]
+  // becomes a button that opens the passage.
   function markdown(src, passages) {
     const cite = (n) => {
       const p = passages.find((x) => x.n === Number(n));
-      return p ? `<button type="button" class="cite" data-doc="${p.doc_id}" data-pid="${esc(p.pid || "")}" title="${esc(p.label)}">${esc(shortLabel(p))}</button>` : `[${n}]`;
+      return p ? `<button type="button" class="cite" data-doc="${p.doc_id}" data-pid="${esc(p.pid || "")}" title="${esc(p.label)}">${esc(shortCitation(p))}</button>` : `[${n}]`;
     };
-    const quoted = (t) => {
-      let html = "", last = 0;
-      for (const m of t.matchAll(QUOTE_RE)) {
-        html += esc(t.slice(last, m.index));
-        const q = m[1], open = m[0][0], close = m[0][m[0].length - 1];
-        const bad = q.split(/\s+/).length >= 4 && !quoteFound(q, passages);
-        html += esc(open) + (bad ? `<span class="unverified" title="Not word for word in any passage found">${esc(q)}</span>` : esc(q)) + esc(close);
-        last = m.index + m[0].length;
-      }
-      return html + esc(t.slice(last));
-    };
-    const inline = (t) => quoted(t)
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>")
-      .replace(/\[(\d+)\]/g, (_, n) => cite(n));
-    const lines = src.split("\n");
-    const out = [];
-    let list = null, para = [];
-    const closePara = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
-    const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
-    for (const raw of lines) {
-      const line = raw.trimEnd();
-      const h = line.match(/^(#{1,4})\s+(.*)$/);
-      const li = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
-      if (!line.trim()) { closePara(); closeList(); continue; }
-      if (h) { closePara(); closeList(); out.push(`<h${h[1].length + 1}>${inline(h[2])}</h${h[1].length + 1}>`); continue; }
-      if (li) {
-        closePara();
-        const kind = /^\s*\d/.test(line) ? "ol" : "ul";
-        if (list !== kind) { closeList(); list = kind; out.push(`<${kind}>`); }
-        out.push(`<li>${inline(li[1])}</li>`);
-        continue;
-      }
-      closeList();
-      para.push(line);
-    }
-    closePara(); closeList();
-    return out.join("\n");
-  }
-
-  function shortLabel(p) {
-    if (p.collection === "general-conference") {
-      const surname = (p.author || "").replace(/^(President|Elder|Sister|Brother|Bishop)\s+/, "").split(" ").pop();
-      const when = (p.conf || p.label || "").replace(" General Conference", "").replace(/^April /, "Apr ").replace(/^October /, "Oct ");
-      return [surname, when].filter(Boolean).join(", ");
-    }
-    return p.citation || p.label;
+    return renderMarkdown(src, { passages, cite });
   }
 
   document.addEventListener("click", (e) => {

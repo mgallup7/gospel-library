@@ -10,7 +10,17 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.join(here, "..", "..", "web", "ask.js"), "utf8");
+// ask.js is a module that imports from web/lib/; the context has no module loader, so each
+// import line becomes a destructuring of that lib, loaded here and handed in as __lib.
+const LIB = {
+  "./lib/markdown.js": await import("../../web/lib/markdown.js"),
+  "./lib/cite.js": await import("../../web/lib/cite.js"),
+};
+const source = fs.readFileSync(path.join(here, "..", "..", "web", "ask.js"), "utf8")
+  .replace(/^import \{([^}]+)\} from "([^"]+)";$/gm, (_, names, from) => {
+    assert.ok(LIB[from], `ask.js imports ${from}; add it to LIB`);
+    return `const {${names.replace(/\bas\b/g, ":")}} = __lib[${JSON.stringify(from)}];`;
+  });
 
 function load(fetchImpl, saved = {}) {
   const data = { apiKey: "test-key", ...saved };
@@ -19,7 +29,7 @@ function load(fetchImpl, saved = {}) {
   const fetch = (url, opts) => { calls.push({ url, body: JSON.parse(opts.body), signal: opts.signal }); return fetchImpl(opts); };
   const window = { GL: { el: () => ({}), esc: (s) => s, store } };
   const ctx = {
-    window, document: { addEventListener() {} }, navigator: { onLine: true }, fetch, console,
+    window, document: { addEventListener() {} }, navigator: { onLine: true }, fetch, console, __lib: LIB,
     setTimeout: (fn, ms) => setTimeout(fn, ms / 1000), clearTimeout,
     AbortController, TextDecoder, TextEncoder, Response, ReadableStream, Error, Promise, JSON,
   };

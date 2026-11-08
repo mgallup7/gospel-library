@@ -2,6 +2,9 @@
    phrases are highlighted and linked with arrows, then written out as a
    PowerPoint file (or presented straight from the device). Everything runs
    here; the .pptx is written in the browser by PptxGenJS. */
+import { chunksOf, fontSize, MAX_CHARS } from "./lib/chunk.js";
+import { talkCitation, chapterOf } from "./lib/cite.js";
+
 (() => {
   "use strict";
 
@@ -26,7 +29,6 @@
   const DEFAULT_THEME = "royal";
   const SERIF = "Georgia";
   const SANS = "Calibri";
-  const MAX_CHARS = 430;
   const QUICK_LABELS = ["fulfilled in", "same word", "echoes", "defines", "explains", "contrast", "promise and keeping"];
 
   // ---------------------------------------------------------------- model --
@@ -205,7 +207,7 @@
       return { citation: doc.author || "", where: `“${doc.title}”`, label: doc.label || "" };
     }
     if (doc.book_slug && verses && verses.length) {
-      const base = (doc.citation || doc.title).replace(/:\d.*$/, "");
+      const base = chapterOf(doc.citation || doc.title);
       const a = verses[0].n, b = verses[verses.length - 1].n;
       return { citation: a === b ? `${base}:${a}` : `${base}:${a}–${b}`, where: "" };
     }
@@ -1255,72 +1257,13 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   function shortCitation(it) {
     if (!it) return "";
     if (it.kind === "verse") return it.citation;
-    const surname = (it.citation || "").replace(/^(President|Elder|Sister|Brother|Bishop)\s+/, "").split(" ").pop();
-    const when = (it.label || "").replace(" General Conference", "").replace(/^April /, "Apr ").replace(/^October /, "Oct ");
-    return [surname, when].filter(Boolean).join(", ");
+    return talkCitation(it.citation, it.label); // a talk's card keeps the speaker in citation (citationFor)
   }
 
   // ------------------------------------------------------------ chunking --
-  // A slide holds about MAX_CHARS of scripture comfortably; longer passages
-  // are split at verse or sentence boundaries, and the label says "1 of 2".
-  function chunksOf(it, max = MAX_CHARS) {
-    const out = [];
-    if (it.verses && it.verses.length) {
-      let cur = [], len = 0;
-      for (const v of it.verses) {
-        if (cur.length && len + v.text.length > max) { out.push({ verses: cur }); cur = []; len = 0; }
-        if (v.text.length > max * 1.4) {
-          // one very long verse: split its sentences, keep the number on the first piece
-          const parts = sentences(v.text, max);
-          if (cur.length) { out.push({ verses: cur }); cur = []; len = 0; }
-          parts.forEach((p, i) => out.push({ verses: [{ n: i === 0 ? v.n : null, text: p }] }));
-          continue;
-        }
-        cur.push(v); len += v.text.length;
-      }
-      if (cur.length) out.push({ verses: cur });
-    } else {
-      for (const p of sentences(it.text, max)) out.push({ text: p });
-    }
-    out.forEach((c, i) => {
-      let label = (it.kind === "verse" || !it.label) ? (it.citation || "") : it.label;
-      if (c.verses && it.verses && out.length > 1) {
-        const ns = c.verses.map((v) => v.n).filter((n) => n !== null);
-        if (ns.length) label = `${label.replace(/:\d.*$/, "")}:${ns[0]}${ns.length > 1 ? "–" + ns[ns.length - 1] : ""}`;
-      }
-      c.label = out.length > 1 ? `${label} (${i + 1} of ${out.length})` : label;
-    });
-    return out;
-  }
-  function sentences(text, max) {
-    const paras = text.split(/\n\n+/);
-    const pieces = [];
-    for (const para of paras) {
-      const sents = para.match(/[^.!?;:]+[.!?;:]+["’”)]?\s*|[^.!?;:]+$/g) || [para];
-      let cur = "";
-      for (const s of sents) {
-        if (cur && (cur + s).length > max) { pieces.push(cur.trim()); cur = ""; }
-        if (s.length > max) {
-          // a run-on sentence: split on commas, then hard-wrap as a last resort
-          for (const bit of s.split(/(?<=,)\s+/)) {
-            if (cur && (cur + bit).length > max) { pieces.push(cur.trim()); cur = ""; }
-            cur += bit + " ";
-          }
-          continue;
-        }
-        cur += s;
-      }
-      if (cur.trim()) pieces.push(cur.trim());
-    }
-    return pieces.length ? pieces : [text];
-  }
-  function fontSize(len) {
-    if (len <= 90) return 40;
-    if (len <= 170) return 36;
-    if (len <= 260) return 32;
-    if (len <= 350) return 28;
-    return 26;
-  }
+  // chunksOf, sentences and fontSize live in lib/chunk.js (imported above): a
+  // slide holds about MAX_CHARS of scripture comfortably; longer passages are
+  // split at verse or sentence boundaries, and the label says "1 of 2".
 
   // --------------------------------------------------------------- fitting --
   // "Shrink text on overflow" in the file is only a hint, and Keynote and

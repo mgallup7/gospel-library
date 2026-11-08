@@ -1,6 +1,8 @@
 /* Gospel Library — personal edition. Plain JavaScript, no build step.
    The library lives on this device; engine.js (a Web Worker) holds it and
    answers searches. This file is the interface. */
+import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
+
 (() => {
   "use strict";
 
@@ -152,10 +154,6 @@
     if (tab === "deck") return "Deck";
     if (tab) return TAB_TITLE[tab] || "Shelf";
     return "Library";
-  }
-  function shortTitleOf(doc) {
-    if (doc.collection === "scriptures") return doc.citation ? doc.citation.replace(/:\d.*$/, "") : doc.title;
-    return doc.title.length > 28 ? doc.title.slice(0, 26).replace(/\s+\S*$/, "") + "…" : doc.title;
   }
   function setEntry(patch) {
     const cur = history.state || {};
@@ -678,7 +676,7 @@
     return btn;
   }
   function shortTitle(h) {
-    if (h.collection === "scriptures") return h.citation.replace(/:\d.*$/, "");
+    if (h.collection === "scriptures") return chapterOf(h.citation);
     if (h.collection === "general-conference") return "this talk";
     return h.title.length > 36 ? "this page" : h.title;
   }
@@ -724,7 +722,7 @@
         lastDoc = p.doc_id;
         const n = (all.by_document || []).find((d) => d.title === p.title && d.book_title === p.book_title)?.n;
         frag.append(el("button", { type: "button", class: "conc-doc", "data-doc": p.doc_id, onclick: () => openDoc(p.doc_id, null) }, [
-          el("span", { class: "t", text: p.collection === "scriptures" ? p.citation.replace(/:\d.*$/, "") : p.title }),
+          el("span", { class: "t", text: p.collection === "scriptures" ? chapterOf(p.citation) : p.title }),
           el("span", { class: "m", text: [p.collection !== "scriptures" ? whereOf(p) : p.label, n ? `${n} ${n === 1 ? "match" : "matches"}` : null].filter(Boolean).join(" · ") }),
         ]));
       }
@@ -1139,7 +1137,7 @@
     const verse = num ? parseInt(num.textContent, 10) : null;
     return { pid: n.id, kind: n.classList.contains("verse") ? "verse" : "para", verse: Number.isFinite(verse) ? verse : null, text: c.textContent.replace(/\s+/g, " ").trim() };
   }
-  function citeUnit(x) { return x.kind === "verse" && currentDoc?.citation ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || ""; }
+  function citeUnit(x) { return x.kind === "verse" && currentDoc?.citation ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || ""; }
   // Color the selected paragraphs; the same color again takes it off
   async function highlightSelection(color) {
     if (!currentDoc || !window.Marks) return;
@@ -1412,9 +1410,9 @@
           clearSelection();
           deckToast(added, added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
-        el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
+        el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); } }),
         el("button", { type: "button", class: "text-btn", text: "Copy", title: "Copy with the citation", onclick: () => {
-          const cite = (x) => x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
+          const cite = (x) => x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
           const text = selectedUnits().map((x) => `${x.text} (${cite(x)})`).join("\n\n");
           navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
         } }),
@@ -1740,7 +1738,7 @@
     const d = show.doc;
     let where = u.where || "";
     if (d && !(u.where && d.collection && d.collection.startsWith("jsp-"))) {
-      const ref = u.kind === "verse" && d.book_slug && u.pid ? `${d.citation.replace(/:\d.*$/, "")}:${u.pid.replace(/^p/, "")}` : null;
+      const ref = u.kind === "verse" && d.book_slug && u.pid ? `${chapterOf(d.citation)}:${u.pid.replace(/^p/, "")}` : null;
       where = d.collection === "general-conference" ? [d.author, d.title, d.label.replace(" General Conference", "")].filter(Boolean).join("  \u00b7  ") : (ref || d.citation);
     }
     const body = $(".stage-body", stage);
