@@ -170,7 +170,7 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
 |---|---|---|
 | `gospel_library/` (Python) | GitHub Actions, nightly | Walks the site's tables of contents, fetches new and changed pages through the same content API the site's own reader uses, parses them into SQLite with an FTS5 full-text index. |
 | `embed` | nightly, after the fetch | Embeds every new verse and paragraph with bge-small-en-v1.5 through onnxruntime (45 minutes a night until it has caught up; the model is cached between runs) and keeps the int8 vectors in the working database. `--smoke` prints the top passages for a few test questions into the job log. |
-| `bundle` | end of the nightly job | Compacts the database, packs the vectors' sign bits, gzips it, encrypts it with your passphrase (AES-256-GCM, key from PBKDF2), publishes it with the app, the model and ONNX Runtime to GitHub Pages. |
+| `bundle` | end of the nightly job | Compacts the database, packs the vectors' sign bits, gzips it, encrypts it with your passphrase (AES-256-GCM, key from PBKDF2), writes the deltas from the last twelve builds (`delta.py`), publishes it all with the app, the model and ONNX Runtime to GitHub Pages. |
 | `web/` | your devices | The app. `engine.js` runs SQLite compiled to WebAssembly inside a Web Worker and keeps the library in the browser's private storage (OPFS); `semantic.js` runs the search model in the same worker, with a WordPiece tokenizer written to match the one the nightly job uses. `app.js` is the interface; `ask.js` is the Claude layer (search planning with Haiku, answers with the model you pick, streamed straight from api.anthropic.com). |
 
 The code is public and ordinary. The library file is public too, but unreadable
@@ -195,8 +195,16 @@ devices.
    once and everything works from then on, offline included.
 
 Nightly runs that change nothing publish nothing. When conference talks or
-edits arrive, the app shows "A newer library is available" and updates in the
-background when you tap it.
+edits arrive, the app shows "A newer library is available: 12 pages changed,
+3.1 MB to download" and, when you tap it, downloads only what changed. Each
+build keeps a snapshot of what it published and writes a sealed delta from
+each of the last twelve builds (`data/delta-<version>.bin`, listed in the
+manifest): the pages added or changed with their paragraphs, footnotes and
+meaning vectors, the pages removed, the small tables whole. The app applies
+it in place in one transaction and keeps it only if the result is, byte for
+byte of content, the published library (the version is recomputed on the
+device and compared); anything else, or a device more than twelve builds
+behind, falls back to downloading the whole library as before.
 
 ## What gets pulled, and how
 

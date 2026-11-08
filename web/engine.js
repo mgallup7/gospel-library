@@ -26,6 +26,7 @@ self.onmessage = async (e) => {
   const progress = (p) => self.postMessage({ id, progress: p });
   try {
     await semLoaded;
+    if (exclusive) await exclusive.catch(() => {}); // an update being applied finishes first
     const fn = methods[method];
     if (!fn) throw new Error(`unknown method ${method}`);
     const result = await fn(params || {}, progress);
@@ -54,14 +55,20 @@ async function boot() {
   }
 }
 let locked = false;
+let exclusive = null; // a promise while a delta is being applied: other calls wait for it
 
 // Closes the open library and forgets everything derived from it (search
 // caches, the speaker index, the meaning index), so a newer library starts clean.
 function closeDb() {
   if (db) { try { db.close(); } catch (_) {} db = null; }
+  forgetDerived();
+}
+// Everything computed from the library's contents, dropped when those contents change
+function forgetDerived() {
   speakerIndex = null; vocab = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
   lastRanked = null; originalsKnown = null; translitMap = null; lexiconAscii = null;
-  bitIndex = null; bitIndexTried = false; docOfIndex = null; scopeMasks = new Map();
+  bitIndex = null; bitIndexTried = false; docOfIndex = null; scopeMasks = new Map(); building = null; libraryGen++;
+  try { db && db.exec("DROP TABLE IF EXISTS temp.vocab"); } catch (_) {}
 }
 
 const methods = {
@@ -83,57 +90,8 @@ const methods = {
     await boot();
     const manifest = await (await fetch(manifestUrl, { cache: "no-store" })).json();
     const fileUrl = new URL(manifest.file + "?v=" + encodeURIComponent(manifest.version), manifestUrl).href;
-    const resp = await fetch(fileUrl, { cache: "no-store" });
-    if (!resp.ok) throw new Error(`could not download the library (${resp.status})`);
-    const total = manifest.bundle_size || Number(resp.headers.get("Content-Length")) || 0;
-    const reader = new ByteReader(resp.body, total, (loaded) => progress({ phase: "download", loaded, total }));
-
-    const magic = new TextDecoder().decode(await reader.exact(6));
-    if (magic !== "GLIB1\n") throw new Error("that file is not a library bundle");
-    const hlen = new DataView((await reader.exact(4)).buffer).getUint32(0);
-    const header = JSON.parse(new TextDecoder().decode(await reader.exact(hlen)));
-    const key = await deriveKey(passphrase, header);
-    const prefix = b64(header.nonce_prefix);
-
-    // Decrypt chunk by chunk into a gzip inflater; the inflated stream is fed
-    // straight into the database file.
-    const inflater = new DecompressionStream("gzip");
-    const writer = inflater.writable.getWriter();
-    const out = inflater.readable.getReader();
-    let producerError = null;
-    const producer = (async () => {
-      try {
-        for (let i = 0; i < header.chunks; i++) {
-          const clen = new DataView((await reader.exact(4)).buffer).getUint32(0);
-          const ct = await reader.exact(clen);
-          const iv = new Uint8Array(12);
-          iv.set(prefix, 0);
-          new DataView(iv.buffer).setUint32(8, i);
-          let plain;
-          try {
-            plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: u32(i) }, key, ct);
-          } catch (_) {
-            throw new Error(i === 0 ? "That passphrase does not unlock this library." : "The download was damaged; try again.");
-          }
-          await writer.write(new Uint8Array(plain));
-        }
-        await writer.close();
-      } catch (err) {
-        producerError = err;
-        try { await writer.abort(err); } catch (_) {}
-      }
-    })();
-
-    const chunks = [];
-    let written = 0;
-    const next = async () => {
-      const { value, done } = await out.read();
-      if (producerError) throw producerError;
-      if (done) return undefined;
-      written += value.byteLength;
-      progress({ phase: "install", loaded: written, total: header.plain_size || 0 });
-      return value;
-    };
+    const sealed = await openSealed(fileUrl, passphrase, manifest.bundle_size, progress, { kind: "library" });
+    const { header, next } = sealed;
 
     // The library in use stays open until the new one is downloaded, unpacked and
     // checked; a dropped connection halfway leaves the old library exactly as it was.
@@ -145,12 +103,12 @@ const methods = {
       try {
         await pool.importDb(target, next);
       } catch (err) {
-        await producer;
+        await sealed.done();
         discard(target);
-        throw producerError || err;
+        throw sealed.error() || err;
       }
-      await producer;
-      if (producerError) { discard(target); throw producerError; }
+      await sealed.done();
+      if (sealed.error()) { discard(target); throw sealed.error(); }
       const fresh = new pool.OpfsSAHPoolDb(target);
       let count = 0;
       try { count = fresh.selectValue("SELECT COUNT(*) FROM documents"); }
@@ -161,11 +119,7 @@ const methods = {
       tune(db);
       current = { slot: target, version: manifest.version, builtAt: manifest.built_at };
     } else {
-      let chunk;
-      while ((chunk = await next()) !== undefined) chunks.push(chunk);
-      await producer;
-      if (producerError) throw producerError;
-      const bytes = concat(chunks);
+      const bytes = await sealed.all();
       const fresh = new sqlite3.oo1.DB();
       const p = sqlite3.wasm.allocFromTypedArray(bytes);
       const rc = sqlite3.capi.sqlite3_deserialize(fresh.pointer, "main", p, bytes.length, bytes.length,
@@ -179,7 +133,85 @@ const methods = {
       tune(db);
       current = { slot: null, version: manifest.version, builtAt: manifest.built_at };
     }
+    void header;
     return { hasLibrary: true, mode, ...current, manifest };
+  },
+
+  // A newer build, applied as a delta: only the documents changed since this device's build
+  // are downloaded (a few megabytes rather than the whole library) and swapped in place, in
+  // one transaction, which is kept only if the result is exactly the published library.
+  // Mirrors gospel_library/delta.py apply_delta.
+  async applyDelta({ passphrase, manifestUrl }, progress) {
+    need();
+    if (exclusive) await exclusive.catch(() => {});
+    const work = (async () => {
+      const manifest = await (await fetch(manifestUrl, { cache: "no-store" })).json();
+      const have = current?.version || (metaValue("bundle") || {}).version || null;
+      const entry = (manifest.deltas || []).find((d) => d.from === have);
+      if (!entry) throw new Error("no delta from this build");
+      const url = new URL(entry.file + "?v=" + encodeURIComponent(manifest.version), manifestUrl).href;
+      const sealed = await openSealed(url, passphrase, entry.size, progress, { kind: "delta", from: have, version: manifest.version });
+      const bytes = await sealed.all();
+      progress({ phase: "install", loaded: 0, total: 1 });
+      db.exec("ATTACH DATABASE ':memory:' AS d");
+      let attached = true;
+      try {
+        const p = sqlite3.wasm.allocFromTypedArray(bytes);
+        const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, "d", p, bytes.length, bytes.length,
+          sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_RESIZEABLE);
+        if (rc) throw new Error("the update could not be read");
+        const info = Object.fromEntries(rows("SELECT key, value FROM d.delta_meta").map((r) => [r.key, JSON.parse(r.value)]));
+        if (info.from !== have) throw new Error("the update is for another build of the library");
+        const cols = (t) => rows(`PRAGMA ${t.includes(".") ? t.split(".")[0] + "." : ""}table_info(${t.split(".").pop()})`).map((r) => r.name);
+        const shared = (t) => { const a = new Set(cols(t)); return cols("d." + t).filter((c) => a.has(c)); };
+        forgetDerived();
+        db.exec("BEGIN");
+        try {
+          const gone = rows("SELECT id, par_first, par_last FROM documents WHERE uri IN (SELECT uri FROM d.documents UNION SELECT uri FROM d.removed)");
+          const haveVec = !!value("SELECT COUNT(*) FROM sqlite_master WHERE name='vecbits'");
+          for (const g of gone) {
+            if (g.par_first !== null) {
+              db.exec({ sql: "DELETE FROM paragraphs WHERE rowid BETWEEN ? AND ?", bind: [g.par_first, g.par_last] });
+              if (haveVec) db.exec({ sql: "DELETE FROM vecbits WHERE paragraph_id BETWEEN ? AND ?", bind: [g.par_first, g.par_last] });
+            }
+            db.exec({ sql: "DELETE FROM footnotes WHERE document_id=?", bind: [g.id] });
+            db.exec({ sql: "DELETE FROM documents WHERE id=?", bind: [g.id] });
+          }
+          const dc = shared("documents").join(",");
+          db.exec(`INSERT INTO documents(${dc}) SELECT ${dc} FROM d.documents`);
+          db.exec("INSERT INTO paragraphs(rowid, text, document_id, seq, pid, kind, verse) SELECT rowid, text, document_id, seq, pid, kind, verse FROM d.paragraphs");
+          db.exec("INSERT INTO footnotes(id, document_id, note_id, marker, pid, html, text, refs) SELECT id, document_id, note_id, marker, pid, html, text, refs FROM d.footnotes");
+          if (haveVec) db.exec("INSERT OR REPLACE INTO vecbits(paragraph_id, bits) SELECT paragraph_id, bits FROM d.vecbits");
+          else if (value("SELECT COUNT(*) FROM d.vecbits")) {
+            db.exec("CREATE TABLE vecbits(paragraph_id INTEGER PRIMARY KEY, bits BLOB NOT NULL)");
+            db.exec("INSERT INTO vecbits(paragraph_id, bits) SELECT paragraph_id, bits FROM d.vecbits");
+          }
+          const cc = shared("collections").join(","), bc = shared("books").join(",");
+          db.exec("DELETE FROM collections");
+          db.exec(`INSERT INTO collections(${cc}) SELECT ${cc} FROM d.collections`);
+          db.exec("DELETE FROM books");
+          db.exec(`INSERT INTO books(${bc}) SELECT ${bc} FROM d.books`);
+          db.exec("INSERT OR REPLACE INTO meta(key, value) SELECT key, value FROM d.meta");
+          const got = await libraryVersion();
+          const pars = value("SELECT COUNT(*) FROM paragraphs");
+          if (got !== info.to || pars !== info.paragraphs_total) throw new Error(`the update did not reproduce the library (${got} vs ${info.to}, ${pars} vs ${info.paragraphs_total} paragraphs)`);
+          db.exec("COMMIT");
+        } catch (err) {
+          try { db.exec("ROLLBACK"); } catch (_) {}
+          throw err;
+        } finally {
+          forgetDerived();
+        }
+        try { db.exec("DETACH DATABASE d"); } catch (_) {} attached = false;
+        progress({ phase: "install", loaded: 1, total: 1 });
+        current = { ...(current || {}), version: info.to, builtAt: manifest.built_at };
+        return { hasLibrary: true, mode, ...current, manifest, applied: { changed: info.documents_changed, removed: info.documents_removed, vectors: info.vecbits, bytes: bytes.length } };
+      } finally {
+        if (attached) { try { db.exec("DETACH DATABASE d"); } catch (_) {} }
+      }
+    })();
+    exclusive = work;
+    try { return await work; } finally { if (exclusive === work) exclusive = null; }
   },
 
   async manifest({ manifestUrl }) {
@@ -274,6 +306,86 @@ class ByteReader {
     this.buf = this.buf.slice(n);
     return out;
   }
+}
+
+// A sealed file (the library, a delta): the header is read and checked, then the chunks are
+// decrypted one by one into a gzip inflater; next() hands out the plain bytes as they come,
+// all() collects them, done() waits for the decrypting to finish (error() says how it went).
+async function openSealed(url, passphrase, total, progress, expect = {}) {
+  const resp = await fetch(url, { cache: "no-store" });
+  if (!resp.ok) throw new Error(`could not download the library (${resp.status})`);
+  total = total || Number(resp.headers.get("Content-Length")) || 0;
+  const reader = new ByteReader(resp.body, total, (loaded) => progress({ phase: "download", loaded, total }));
+  const magic = new TextDecoder().decode(await reader.exact(6));
+  if (magic !== "GLIB1\n") throw new Error("that file is not a library bundle");
+  const hlen = new DataView((await reader.exact(4)).buffer).getUint32(0);
+  const header = JSON.parse(new TextDecoder().decode(await reader.exact(hlen)));
+  for (const [k, v] of Object.entries(expect)) {
+    if (header[k] !== undefined && header[k] !== v) throw new Error(`that file is not the ${expect.kind || "library"} that was expected`);
+  }
+  const key = await deriveKey(passphrase, header);
+  const prefix = b64(header.nonce_prefix);
+  const inflater = new DecompressionStream("gzip");
+  const writer = inflater.writable.getWriter();
+  const out = inflater.readable.getReader();
+  let producerError = null;
+  const producer = (async () => {
+    try {
+      for (let i = 0; i < header.chunks; i++) {
+        const clen = new DataView((await reader.exact(4)).buffer).getUint32(0);
+        const ct = await reader.exact(clen);
+        const iv = new Uint8Array(12);
+        iv.set(prefix, 0);
+        new DataView(iv.buffer).setUint32(8, i);
+        let plain;
+        try {
+          plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: u32(i) }, key, ct);
+        } catch (_) {
+          throw new Error(i === 0 ? "That passphrase does not unlock this library." : "The download was damaged; try again.");
+        }
+        await writer.write(new Uint8Array(plain));
+      }
+      await writer.close();
+    } catch (err) {
+      producerError = err;
+      try { await writer.abort(err); } catch (_) {}
+    }
+  })();
+  let written = 0;
+  const next = async () => {
+    const { value, done } = await out.read();
+    if (producerError) throw producerError;
+    if (done) return undefined;
+    written += value.byteLength;
+    progress({ phase: "install", loaded: written, total: header.plain_size || 0 });
+    return value;
+  };
+  const done = () => producer;
+  const all = async () => {
+    const chunks = [];
+    let chunk;
+    while ((chunk = await next()) !== undefined) chunks.push(chunk);
+    await producer;
+    if (producerError) throw producerError;
+    return concat(chunks);
+  };
+  return { header, next, all, done, error: () => producerError };
+}
+
+// The library's version, computed the way the nightly build computes it (delta.py library_version):
+// the text, then everything else a device holds that can change on its own.
+async function libraryVersion() {
+  const lines = rows("SELECT uri, content_hash AS h FROM documents ORDER BY uri").map((r) => `${r.uri}:${r.h === null || r.h === undefined ? "None" : r.h}\n`).join("");
+  const content = (await sha256hex(lines)).slice(0, 16);
+  const table = ["vecbits", "vectors"].find((t) => value("SELECT COUNT(*) FROM sqlite_master WHERE name=?", [t]));
+  const v = table ? row(`SELECT COUNT(*) AS c, COALESCE(MAX(paragraph_id), 0) AS m FROM ${table}`) : { c: 0, m: 0 };
+  const model = (metaValue("embeddings") || {}).model || "";
+  const originals = (metaValue("originals") || {}).format || "";
+  return (await sha256hex(`${content}|vectors:${v.c}:${v.m}|model:${model}|originals:${originals}`)).slice(0, 16);
+}
+async function sha256hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function deriveKey(passphrase, header) {
@@ -1264,14 +1376,15 @@ async function loadSemantic(base, progress) {
 // The index: every paragraph's sign bits, read once per session. It is built in slices with a
 // breath between them, so a search typed while it builds is answered between slices instead
 // of waiting seconds for the whole table.
-let building = null;
+let building = null, libraryGen = 0; // libraryGen moves on whenever the library's contents change
 function buildSemanticIndex(progress) {
   if (bitIndex) return Promise.resolve(bitIndex);
   if (building) return building;
   if (bitIndexTried || !Sem || !haveVectors()) return Promise.resolve(null);
   bitIndexTried = true;
+  const gen = libraryGen;
   building = (async () => {
-    const breathe = () => new Promise((r) => setTimeout(r, 0));
+    const breathe = async () => { await new Promise((r) => setTimeout(r, 0)); if (gen !== libraryGen) throw new Error("the library changed while the index was being built"); };
     try {
       const info = embeddingsInfo();
       const dims = info.dims || Sem.MODEL.dims, bytes = dims >> 3;
@@ -1312,14 +1425,14 @@ function buildSemanticIndex(progress) {
       }
       const docs = new Int32Array(i);
       for (let k = 0; k < i; k++) docs[k] = ids[k] <= maxId ? docByRow[ids[k]] : 0;
-      if (!db) return null;
+      if (!db || gen !== libraryGen) return null;
       docOfIndex = docs;
       bitIndex = new Sem.BitIndex(ids.subarray(0, i), bits.subarray(0, i * bytes), dims);
       return bitIndex;
     } catch (err) {
       console.warn("meaning index not built:", err?.message);
       return null;
-    } finally { building = null; }
+    } finally { if (gen === libraryGen) building = null; }
   })();
   return building;
 }

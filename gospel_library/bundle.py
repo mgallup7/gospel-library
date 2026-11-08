@@ -180,6 +180,11 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
     out_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    # a vector whose paragraph is gone would be counted in the version here and dropped on the
+    # device when a delta removes its document, so the two would never agree: drop it first
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='vectors'").fetchone():
+        conn.execute("DELETE FROM vectors WHERE paragraph_id NOT IN (SELECT rowid FROM paragraphs)")
+        conn.commit()
     version = content_version(conn)
     s = stats(conn)
     cached = db_counts(conn)

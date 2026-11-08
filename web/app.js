@@ -20,7 +20,7 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const wide = () => window.matchMedia("(min-width: 760px)").matches; // two panes from an iPad in portrait up (app.css agrees)
   const monthName = (m) => (m === 4 ? "April" : m === 10 ? "October" : "");
-  const mb = (n) => `${(n / 1048576).toFixed(n > 50 * 1048576 ? 0 : 1)} MB`;
+  const mb = (n) => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(n > 50 * 1048576 ? 0 : 1)} MB`;
   const BASE = new URL(".", document.baseURI);
   const MANIFEST_URL = new URL("data/manifest.json", BASE).href;
   const store = {
@@ -368,39 +368,54 @@
     listPane.replaceChildren(el("div", { class: "setup" }, [el("h1", { text: "Something is wrong" }), el("p", { class: "lede", text })]));
   }
 
-  // A newer library on the server? Offer it; install into the other slot, then switch.
+  // A newer library on the server? Offer it. When the server has a delta from this device's
+  // build, only what changed is downloaded and applied in place; otherwise, or if that fails,
+  // the whole library is installed into the other slot and the app switches to it.
   async function checkForUpdate() {
     if (!navigator.onLine) return;
     const active = store.get("active");
     let manifest;
     try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { return; }
     if (!active || manifest.version === active.version) return;
+    const delta = (manifest.deltas || []).find((d) => d.from === active.version && d.size < manifest.bundle_size * 0.6) || null;
+    const when = new Date(manifest.built_at).toLocaleDateString([], { month: "short", day: "numeric" });
     const banner = el("div", { class: "banner" }, [
-      el("span", { text: `A newer library is available (built ${new Date(manifest.built_at).toLocaleDateString([], { month: "short", day: "numeric" })}, ${mb(manifest.bundle_size)}).` }),
-      el("button", { class: "text-btn", text: "Update now", onclick: () => updateNow(banner, manifest) }),
+      el("span", { text: delta
+        ? `A newer library is available (built ${when}): ${delta.documents_changed} ${delta.documents_changed === 1 ? "page" : "pages"} changed, ${mb(delta.size)} to download.`
+        : `A newer library is available (built ${when}, ${mb(manifest.bundle_size)}).` }),
+      el("button", { class: "text-btn", text: "Update now", onclick: () => updateNow(banner, manifest, delta) }),
       el("button", { class: "icon-btn", "aria-label": "Later", text: "×", onclick: () => banner.remove() }),
     ]);
     $("header.bar").after(banner);
   }
-  async function updateNow(banner, manifest) {
+  async function updateNow(banner, manifest, delta = null) {
     const active = store.get("active");
     const passphrase = store.get("passphrase");
-    const slot = active?.slot === "/library-a.sqlite" ? "/library-b.sqlite" : "/library-a.sqlite";
     const label = $("span", banner);
     for (const b of banner.querySelectorAll("button")) b.disabled = true;
+    const onProgress = (whole) => (p) => {
+      const pct = p.total ? Math.round((p.loaded / p.total) * 100) : 0;
+      label.textContent = p.phase === "download" ? `Downloading ${whole ? "the new library" : "what changed"}… ${pct}%` : whole ? `Unpacking… ${pct}%` : "Applying…";
+    };
+    let result = null;
+    if (delta && active?.version === delta.from) {
+      try { result = await call("applyDelta", { passphrase, manifestUrl: MANIFEST_URL }, onProgress(false)); }
+      catch (err) { console.warn("delta update failed, installing the whole library:", err?.message); result = null; }
+    }
     try {
-      const result = await call("install", { passphrase, manifestUrl: MANIFEST_URL, slot }, (p) => {
-        const pct = p.total ? Math.round((p.loaded / p.total) * 100) : 0;
-        label.textContent = p.phase === "download" ? `Downloading the new library… ${pct}%` : `Unpacking… ${pct}%`;
-      });
+      if (!result) {
+        const slot = active?.slot === "/library-a.sqlite" ? "/library-b.sqlite" : "/library-a.sqlite";
+        result = await call("install", { passphrase, manifestUrl: MANIFEST_URL, slot }, onProgress(true));
+        if (active?.slot && active.slot !== result.slot) call("forget", { slot: active.slot }).catch(() => {});
+      }
       store.set("active", { slot: result.slot, version: result.version, builtAt: result.builtAt, mode: result.mode });
-      if (active?.slot && active.slot !== result.slot) call("forget", { slot: active.slot }).catch(() => {});
       banner.remove();
       currentDoc = null;
       statsCache = null;
       try { window.dispatchEvent(new CustomEvent("library:change")); } catch (_) {}
       render();
       setTimeout(loadSemantic, 1500);
+      if (result.applied) toast(`Library updated: ${result.applied.changed} ${result.applied.changed === 1 ? "page" : "pages"} changed.`);
     } catch (err) {
       label.textContent = `Update failed: ${err.message}`;
       for (const b of banner.querySelectorAll("button")) b.disabled = false;
@@ -1558,7 +1573,7 @@
   }
   async function loadSemantic() {
     try { semState = await api("semanticStatus", {}); } catch (_) { return; }
-    if (!semState.available || semState.ready) return;
+    if (!semState.available || (semState.ready && semState.loaded)) return; // model and index both in place
     // the home screen's footer line shows the download, then that meaning search is on
     const note = (text) => {
       const f = $("#homeStatus"); if (!f) return;
