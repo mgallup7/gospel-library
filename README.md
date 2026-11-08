@@ -172,7 +172,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   volume (the service missionary edition of the Missionary Standards, this
   year's Come, Follow Me, the Topical Guide), and the tools can keep to one
   or leave one out, so "exclude the service missionary edition" is honored. It
-  keeps searching until it has what it needs, then writes. Every passage found
+  keeps searching until it has what it needs, then writes; when its searches
+  run out it writes from what it found, so an answer always comes, and a call
+  that stalls is stopped with a plain message to try again. Every passage found
   appears as a card under the answer (book and verse, or speaker, talk and
   conference, with the full text) that you can open, present, or tick onto
   the deck; the passages Claude cites are badged and listed first. It thinks

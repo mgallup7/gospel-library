@@ -251,7 +251,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       el("h2", { text: "Ask settings" }),
       el("label", {}, ["Model for answers", model]),
       el("label", { class: "row-check" }, [think, " Let it think before it answers (you see the thinking as it goes; slower, uses more tokens)"]),
-      el("label", { class: "row-check" }, [planner, " Let a fast model plan the searches first (better recall, one extra cheap call)"]),
+      el("label", { class: "row-check" }, [planner, " When you press Return in the search box, let Claude propose a few more searches and add what they find (one quick, cheap call)"]),
       el("label", {}, ["API key", key]),
       el("div", { class: "ask-actions" }, [
         el("button", { type: "button", class: "primary", text: "Save", onclick: () => { settings.model = model.value; settings.planner = planner.checked; settings.think = think.checked; settings.key = key.value.trim(); render(container); } }),
@@ -347,12 +347,15 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     if (/401|authentication|invalid x-api-key/i.test(m)) return "The API key was not accepted. Check it in settings (the gear).";
     if (/429|rate/i.test(m)) return "Claude is rate-limited right now; try again in a moment.";
     if (/402|credit|billing/i.test(m)) return "The Claude account has no credit. Add a payment method at console.anthropic.com.";
+    if (err?.name === "TimeoutError") return m;
     if (/Failed to fetch|NetworkError|load failed/i.test(m)) return "Could not reach Claude. Check the connection.";
     return `Something went wrong: ${m}`;
   }
 
   // The search box uses this to widen a question with a few more queries.
+  // With the setting off it asks Claude nothing and proposes nothing.
   async function planQueries(text) {
+    if (!settings.planner) return { queries: [], references: [] };
     const history = thread.slice(-4).map((m) => `${m.role}: ${m.content.slice(0, 600)}`).join("\n");
     const user = (history ? `Earlier turns:\n${history}\n\n` : "") + `Request: ${text}`;
     const out = await complete({ model: PLANNER_MODEL, system: PLANNER, messages: [{ role: "user", content: user }], max_tokens: 400, stream: false });
@@ -554,20 +557,22 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     // thinking a page through starts fresh: the page is the whole context
     const messages = [...(mode === "think" ? [] : thread).map((m) => ({ role: m.role, content: m.content })), { role: "user", content: first }];
     let calls = 0, finalText = "";
-    for (let turn = 0; turn < MAX_TOOL_CALLS + 4; turn++) {
-      let buffer = "", pending = false;
+    const ask = (tool_choice) => {
+      let buffer = "", pending = false, thought = "";
       const flush = () => { pending = false; answerEl.innerHTML = markdown(buffer, registry.list); };
-      let thought = "";
-      const res = await complete({
+      return complete({
         // The tools list must be the same on every request of a turn: a thinking
         // block is bound to the tools it was made with, and a changed list is a 400.
-        model: settings.model, system: systemFor(mode), messages, tools: TOOLS,
+        model: settings.model, system: systemFor(mode), messages, tools: TOOLS, tool_choice,
         max_tokens: mode === "ask" ? 16000 : 20000, stream: true, thinking: settings.think,
         onDelta: (t) => { buffer += t; if (!pending) { pending = true; requestAnimationFrame(flush); } },
         onThinking: (t) => { thought = (thought + t).slice(-2000); statusEl.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
-      });
+      }).then((res) => { buffer = res.text; flush(); return res; });
+    };
+    for (let turn = 0; turn < MAX_TOOL_CALLS + 4; turn++) {
+      const res = await ask();
       finalText = res.text;
-      if (res.stop_reason !== "tool_use" || !res.tool_uses.length) { buffer = res.text; flush(); break; }
+      if (res.stop_reason !== "tool_use" || !res.tool_uses.length) break;
       // run the tools, show what is being searched, feed results back
       messages.push({ role: "assistant", content: res.blocks });
       const results = [];
@@ -626,7 +631,25 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       messages.push({ role: "user", content: results });
       statusEl.textContent = `${registry.list.length} passages so far. Claude is thinking…`;
     }
+    // The loop can end on a turn that only asked for tools, or one with no
+    // words in it; then one more request, with tools off, so the reply always
+    // ends in an answer.
+    if (!finalText.trim()) {
+      statusEl.textContent = `${registry.list.length} passages found. Claude is writing the answer…`;
+      nudge(messages, "Write the answer now from the passages already found. No more searches are available.");
+      finalText = (await ask({ type: "none" })).text;
+    }
     return finalText;
+  }
+
+  // Adds a line of instruction to the last user turn (a tool-result turn or the
+  // question), so the request still alternates user and assistant.
+  function nudge(messages, note) {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "user") { messages.push({ role: "user", content: note }); return messages; }
+    if (typeof last.content === "string") last.content = [{ type: "text", text: last.content }];
+    last.content = [...last.content, { type: "text", text: note }];
+    return messages;
   }
 
   function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log, trail = []) {
@@ -852,15 +875,43 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   });
 
   // ------------------------------------------------------------ transport --
-  async function complete({ model, system, messages, max_tokens, stream, onDelta, onThinking, tools, thinking }) {
+  // How long to wait: a whole answer that does not stream, or a stream that
+  // goes quiet (it sends pings while it thinks, so silence means it is stuck).
+  const CALL_TIMEOUT_MS = 60000;
+  const STALL_TIMEOUT_MS = 90000;
+  function timeoutError() {
+    const e = new Error("Claude did not answer in time; try again.");
+    e.name = "TimeoutError";
+    return e;
+  }
+
+  async function complete({ model, system, messages, max_tokens, stream, onDelta, onThinking, tools, tool_choice, thinking }) {
     const body = { model, system, messages, max_tokens, stream: !!stream };
     if (tools) body.tools = tools;
+    if (tools && tool_choice) body.tool_choice = tool_choice;
     // Adaptive thinking: the model reasons before it answers and between tool
     // calls, as much as the question needs. max_tokens caps thinking and
     // answer together. Its thinking blocks come back signed and must be
     // returned unchanged on the next turn of a tool loop.
     if (thinking) { body.thinking = { type: "adaptive", display: "summarized" }; body.output_config = { effort: "high" }; }
+    // One timer: for a plain call it runs once; for a stream it starts again
+    // with every chunk that arrives.
+    const ctl = new AbortController();
+    let timer = null, timedOut = false;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; ctl.abort(); }, stream ? STALL_TIMEOUT_MS : CALL_TIMEOUT_MS); };
+    arm();
+    try {
+      return await send(body, ctl.signal, stream ? arm : () => {}, { stream, onDelta, onThinking, tools });
+    } catch (err) {
+      throw timedOut ? timeoutError() : err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function send(body, signal, alive, { stream, onDelta, onThinking, tools }) {
     const r = await fetch(API_URL, {
+      signal,
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -887,6 +938,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
+      alive();
       buf += decoder.decode(value, { stream: true });
       let idx;
       while ((idx = buf.indexOf("\n\n")) >= 0) {

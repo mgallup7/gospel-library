@@ -71,16 +71,33 @@ self.onmessage = async (e) => {
   }
 };
 
-async function boot() {
-  if (sqlite3) return;
+// One boot, shared: with the retries below it can take a few seconds, and a
+// second call meanwhile must wait for it rather than find sqlite3 half set up.
+let booting = null;
+function boot() { return booting || (booting = bootOnce().catch((err) => { booting = null; throw err; })); }
+async function bootOnce() {
   sqlite3 = await sqlite3InitModule({ print: () => {}, printErr: (m) => console.warn("[sqlite]", m) });
   if (typeof sqlite3.installOpfsSAHPoolVfs === "function") {
+    // A reload starts this worker before the old one has let go of the access
+    // handles, so a lock is first taken as a moment's wait: try again every
+    // 400 ms for about 2.5 s, and only then call it another tab. A failed try
+    // must keep the files (by default sqlite would try to delete the pool) and
+    // the next must not be handed the cached failure.
+    const isLock = (err) => /NoModificationAllowedError|createSyncAccessHandle|access handle/i.test(String(err?.name || "") + " " + String(err?.message || ""));
     try {
-      pool = await sqlite3.installOpfsSAHPoolVfs({ name: "gospel-library", initialCapacity: 6 });
+      for (let attempt = 0; ; attempt++) {
+        try {
+          pool = await sqlite3.installOpfsSAHPoolVfs({ name: "gospel-library", initialCapacity: 6, preserveOnInitFailure: true, forceReinitIfPreviouslyFailed: true });
+          break;
+        } catch (err) {
+          if (!isLock(err) || attempt >= 6) throw err;
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
       mode = "opfs";
     } catch (err) {
       // Another tab or window has the storage open: say so, rather than offering the download again
-      locked = /NoModificationAllowedError|createSyncAccessHandle|access handle/i.test(String(err?.name || "") + " " + String(err?.message || ""));
+      locked = isLock(err);
       console.warn(locked ? "the library's storage is open in another tab" : "OPFS not available, library will live in memory for this session:", err?.message);
       pool = null;
       mode = "memory";
