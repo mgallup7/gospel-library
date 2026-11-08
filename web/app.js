@@ -974,6 +974,8 @@
     refreshTrailButtons();
     focusParagraph(state.pid, { scroll });
     updateThinkFab();
+    // on a phone the page replaces the list, so the way back is what a keyboard or VoiceOver user meets first
+    if (!wide() && doPush) { const back = readerPane.querySelector(".trail-back"); if (back) try { back.focus({ preventScroll: true }); } catch (_) {} }
     const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(state.pid || "") ? Number(state.pid.slice(1)) : null;
     store.set("lastRead", { id: currentDoc.id, title: currentDoc.title, where: crumbFor(currentDoc), pid: state.pid || null, verse });
   }
@@ -1029,6 +1031,15 @@
     readerPane.scrollTop = 0;
     body.addEventListener("click", onBodyClick);
     body.addEventListener("click", onSelectClick);
+    for (const unit of body.querySelectorAll("p.verse, .body-block p[id], .body-block li[id]")) unit.tabIndex = 0;
+    body.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const unit = e.target.closest("p.verse, .body-block p[id], .body-block li[id]");
+      if (!unit || e.target !== unit) return;
+      e.preventDefault();
+      unit.classList.toggle("sel");
+      updateSelectBar();
+    });
     window.Original?.attach(doc, body, bar);
     body.addEventListener("dblclick", (e) => {
       const unit = e.target.closest("p, h2, h3, li");
@@ -1596,8 +1607,10 @@
   }
   stage.addEventListener("pointerdown", wakeControls, { passive: true });
   stage.addEventListener("pointermove", wakeControls, { passive: true });
+  let stageOpener = null;
   function openStage(next) {
     show = { ...next, scale: store.get("stageScale", 1) };
+    stageOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     document.body.classList.add("presenting");
     wakeControls();
     stage.classList.toggle("themed", !!next.theme);
@@ -1605,6 +1618,8 @@
     stage.hidden = false;
     updateThinkFab();
     renderStage();
+    stage.tabIndex = -1;
+    try { stage.focus({ preventScroll: true }); } catch (_) {}
     if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().catch(() => {});
     try { navigator.wakeLock?.request("screen").then((l) => { show.lock = l; }).catch(() => {}); } catch (_) {}
   }
@@ -1619,8 +1634,13 @@
     updateThinkFab();
     stage.classList.remove("themed");
     document.body.classList.remove("presenting");
-    if (document.fullscreenElement) document.exitFullscreen?.().catch?.(() => {});
     if (atPid) focusParagraph(atPid);
+    // focus goes back to what opened the stage, once the screen is out of full-screen (nothing outside it can take focus before)
+    const back = stageOpener && stageOpener.isConnected ? stageOpener : (atPid ? readerPane.querySelector(`#${CSS.escape(atPid)}`) : null);
+    stageOpener = null;
+    const restore = () => { if (back && back.isConnected) { try { back.focus({ preventScroll: true }); } catch (_) {} } };
+    if (document.fullscreenElement) { const p = document.exitFullscreen?.(); if (p && p.then) p.then(restore, restore); else restore(); }
+    else restore();
   }
 
   function renderStage() {
@@ -1718,9 +1738,12 @@
     }
     openSheet("Footnote");
   }
+  let sheetOpener = null;
   function openSheet(label) {
     sheet.setAttribute("aria-label", label);
+    const wasHidden = sheet.hidden;
     sheet.hidden = false;
+    if (wasHidden) { sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); }
     if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: hideNote }); scrim.id = "scrim"; document.body.append(scrim); }
     $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
@@ -1731,7 +1754,21 @@
       followLink(href);
     };
   }
-  function hideNote() { sheet.hidden = true; $("#scrim")?.remove(); }
+  function hideNote() {
+    const wasOpen = !sheet.hidden;
+    sheet.hidden = true; $("#scrim")?.remove();
+    if (wasOpen && sheetOpener && sheetOpener.isConnected) { try { sheetOpener.focus({ preventScroll: true }); } catch (_) {} }
+    sheetOpener = null;
+  }
+  sheet.tabIndex = -1;
+  sheet.addEventListener("keydown", (e) => { // Tab stays within the sheet while it is open
+    if (e.key !== "Tab") return;
+    const focusables = [...sheet.querySelectorAll("button, [href], input, textarea, select, [tabindex]:not([tabindex='-1'])")].filter((n) => !n.disabled && n.offsetParent !== null);
+    if (!focusables.length) return;
+    const first = focusables[0], last = focusables[focusables.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === sheet)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
   $(".close", sheet).addEventListener("click", hideNote);
 
   // ----------------------------------------------------------- controls ----

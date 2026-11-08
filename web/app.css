@@ -54,7 +54,10 @@ body {
 }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; touch-action: manipulation; }
 .doc, .bcard, .hit, .toc-row, .shelf-tile { touch-action: manipulation; }
-button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.doc p:focus-visible, .doc li:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.doc p:focus:not(:focus-visible), .doc li:focus:not(:focus-visible) { outline: none; }
+.sheet:focus, .stage:focus { outline: none; }
 a { color: var(--accent); }
 mark { background: var(--mark); color: var(--mark-ink); border-radius: 2px; padding: 0 1px; }
 [hidden] { display: none !important; }
