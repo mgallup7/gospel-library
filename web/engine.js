@@ -43,7 +43,9 @@ async function boot() {
       pool = await sqlite3.installOpfsSAHPoolVfs({ name: "gospel-library", initialCapacity: 6 });
       mode = "opfs";
     } catch (err) {
-      console.warn("OPFS not available, library will live in memory for this session:", err?.message);
+      // Another tab or window has the storage open: say so, rather than offering the download again
+      locked = /NoModificationAllowedError|createSyncAccessHandle|access handle/i.test(String(err?.name || "") + " " + String(err?.message || ""));
+      console.warn(locked ? "the library's storage is open in another tab" : "OPFS not available, library will live in memory for this session:", err?.message);
       pool = null;
       mode = "memory";
     }
@@ -51,6 +53,7 @@ async function boot() {
     mode = "memory";
   }
 }
+let locked = false;
 
 // Closes the open library and forgets everything derived from it (search
 // caches, the speaker index, the meaning index), so a newer library starts clean.
@@ -73,7 +76,7 @@ const methods = {
       return { hasLibrary: true, mode, ...current };
     }
     current = null;
-    return { hasLibrary: false, mode, files: mode === "opfs" ? pool.getFileNames() : [] };
+    return { hasLibrary: false, mode, locked, files: mode === "opfs" ? pool.getFileNames() : [] };
   },
 
   async install({ passphrase, manifestUrl, slot }, progress) {
@@ -132,19 +135,29 @@ const methods = {
       return value;
     };
 
-    closeDb();
+    // The library in use stays open until the new one is downloaded, unpacked and
+    // checked; a dropped connection halfway leaves the old library exactly as it was.
+    const discard = (target) => { try { pool.unlink(target); } catch (_) {} };
     if (mode === "opfs") {
       const target = slot || "/library-a.sqlite";
+      if (current && current.slot === target) closeDb();  // writing over the one in use: it has to be closed first
       if (pool.getFileNames().includes(target)) pool.unlink(target);
       try {
         await pool.importDb(target, next);
       } catch (err) {
         await producer;
+        discard(target);
         throw producerError || err;
       }
       await producer;
-      if (producerError) { try { pool.unlink(target); } catch (_) {} throw producerError; }
-      db = new pool.OpfsSAHPoolDb(target);
+      if (producerError) { discard(target); throw producerError; }
+      const fresh = new pool.OpfsSAHPoolDb(target);
+      let count = 0;
+      try { count = fresh.selectValue("SELECT COUNT(*) FROM documents"); }
+      catch (_) { try { fresh.close(); } catch (__) {} discard(target); throw new Error("the downloaded library could not be read"); }
+      if (!count) { try { fresh.close(); } catch (_) {} discard(target); throw new Error("the downloaded library is empty"); }
+      closeDb();
+      db = fresh;
       tune(db);
       current = { slot: target, version: manifest.version, builtAt: manifest.built_at };
     } else {
@@ -153,16 +166,19 @@ const methods = {
       await producer;
       if (producerError) throw producerError;
       const bytes = concat(chunks);
-      db = new sqlite3.oo1.DB();
+      const fresh = new sqlite3.oo1.DB();
       const p = sqlite3.wasm.allocFromTypedArray(bytes);
-      const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, "main", p, bytes.length, bytes.length,
+      const rc = sqlite3.capi.sqlite3_deserialize(fresh.pointer, "main", p, bytes.length, bytes.length,
         sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_RESIZEABLE);
-      if (rc) throw new Error("could not load the library into memory");
+      if (rc) { try { fresh.close(); } catch (_) {} throw new Error("could not load the library into memory"); }
+      let count = 0;
+      try { count = fresh.selectValue("SELECT COUNT(*) FROM documents"); } catch (_) { try { fresh.close(); } catch (__) {} throw new Error("the downloaded library could not be read"); }
+      if (!count) { try { fresh.close(); } catch (_) {} throw new Error("the downloaded library is empty"); }
+      closeDb();
+      db = fresh;
       tune(db);
       current = { slot: null, version: manifest.version, builtAt: manifest.built_at };
     }
-    const check = value("SELECT COUNT(*) FROM documents");
-    if (!check) throw new Error("the downloaded library is empty");
     return { hasLibrary: true, mode, ...current, manifest };
   },
 
@@ -232,7 +248,7 @@ const methods = {
 };
 
 function need() { if (!db) throw new Error("no library is loaded yet"); }
-function tune(d) { d.exec("PRAGMA temp_store=MEMORY; PRAGMA cache_size=-16000;"); }
+function tune(d) { d.exec("PRAGMA temp_store=MEMORY; PRAGMA cache_size=-48000;"); } // 48 MB of page cache: the FTS index of a 150 MB library
 
 // --------------------------------------------------------------- helpers ----
 class ByteReader {
@@ -352,10 +368,11 @@ function speakersBySurname() {
 }
 
 async function search(params) {
-  const { q, scope = null, typeahead = false, light = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, edition = null, exclude_edition = null, group = "passages" } = params;
+  const { q, scope = null, typeahead = false, light = false, asTyped = false, limit = 40, offset = 0, speaker = null, from = null, to = null, book = null, edition = null, exclude_edition = null, group = "passages" } = params;
   const t0 = performance.now();
   // Hebrew or Greek letters, or a Strong's number, search the original texts.
-  if (group === "passages" && originalKind(q) && haveOriginals()) {
+  const bibleScope = !scope || ["all", "scriptures", "ot", "nt", "bible"].includes(scope);
+  if (group === "passages" && bibleScope && originalKind(q) && haveOriginals()) {
     const r = originalSearch({ q, limit, offset, scope });
     r.ms = Math.round((performance.now() - t0) * 10) / 10;
     return r;
@@ -366,9 +383,9 @@ async function search(params) {
   // together, the exact phrase first, hits folded by chapter or talk. The
   // list is kept so "show more" needs no second embedding.
   // (a "light" search, the kind Claude's widening pass runs, goes by words alone and is not kept)
-  const key = JSON.stringify([q, scope, speaker, from, to, book, edition, exclude_edition, semReady()]);
+  const key = JSON.stringify([q, scope, speaker, from, to, book, edition, exclude_edition, asTyped, semReady()]);
   if (!typeahead && !light && lastRanked && lastRanked.key === key) return page(lastRanked.out, offset, limit, t0);
-  const out = await rankedSearch(q, { ...filters, typeahead, light });
+  const out = await rankedSearch(q, { ...filters, typeahead, light, asTyped });
   if (!typeahead && !light) lastRanked = { key, out };
   return page(out, offset, limit, t0);
 }
@@ -403,12 +420,15 @@ function baseQuery(q, { scope, speaker, from, to, book, edition, exclude_edition
 }
 
 async function rankedSearch(q, opts) {
-  const { scope, typeahead, light = false } = opts;
+  const { scope, typeahead, light = false, asTyped = false } = opts;
   const out = { query: q, hits: [], total: 0, documents: [], jump: null, titles: [], smart: null };
   const raw = String(q || "").trim();
   const explicit = /"|(^|\s)-\w|\b(OR|AND|NOT)\b|\w+:\S/.test(raw);
   const natural = !explicit && isNatural(raw);
-  const fixed = !explicit ? correctTypos(raw, { typeahead }) : { text: raw, changes: [] };
+  // A transliterated Hebrew or Greek word ("hesed", "logos") is looked up before the typo
+  // corrector can turn it into an English word it is not; the hint leads the results.
+  const hint = !typeahead && !light ? transliterationHint(raw) : null;
+  const fixed = !explicit && !asTyped && !hint ? correctTypos(raw, { typeahead }) : { text: raw, changes: [] };
   const n = natural ? naturalQuery(fixed.text, speakersBySurname()) : null;
   const cq = baseQuery(natural ? termsOnly(n) : fixed.text, opts);
   if (n) {
@@ -421,7 +441,7 @@ async function rankedSearch(q, opts) {
   const scoped = cq.collections.length > 0;
   // a reference typed ("Alma 32:21", "d&c 76 22") opens the chapter
   if (!(cq.speaker || cq.yearFrom)) {
-    const ref = S.parseReference(raw);
+    const ref = S.parseReference(raw.replace(/\s*[;.]\s*(?=\d)/g, ":")) || (fixed.text !== raw ? S.parseReference(fixed.text.replace(/\s*[;.]\s*(?=\d)/g, ":")) : null);
     if (ref) {
       const r = row("SELECT id, title FROM documents WHERE uri=?", [ref.uri]);
       out.jump = { label: ref.label, uri: ref.uri, pid: ref.pid, doc_id: r ? r.id : null, title: r ? r.title : S.citation(ref.book, ref.chapter), verse_end: ref.verseEnd };
@@ -477,7 +497,7 @@ async function rankedSearch(q, opts) {
   }
   // 3. The meaning, when the model is here and this is a real search, not a keystroke or a request for exact words.
   let semantic = false;
-  if (!typeahead && !light && !explicit && semReady() && semanticIndex()) {
+  if (!typeahead && !light && !explicit && !out.jump && semReady() && semanticIndex()) {
     try {
       const cands = await semanticCandidates(fixed.text, cq, 150);
       if (!db) throw new Error("the library was replaced during the search");
@@ -497,29 +517,40 @@ async function rankedSearch(q, opts) {
     scored.push({ s, e });
   }
   scored.sort((a, b) => b.s - a.s || a.e.hit.paragraph_id - b.e.hit.paragraph_id);
-  // 5. Fold hits from one chapter or talk under its best one.
+  // 5. Fold hits from one chapter or talk under its best one: the rest in reading order,
+  //    and the label's count is the chapter's real count of matching passages, not the sample's.
   const heads = [], byDoc = new Map();
   for (const { e } of scored) {
     const h = e.hit;
     const head = byDoc.get(h.doc_id);
-    if (head) { if (head.more.length < 6) head.more.push(h); continue; }
+    if (head) { if (head.more.length < 8) head.more.push(h); continue; }
     h.more = [];
     byDoc.set(h.doc_id, h);
     heads.push(h);
+  }
+  for (const h of heads) h.more.sort((a, b) => (a.seq ?? a.paragraph_id) - (b.seq ?? b.paragraph_id));
+  if (!typeahead && cq.match) {
+    const top = heads.slice(0, 40).filter((h) => h.more.length);
+    if (top.length) {
+      try {
+        const counts = new Map(rows(`SELECT p.document_id AS d, COUNT(*) AS n FROM paragraphs p WHERE paragraphs MATCH ? AND p.document_id IN (${top.map(() => "?").join(",")}) GROUP BY p.document_id`, [cq.match, ...top.map((h) => h.doc_id)]).map((r) => [r.d, r.n]));
+        for (const h of top) h.more_total = Math.max(h.more.length + 1, counts.get(h.doc_id) || 0);
+      } catch (_) { /* the sample's count will do */ }
+    }
   }
   // 6. Context around the best few: the verse or paragraph before and after.
   for (const h of heads.slice(0, typeahead || light ? 0 : 3)) Object.assign(h, neighbors(h));
   out.hits = heads;
   out.total = heads.length;
   out.lexical_total = Math.max(lexTotal, exactTotal);
-  out.smart = { terms: n ? n.terms : cq.terms, speaker: cq.speaker, scope: n && n.scope ? n.scope : (scope && scope !== "all" ? scope : null), book: cq.bookSlug, years: cq.yearFrom ? [cq.yearFrom, cq.yearTo] : null, corrected: fixed.changes, exact: exactTotal > 0, semantic, natural: !!n };
+  out.smart = { terms: n ? n.terms : cq.terms, speaker: cq.speaker, scope: n && n.scope ? n.scope : (scope && scope !== "all" ? scope : null), book: cq.bookSlug, years: cq.yearFrom || cq.yearTo ? [cq.yearFrom || null, cq.yearTo || null] : null, corrected: fixed.changes, exact: exactTotal > 0, semantic, natural: !!n };
   if (terms.length) out.titles = titleMatches(terms, cq);
-  if (!typeahead && !light) out.original_hint = transliterationHint(raw);
+  out.original_hint = hint;
   return out;
 }
 function termsOnly(n) { return (n.terms || []).join(" "); }
 function hitOf(r, words) {
-  return { ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text,
+  return { ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, seq: r.seq,
     snippet: r.kind === "verse" || (r.text && r.text.length <= 900) ? markTerms(r.text, words) : (r.snip ? highlight(r.snip) : markTerms(r.text, words)),
     citation: citation(r, r.verse) };
 }
@@ -647,7 +678,7 @@ function whereParts(cq) {
 // pass carries only rowids and ranks (and the joins only when a filter needs
 // them); the text, the snippet and the document come afterwards for the few
 // rows that made the cut.
-const PASSAGE_COLS = `p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text,
+const PASSAGE_COLS = `p.rowid AS paragraph_id, p.document_id, p.pid, p.kind, p.verse, p.text, p.seq,
                       d.uri, d.title, d.author, d.author_role, d.year, d.month, d.session, d.date,
                       d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title`;
 const PASSAGE_FROM = " FROM paragraphs p JOIN documents d ON d.id = p.document_id JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id";
@@ -1175,46 +1206,73 @@ function semanticStatus() {
 async function loadSemantic(base, progress) {
   if (!Sem || !haveVectors()) return semanticStatus();
   await Sem.load({ base, onProgress: (p) => progress && progress({ phase: "model", ...p }) });
-  progress && progress({ phase: "index", loaded: 0, total: 1 });
-  semanticIndex();
-  progress && progress({ phase: "index", loaded: 1, total: 1 });
+  await buildSemanticIndex(progress);
   return semanticStatus();
 }
-// Reads every paragraph's bits once per session (a second or two).
-function semanticIndex() {
-  if (bitIndex) return bitIndex;
-  if (bitIndexTried || !Sem || !haveVectors()) return null;
+// The index: every paragraph's sign bits, read once per session. It is built in slices with a
+// breath between them, so a search typed while it builds is answered between slices instead
+// of waiting seconds for the whole table.
+let building = null;
+function buildSemanticIndex(progress) {
+  if (bitIndex) return Promise.resolve(bitIndex);
+  if (building) return building;
+  if (bitIndexTried || !Sem || !haveVectors()) return Promise.resolve(null);
   bitIndexTried = true;
-  try {
-    const info = embeddingsInfo();
-    const dims = info.dims || Sem.MODEL.dims, bytes = dims >> 3;
-    const n = value("SELECT COUNT(*) FROM vecbits") || 0;
-    if (!n) return null;
-    const ids = new Int32Array(n), bits = new Uint8Array(n * bytes);
-    const st = db.prepare("SELECT paragraph_id, bits FROM vecbits ORDER BY paragraph_id");
-    let i = 0;
+  building = (async () => {
+    const breathe = () => new Promise((r) => setTimeout(r, 0));
     try {
-      while (st.step() && i < n) {
-        ids[i] = st.get(0);
-        const b = st.get(1);
-        if (b && b.length === bytes) bits.set(b, i * bytes);
-        i++;
+      const info = embeddingsInfo();
+      const dims = info.dims || Sem.MODEL.dims, bytes = dims >> 3;
+      const n = value("SELECT COUNT(*) FROM vecbits") || 0;
+      if (!n) return null;
+      const ids = new Int32Array(n), bits = new Uint8Array(n * bytes);
+      const SLICE = 20000;
+      let i = 0, after = -1;
+      while (i < n) {
+        if (!db) return null;
+        const st = db.prepare("SELECT paragraph_id, bits FROM vecbits WHERE paragraph_id > ? ORDER BY paragraph_id LIMIT ?");
+        let got = 0;
+        try {
+          st.bind([after, SLICE]);
+          while (st.step() && i < n) {
+            const id = st.get(0);
+            ids[i] = id; after = id;
+            const b = st.get(1);
+            if (b && b.length === bytes) bits.set(b, i * bytes);
+            i++; got++;
+          }
+        } finally { st.finalize(); }
+        if (!got) break;
+        progress && progress({ phase: "index", loaded: i, total: n });
+        await breathe();
       }
-    } finally { st.finalize(); }
-    bitIndex = new Sem.BitIndex(ids.subarray(0, i), bits.subarray(0, i * bytes), dims);
-    // which document each entry belongs to, for searching one shelf
-    const maxId = value("SELECT MAX(rowid) FROM paragraphs") || 0;
-    const docByRow = new Int32Array(maxId + 1);
-    const st2 = db.prepare("SELECT rowid, document_id FROM paragraphs");
-    try { while (st2.step()) docByRow[st2.get(0)] = st2.get(1); } finally { st2.finalize(); }
-    docOfIndex = new Int32Array(i);
-    for (let k = 0; k < i; k++) docOfIndex[k] = ids[k] <= maxId ? docByRow[ids[k]] : 0;
-    return bitIndex;
-  } catch (err) {
-    console.warn("could not load the meaning index:", err?.message);
-    return null;
-  }
+      // which document each entry belongs to, for searching one shelf (also in slices)
+      const maxId = value("SELECT MAX(rowid) FROM paragraphs") || 0;
+      const docByRow = new Int32Array(maxId + 1);
+      let row0 = 0;
+      for (;;) {
+        if (!db) return null;
+        const st2 = db.prepare("SELECT rowid, document_id FROM paragraphs WHERE rowid > ? ORDER BY rowid LIMIT ?");
+        let got = 0;
+        try { st2.bind([row0, 40000]); while (st2.step()) { const r = st2.get(0); docByRow[r] = st2.get(1); row0 = r; got++; } } finally { st2.finalize(); }
+        if (!got) break;
+        await breathe();
+      }
+      const docs = new Int32Array(i);
+      for (let k = 0; k < i; k++) docs[k] = ids[k] <= maxId ? docByRow[ids[k]] : 0;
+      if (!db) return null;
+      docOfIndex = docs;
+      bitIndex = new Sem.BitIndex(ids.subarray(0, i), bits.subarray(0, i * bytes), dims);
+      return bitIndex;
+    } catch (err) {
+      console.warn("meaning index not built:", err?.message);
+      return null;
+    } finally { building = null; }
+  })();
+  return building;
 }
+// The index when it is ready; nothing is built here, so a search never pays for it.
+function semanticIndex() { return bitIndex; }
 function scopeMask(cq) {
   if (!cq.collections.length || !bitIndex) return null;
   const key = cq.collections.slice().sort().join(",");

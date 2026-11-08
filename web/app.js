@@ -18,7 +18,7 @@
     return node;
   };
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const wide = () => window.matchMedia("(min-width: 900px)").matches;
+  const wide = () => window.matchMedia("(min-width: 760px)").matches; // two panes from an iPad in portrait up (app.css agrees)
   const monthName = (m) => (m === 4 ? "April" : m === 10 ? "October" : "");
   const mb = (n) => `${(n / 1048576).toFixed(n > 50 * 1048576 ? 0 : 1)} MB`;
   const BASE = new URL(".", document.baseURI);
@@ -55,7 +55,7 @@
   // ------------------------------------------------------------- state ----
   const state = {
     q: "", scope: "all", speaker: "", from: "", to: "", book: "", group: "passages",
-    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false,
+    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false, asTyped: false,
   };
   let searchSeq = 0;
   let typeTimer = null;
@@ -67,49 +67,126 @@
   const mainEl = $("main");
 
   // ----------------------------------------------------------- routing ----
-  // Hash routes so the app works from any static host:  #q=faith&scope=conference   #read/123?q=faith#p21
+  // Hash routes, so the app works from any static host. Every place has an address:
+  //   #                       the library (home)
+  //   #scriptures?b.book=alma a shelf, with how far into it you are
+  //   #search?q=faith&scope=… results
+  //   #ask  #deck             the two tabs
+  // and the page open in the reader rides along on any of them as &doc=123&p=p21
+  // (an old #read/123 address still opens). On a phone the page covers the list.
+  const BROWSE_KEYS = ["year", "all", "bookUri", "book", "series"];
   function urlFor() {
     const p = new URLSearchParams();
-    if (state.q) p.set("q", state.q);
-    if (state.scope !== "all") p.set("scope", state.scope);
-    for (const k of ["speaker", "from", "to", "book"]) if (state[k]) p.set(k, state[k]);
-    if (state.group !== "passages") p.set("group", state.group);
-    if (state.pid) p.set("p", state.pid);
+    let base = "";
+    if (state.q.trim()) {
+      base = "search";
+      p.set("q", state.q);
+      if (state.scope !== "all") p.set("scope", state.scope);
+      for (const k of ["speaker", "from", "to", "book"]) if (state[k]) p.set(k, state[k]);
+      if (state.group !== "passages") p.set("group", state.group);
+    } else if (state.browse?.tab) {
+      base = state.browse.tab;
+      for (const k of BROWSE_KEYS) if (state.browse[k]) p.set(`b.${k}`, String(state.browse[k]));
+    }
+    if (state.docId) { p.set("doc", String(state.docId)); if (state.pid) p.set("p", state.pid); }
     const qs = p.toString();
-    if (state.docId) return `#read/${state.docId}${qs ? "?" + qs : ""}`;
-    if (qs) return `#search?${qs}`;
-    return state.browse?.tab ? `#${state.browse.tab}` : "#";
-  }
-  function push(replace = false) {
-    const url = urlFor();
-    if (location.hash === url || (url === "#" && !location.hash)) return;
-    if (replace) history.replaceState(null, "", url); else history.pushState(null, "", url);
+    return base || qs ? `#${base}${qs ? "?" + qs : ""}` : "#";
   }
   function readUrl() {
     const h = location.hash.replace(/^#/, "");
-    const m = h.match(/^read\/(\d+)(?:\?(.*))?$/);
-    const shelf = !m && /^[a-z][\w-]*$/.test(h) && !h.startsWith("search") ? h : null;   // #scriptures, #ask, #deck
-    state.browse = shelf ? { tab: shelf } : null;
-    const qs = m ? (m[2] || "") : shelf ? "" : h.replace(/^search\??/, "");
-    const p = new URLSearchParams(qs);
-    state.q = p.get("q") || "";
+    const qi = h.indexOf("?");
+    let base = qi >= 0 ? h.slice(0, qi) : h;
+    const p = new URLSearchParams(qi >= 0 ? h.slice(qi + 1) : "");
+    const legacy = base.match(/^read\/(\d+)$/);
+    if (legacy) { p.set("doc", legacy[1]); base = p.get("q") ? "search" : ""; }
+    const searching = base === "search";
+    state.q = searching ? p.get("q") || "" : "";
     state.scope = p.get("scope") || "all";
-    state.speaker = p.get("speaker") || "";
-    state.from = p.get("from") || "";
-    state.to = p.get("to") || "";
-    state.book = p.get("book") || "";
+    state.speaker = searching ? p.get("speaker") || "" : "";
+    state.from = searching ? p.get("from") || "" : "";
+    state.to = searching ? p.get("to") || "" : "";
+    state.book = searching ? p.get("book") || "" : "";
     state.group = p.get("group") || "passages";
-    state.docId = m ? Number(m[1]) : null;
+    if (!searching && /^[a-z][\w-]*$/.test(base)) {
+      state.browse = { tab: base };
+      for (const k of BROWSE_KEYS) { const v = p.get(`b.${k}`); if (v !== null) state.browse[k] = k === "year" ? Number(v) : k === "all" ? v === "true" : v; }
+      if (!p.get("scope") && TAB_SCOPE[base]) state.scope = TAB_SCOPE[base];
+    } else state.browse = null;
+    state.docId = p.get("doc") ? Number(p.get("doc")) : null;
     state.pid = p.get("p") || null;
   }
-  window.addEventListener("popstate", () => { if (!state.ready) return; readUrl(); syncControls(); render(); });
+
+  // The trail. Every place you go is a history entry; history.state carries its depth within
+  // this visit (n), its own name, and the name of the one before it, so the Back button can say
+  // where it leads ("‹ Alma 32", "‹ Results") and work in the home-screen app, where there is no
+  // browser Back, and still know its way after a reload. Each entry also remembers how far you
+  // had scrolled, so coming back lands where you were.
+  function here() { return history.state && Number.isInteger(history.state.n) ? history.state.n : 0; }
+  function labelNow() {
+    if (state.docId) return currentDoc && currentDoc.id === state.docId ? shortTitleOf(currentDoc) : "Back";
+    if (state.q.trim().length >= 2) return "Results";
+    const tab = state.browse?.tab;
+    if (tab === "ask") return "Ask";
+    if (tab === "deck") return "Deck";
+    if (tab) return TAB_TITLE[tab] || "Shelf";
+    return "Library";
+  }
+  function shortTitleOf(doc) {
+    if (doc.collection === "scriptures") return doc.citation ? doc.citation.replace(/:\d.*$/, "") : doc.title;
+    return doc.title.length > 28 ? doc.title.slice(0, 26).replace(/\s+\S*$/, "") + "…" : doc.title;
+  }
+  function setEntry(patch) {
+    const cur = history.state || {};
+    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, scroll: cur.scroll || null, place: cur.place || null, ...patch }, "", location.href);
+  }
+  // Each view names its entry once it has settled, so the next push knows what it is leaving.
+  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
+  function rememberScroll() { setEntry({ scroll: { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY } }); }
+  // place: the kind of entry, so typing in the same place refines it instead of stacking entries
+  function placeNow() { return state.q.trim() ? "search" : state.browse?.tab || "home"; }
+  function push(replace = false) {
+    const url = urlFor();
+    if (location.hash === url || (url === "#" && !location.hash)) return;
+    if (replace) { history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
+    rememberScroll();
+    const prev = history.state?.label || "Library";
+    history.pushState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url);
+    nameEntry();
+    refreshTrailButtons();
+  }
+  function backLabel() { return here() > 0 ? history.state?.prev || "Back" : null; }
+  function goBack() {
+    if (here() > 0) history.back();
+    else goHome();
+  }
+  function goHome() {
+    leaveSearch();
+    state.q = ""; state.docId = null; state.pid = null; state.browse = null; state.scope = "all";
+    syncControls(); renderHome(); showList(); push();
+  }
+  // A step within the shelves (a book, a year, a volume): a place of its own, so Back retraces it
+  function go(browse) { state.browse = browse; renderHome(); push(); }
+  // What Back says, wherever it is drawn
+  function trailButton() {
+    const label = backLabel();
+    return el("button", { type: "button", class: "trail-back", "aria-label": label ? `Back to ${label}` : "Library", title: label ? `Back to ${label}` : "Library", onclick: goBack }, [
+      el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: label || "Library" })]);
+  }
+  function refreshTrailButtons() { for (const b of document.querySelectorAll(".trail-back")) b.replaceWith(trailButton()); }
+  // On a phone every list view carries Back at the top; on a wide screen the reader bar has it
+  function listTrail() { return backLabel() ? el("div", { class: "list-trail" }, [trailButton()]) : null; }
+  window.addEventListener("popstate", () => {
+    if (!state.ready) return;
+    hideNote(); window.Original?.closeSheet?.(); if (!stage.hidden) stopPresenting();
+    readUrl(); syncControls(); render({ restore: history.state?.scroll || null });
+  });
 
   // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
   const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", jsp: "jsp" };
   const SCOPE_NAME = { scriptures: "the scriptures", conference: "general conference", pmg: "Preach My Gospel", standards: "Missionary Standards", handbook: "the handbook", cfm: "Come, Follow Me", manuals: "the manuals", helps: "the study helps", jsp: "the Joseph Smith Papers" };
   function syncControls() {
     input.value = state.q;
-    for (const b of document.querySelectorAll(".scopes button")) b.classList.toggle("on", b.dataset.scope === state.scope);
+    for (const b of document.querySelectorAll(".scopes button")) { const on = b.dataset.scope === state.scope; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
     const on = $(".scopes button.on");
     if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {} }
     input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : wide() ? "Search, or type a reference like Alma 32:21" : "Search, or a reference";
@@ -120,23 +197,52 @@
     for (const b of document.querySelectorAll("#fGroup button")) b.classList.toggle("on", b.dataset.group === state.group);
     const active = !!(state.speaker || state.from || state.to || state.book || state.group !== "passages");
     $("#filterBtn").classList.toggle("on", active);
+    $("#filterBtn").setAttribute("aria-pressed", String(active));
+    // which tab is open shows in the header
+    const tab = state.browse?.tab;
+    $("#askBtn").classList.toggle("on", tab === "ask");
+    $("#deckBtn").classList.toggle("on", tab === "deck");
+    $("#askBtn").setAttribute("aria-pressed", String(tab === "ask"));
+    $("#deckBtn").setAttribute("aria-pressed", String(tab === "deck"));
+    document.body.classList.toggle("tab-open", tab === "ask" || tab === "deck");
   }
 
   // ------------------------------------------------------------ render ----
-  async function render() {
-    if (state.q.trim().length >= 2) await runSearch({ typeahead: false, silent: true });
-    else { state.lastSearch = null; await renderHome(); }
-    if (state.docId) await openDoc(state.docId, state.pid, { push: false });
-    else showList();
+  async function render({ restore = null } = {}) {
+    const searching = state.q.trim().length >= 2;
+    if (searching && !state.terms.length) state.terms = termsFrom(state.q);
+    const listWork = searching ? runSearch({ typeahead: false, silent: true }) : (state.lastSearch = null, renderHome());
+    const boardFirst = wide() && !searching && state.browse?.tab === "deck";
+    if (state.docId && !boardFirst) {
+      const pageWork = openDoc(state.docId, state.pid, { push: false, scroll: !restore });
+      // on a phone the page is what you see, and the list behind it catches up on its own
+      if (wide()) await Promise.all([listWork, pageWork]); else { await pageWork; listWork.catch(() => {}); }
+    } else {
+      await listWork;
+      if (boardFirst && state.docId) currentDoc = null;
+      showList();
+    }
+    if (restore) {
+      listPane.scrollTop = restore.list || 0;
+      readerPane.scrollTop = restore.reader || 0;
+      window.scrollTo(0, restore.win || 0);
+    }
+    nameEntry();
+    refreshTrailButtons();
   }
   function showList() {
     listPane.hidden = false;
     readerPane.hidden = wide() ? !(state.docId || (panel.lastEl && readerPane.contains(panel.lastEl))) : true;
+    document.body.classList.toggle("reading", !wide() && !readerPane.hidden);
+    syncControls();
+    updateThinkFab();
   }
   function showReader() {
     listPane.hidden = !wide();
     readerPane.hidden = false;
+    document.body.classList.toggle("reading", !wide());
     window.scrollTo(0, 0);
+    updateThinkFab();
   }
 
   // ------------------------------------------------------------- setup ----
@@ -150,13 +256,21 @@
       store.set("active", { slot: status.slot, version: status.version, builtAt: status.builtAt, mode: status.mode });
       return true;
     }
+    if (status.locked && active) {
+      listPane.replaceChildren(el("div", { class: "setup" }, [
+        el("h1", { text: "Open in another tab" }),
+        el("p", { class: "lede", text: "The library is open in another tab or window of this browser, and only one can hold it at a time. Close it there, then try again here." }),
+        el("button", { type: "button", class: "primary", text: "Try again", onclick: () => location.reload() }),
+      ]));
+      return false;
+    }
     return new Promise((resolve) => renderSetup(status, resolve));
   }
 
   async function renderSetup(status, done) {
     readerPane.hidden = true;
     listPane.hidden = false;
-    document.body.classList.add("setup");
+    document.body.classList.add("first-run");
     const box = el("div", { class: "setup" });
     const head = el("h1", { text: "Your library" });
     const lede = el("p", { class: "lede", text: "Loading what is available…" });
@@ -169,24 +283,32 @@
     form.append(pass, btn);
     box.append(head, lede, form, bar, msg, note);
     listPane.replaceChildren(box);
+    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
     if (status.mode !== "opfs") {
       note.textContent = "This browser cannot keep the library between visits, so it downloads each time you open the app. Adding it to the home screen fixes that on iPhone and iPad.";
-    }
-    let manifest = null;
-    try {
-      manifest = await call("manifest", { manifestUrl: MANIFEST_URL });
-      const built = new Date(manifest.built_at);
-      lede.textContent = `${manifest.verses.toLocaleString()} verses, ${manifest.talks.toLocaleString()} talks, ${manifest.documents.toLocaleString()} pages in all, built ${built.toLocaleDateString([], { month: "long", day: "numeric" })}. One download of ${mb(manifest.bundle_size)}, then everything works on this device, offline too.`;
-    } catch (err) {
-      lede.textContent = "The library file is not published yet. Once the nightly job has run on GitHub, reload this page.";
-      btn.disabled = true;
+    } else if (!standalone && /iPhone|iPad|Macintosh/.test(navigator.userAgent) && "ontouchend" in document) {
+      // Safari and a home-screen app keep separate copies: set up where it will be used
+      note.textContent = "Using this on an iPhone or iPad? Add it to the home screen first (Share, then Add to Home Screen) and open it from there, so the library downloads once, into the app you will use.";
     }
     const saved = store.get("passphrase");
     if (saved) pass.value = saved;
+    let manifest = null;
+    const ready = (async () => {
+      try {
+        manifest = await call("manifest", { manifestUrl: MANIFEST_URL });
+        const built = new Date(manifest.built_at);
+        lede.textContent = `${manifest.verses.toLocaleString()} verses, ${manifest.talks.toLocaleString()} talks, ${manifest.documents.toLocaleString()} pages in all, built ${built.toLocaleDateString([], { month: "long", day: "numeric" })}. One download of ${mb(manifest.bundle_size)}, then everything works on this device, offline too.`;
+      } catch (err) {
+        lede.textContent = "The library file is not published yet. Once the nightly job has run on GitHub, reload this page.";
+        btn.disabled = true;
+      }
+    })();
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!pass.value) { pass.focus(); return; }
       btn.disabled = true; pass.disabled = true; msg.textContent = ""; bar.hidden = false;
+      await ready; // Return pressed while the manifest was still loading waits for it
+      if (!manifest) { bar.hidden = true; pass.disabled = false; msg.textContent = "The library file is not published yet."; return; }
       const fill = $(".fill", bar);
       try {
         const result = await call("install", { passphrase: pass.value, manifestUrl: MANIFEST_URL, slot: "/library-a.sqlite" }, (p) => {
@@ -196,7 +318,7 @@
         });
         store.set("passphrase", pass.value);
         store.set("active", { slot: result.slot, version: result.version, builtAt: result.builtAt, mode: result.mode });
-        document.body.classList.remove("setup");
+        document.body.classList.remove("first-run");
         done(true);
       } catch (err) {
         bar.hidden = true;
@@ -263,19 +385,37 @@
     state.terms = [];
   }
 
+  // Typing: one search in the worker at a time, the latest keystroke waiting its turn, and no
+  // search at all for a prefix of one or two letters or a line of nothing but common words.
+  let typeBusy = false, typeAgain = false;
+  const COMMON = new Set("the a an of and to in is that it for with as be on he his they unto shall i ye my thee thou them him not but which all their by have this from were was me we you your are at or had said so if there what who when how did does do".split(" "));
+  function worthTyping(q) {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const last = words[words.length - 1] || "";
+    if (last.length < 3 && !/\d/.test(last) && !/["'\u05d0-\u05ea\u0370-\u03ff]/.test(q)) return false;
+    return !words.every((w) => COMMON.has(w));
+  }
   async function runSearch({ typeahead = false, silent = false, more = false } = {}) {
     const q = state.q.trim();
     if (q.length < 2) { leaveSearch(); renderHome(); if (!silent) push(true); return; }
+    if (typeahead) {
+      if (!worthTyping(q)) return;
+      if (typeBusy) { typeAgain = true; return; }
+      typeBusy = true;
+    }
     // "Show more" under a list that came from typing is a fresh, full search: the pages must come from one ranking
     if (more && (!state.lastSearch || state.lastSearch.typeahead)) more = false;
     if (!more) state.offset = 0;
     const mySeq = ++searchSeq;
     try {
+      const asTyped = !!state.asTyped; state.asTyped = false;
       const data = await api("search", {
-        q, scope: state.scope, typeahead, limit: 40, offset: state.offset,
+        q, scope: state.scope, typeahead, limit: 40, offset: state.offset, asTyped,
         speaker: state.speaker, from: state.from, to: state.to, book: state.book, group: state.group,
       });
       if (mySeq !== searchSeq) return;
+      // a reference typed and entered opens the chapter itself on a wide screen; the list keeps the card
+      if (!typeahead && !more && data.jump?.doc_id && wide() && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
       data.typeahead = typeahead;
       if (more && state.lastSearch) {
         const prev = state.lastSearch;
@@ -287,11 +427,16 @@
       state.lastSearch = data;
       state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
       renderResults(data);
-      if (!silent) push(true);
+      if (!silent) { push(history.state?.place === "search"); setEntry({ place: "search", label: "Results" }); } // a new search from elsewhere is a move; refining one is not
       if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
       if (mySeq !== searchSeq) return;
       listPane.replaceChildren(el("div", { class: "status error", text: `Search failed: ${e.message}` }));
+    } finally {
+      if (typeahead) {
+        typeBusy = false;
+        if (typeAgain) { typeAgain = false; if (state.q.trim().length >= 2 && state.q.trim() !== q) runSearch({ typeahead: true }); }
+      }
     }
   }
 
@@ -332,6 +477,7 @@
   function renderResults(data) {
     setOverview(false);
     const frag = document.createDocumentFragment();
+    const lt = listTrail(); if (lt) frag.append(lt);
     if (data.error) frag.append(el("div", { class: "status error", text: data.error }));
     if (data.jump) {
       const j = data.jump;
@@ -347,13 +493,15 @@
       if (sm.speaker) bits.push(`by ${sm.speaker}`);
       if (sm.book) bits.push(`in ${sm.book.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace("Sections", "D&C")}`);
       if (sm.scope) bits.push(`in ${SCOPE_NAME[sm.scope] || sm.scope}`);
-      if (sm.years) bits.push(sm.years[0] === sm.years[1] ? String(sm.years[0]) : `${sm.years[0]} to ${sm.years[1]}`);
+      if (sm.years) bits.push(sm.years[0] && sm.years[1] ? (sm.years[0] === sm.years[1] ? String(sm.years[0]) : `${sm.years[0]} to ${sm.years[1]}`) : sm.years[0] ? `${sm.years[0]} on` : `up to ${sm.years[1]}`);
       if (sm.corrected?.length) bits.push(sm.corrected.map((c) => `${c.from} → ${c.to}`).join(", "));
       if (!sm.scope && !sm.book && state.scope === "all") bits.push("all shelves");
+      const asTypedBtn = sm.corrected?.length ? el("button", { type: "button", class: "text-btn small", text: `Search “${sm.corrected.map((c) => c.from).join(" ")}” as typed`, onclick: () => { state.asTyped = true; runSearch({ typeahead: false }); } }) : null;
       const how = `${sm.exact ? "Exact phrase found, then " : ""}${sm.semantic ? "by words and meaning" : "by words"}`;
       const line = el("div", { class: "smart-line" }, [
         el("span", { text: `${how.charAt(0).toUpperCase() + how.slice(1)}: ${bits.join(" · ") || data.query}` }),
         /^".*"$/.test(data.query.trim()) ? null : el("button", { type: "button", class: "text-btn small", text: "Only exact words", onclick: () => { state.q = `"${data.query.trim().replace(/"/g, "")}"`; syncControls(); runSearch({ typeahead: false }); } }),
+        asTypedBtn,
       ]);
       if (data.widened) line.append(el("span", { class: "widened", text: ` · Claude also searched: ${data.widened.join("; ")}` }));
       frag.append(line);
@@ -367,7 +515,9 @@
     const total = data.total || 0;
     if (data.hits.length || data.documents.length) {
       const whole = data.lexical_total && data.lexical_total > total ? ` · ${data.lexical_total.toLocaleString()} with these words` : "";
-      frag.append(el("div", { class: "group-title", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}${whole}` }));
+      frag.append(el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}${whole}` }));
+    } else if (data.typeahead && !data.jump && !(data.titles || []).length) {
+      frag.append(el("div", { class: "empty" }, [el("div", { text: "Keep typing, or press return to search more widely." })]));
     } else if (!data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty" }, [
         el("div", { text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, a different spelling, or ask the question instead:` }),
@@ -375,7 +525,16 @@
       ]));
     }
     if (state.group === "documents") for (const d of data.documents) frag.append(docRow(d, d.hits));
-    else data.hits.forEach((h, i) => frag.append(i === 0 && !data.original && (h.before || h.after || h.why === "exact") ? bestCard(h) : hitRow(h)));
+    else {
+      const sm = data.smart || {};
+      const first = data.hits[0];
+      const strong = first && !data.original && (first.before || first.after || first.why === "exact") && (first.why === "exact" || first.why === "both" || !sm.natural);
+      if (first && !strong && sm.natural && window.Ask?.hasKey() && !data.typeahead) frag.append(el("div", { class: "ask-line" }, [
+        el("span", { text: "A question: the passages below share its words; " }),
+        el("button", { type: "button", class: "text-btn small", text: "ask Claude to answer it", onclick: () => { state.browse = { tab: "ask", question: data.query }; state.q = ""; syncControls(); renderHome(); showList(); push(); } }),
+      ]));
+      data.hits.forEach((h, i) => frag.append(i === 0 && strong ? bestCard(h) : hitRow(h)));
+    }
     const shown = state.group === "documents" ? data.documents.length : data.hits.length - (data.extra || 0);
     if (shown < total) {
       frag.append(el("button", { class: "more", text: data.typeahead ? `All ${total.toLocaleString()}` : `Show more (${(total - shown).toLocaleString()} left)`, onclick: () => { state.offset = shown; runSearch({ more: true, silent: true }); } }));
@@ -383,6 +542,7 @@
     listPane.replaceChildren(frag);
     listPane.scrollTop = 0;
     markActive();
+    updateThinkFab();
   }
   function scopeLabel() { return state.scope === "all" ? "" : ` in ${SCOPE_NAME[state.scope] || state.scope}`; }
 
@@ -395,7 +555,7 @@
       h.after ? el("div", { class: "ctx", text: `${h.after.verse ? h.after.verse + " " : ""}${h.after.text}` }) : null,
       el("div", { class: "best-actions" }, [
         el("button", { type: "button", class: "primary", text: h.collection === "scriptures" ? "Open the chapter" : "Open", onclick: () => openDoc(h.doc_id, h.pid) }),
-        el("button", { type: "button", class: "text-btn", text: window.Deck?.has(h.doc_id, h.pid) ? "On the deck" : "+ Deck", onclick: (e) => addHit(h, e.currentTarget) }),
+        el("button", { type: "button", class: "text-btn", text: window.Deck?.has(h.doc_id, h.pid) ? "On the deck" : "Add to deck", onclick: (e) => addHit(h, e.currentTarget) }),
         el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => startPresentingUnits([{ text: h.text, kind: h.kind, where: h.citation, doc_id: h.doc_id }]) }),
         h.more && h.more.length ? moreToggle(h) : null,
       ]),
@@ -405,14 +565,17 @@
   function whereOf(h) { return h.collection === "general-conference" ? [h.session, h.label].filter(Boolean).join(", ") : h.label; }
   // "4 more in Alma 32": the other hits from the same chapter or talk, shown on request.
   function moreToggle(h) {
-    const btn = el("button", { type: "button", class: "text-btn more-in", text: `${h.more.length} more in ${shortTitle(h)} ›` });
+    const n = Math.max(h.more.length, (h.more_total || 0) - 1);
+    const label = `${n} more in ${shortTitle(h)} ›`;
+    const btn = el("button", { type: "button", class: "text-btn more-in", text: label });
     btn.addEventListener("click", () => {
       const holder = btn.closest(".hit-row, .best");
       let list = holder.nextElementSibling;
-      if (list && list.classList.contains("more-list")) { list.remove(); btn.textContent = `${h.more.length} more in ${shortTitle(h)} ›`; return; }
+      if (list && list.classList.contains("more-list")) { list.remove(); btn.textContent = label; return; }
       list = el("div", { class: "more-list" }, h.more.map((m) => hitRow(m, { nested: true })));
+      if (n > h.more.length) list.append(el("button", { type: "button", class: "text-btn more-in all-in", text: `All ${n + 1} in ${shortTitle(h)}: open it with the matches marked ›`, onclick: () => openDoc(h.doc_id, h.pid) }));
       holder.after(list);
-      btn.textContent = `Hide the other ${h.more.length} ⌃`;
+      btn.textContent = `Hide these ⌃`;
     });
     return btn;
   }
@@ -422,7 +585,7 @@
     return h.title.length > 36 ? "this page" : h.title;
   }
   async function addHit(h, btn) {
-    if (window.Deck?.has(h.doc_id, h.pid)) { window.Deck.remove(h.doc_id, h.pid); btn.textContent = btn.classList.contains("add") ? "+" : "+ Deck"; toast("Taken off the deck."); return; }
+    if (window.Deck?.has(h.doc_id, h.pid)) { window.Deck.remove(h.doc_id, h.pid); btn.textContent = btn.classList.contains("add") ? "+" : "Add to deck"; btn.setAttribute("aria-pressed", "false"); toast("Taken off the deck."); return; }
     // The snippet is a search excerpt; the deck wants the whole verse or paragraph.
     let text = h.text || el("div", { html: h.snippet }).textContent, verses = null;
     try {
@@ -433,8 +596,10 @@
         if (vs.length) verses = vs.map((x) => ({ n: x.verse, text: x.text }));
       }
     } catch (_) { /* the text will do */ }
-    window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: true });
+    // on a wide screen the board opens beside the results; on a phone a toast says so and the results stay
+    window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: wide() });
     btn.textContent = btn.classList.contains("add") ? "\u2713" : "On the deck";
+    btn.setAttribute("aria-pressed", "true");
     if (!wide()) toast("On the deck.");
   }
   function hitRow(h, { nested = false } = {}) {
@@ -446,7 +611,7 @@
         ]),
         h.more && h.more.length && !nested ? moreToggle(h) : null,
       ]),
-      el("button", { class: "add", "aria-label": "Add to deck", title: "Add to deck", text: window.Deck?.has(h.doc_id, h.pid) ? "\u2713" : "+", onclick: (e) => { e.stopPropagation(); addHit(h, e.currentTarget); } }),
+      el("button", { class: "add", "aria-label": "On the deck", "aria-pressed": String(!!window.Deck?.has(h.doc_id, h.pid)), title: "Add to deck", text: window.Deck?.has(h.doc_id, h.pid) ? "\u2713" : "+", onclick: (e) => { e.stopPropagation(); addHit(h, e.currentTarget); } }),
     ]);
     return row;
   }
@@ -507,12 +672,13 @@
     let st;
     try { st = await libraryStats(); }
     catch (e) { body.append(el("div", { class: "status error", text: `The library is not answering (${e.message}).` })); return; }
+    nameEntry();
     try {
       if (!tab) return renderOverview(body, st);
-      if (tab === "ask") { const q = state.browse.question; state.browse = { tab: "ask" }; window.Ask?.render(body, q ? { question: q } : {}); return; }
-      if (tab === "deck") { window.Deck?.render(body); return; }
+      if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); updateThinkFab(); return; }
+      if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
-        el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => { state.browse = null; state.scope = "all"; syncControls(); renderHome(); push(); } }),
+        backLabel() ? trailButton() : el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => goHome() }),
         el("h2", { text: TAB_TITLE[tab] || tab }),
       ]));
       if (tab === "conference") await browseConference(body);
@@ -541,7 +707,7 @@
       const sec = el("section", { class: "home-sec sec-continue" }, [el("h2", { text: "Continue" })]);
       if (last) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openDoc(last.id, last.pid || null) }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: last.title }), el("span", { class: "hc-s", text: [last.where, last.verse ? `at verse ${last.verse}` : null].filter(Boolean).join(" · ") })]), el("span", { class: "hc-go", text: "›" })]));
-      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => { state.browse = { tab: "deck" }; renderHome(); showList(); push(); } }, [
+      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => go({ tab: "deck" }) }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
       body.append(sec);
     }
@@ -581,7 +747,7 @@
 
   async function browseConference(body) {
     const b = state.browse || {};
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: "conference", year: b.year, all: true }; renderHome(); });
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: "conference", year: b.year, all: true }));
     const data = await api("browse", { collection: "general-conference" });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks in this library yet. They arrive with the nightly build, newest conference first." })); return; }
@@ -599,11 +765,11 @@
     }
     const years = [...new Set(books.map((x) => x.year))].filter(Boolean).sort((a, c) => c - a);
     const shelf = el("div", { class: "shelf" });
-    for (const y of years) shelf.append(el("button", { class: "chip" + (b.year === y ? " on" : ""), text: String(y), onclick: () => { state.browse = { tab: "conference", year: y, all: true }; renderHome(); } }));
+    for (const y of years) shelf.append(el("button", { class: "chip" + (b.year === y ? " on" : ""), text: String(y), onclick: () => go({ tab: "conference", year: y, all: true }) }));
     body.append(shelf);
     if (b.year) {
       for (const bk of books.filter((x) => x.year === b.year)) {
-        body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: "conference", year: b.year, bookUri: bk.uri }; renderHome(); } }, [
+        body.append(el("button", { class: "toc-row", onclick: () => go({ tab: "conference", year: b.year, bookUri: bk.uri }) }, [
           el("div", { class: "t", text: `${monthName(bk.month)} ${bk.year}` }), el("div", { class: "s", text: `${bk.docs} talks` })]));
       }
     }
@@ -616,13 +782,13 @@
       for (const vol of shelf.volumes) {
         body.append(el("h2", { text: vol.name }));
         const row = el("div", { class: "shelf" });
-        for (const bk of vol.books) row.append(el("button", { class: "chip", text: bk.name.replace("JST, ", ""), onclick: () => { state.browse = { tab: "scriptures", book: bk.slug }; renderHome(); } }));
+        for (const bk of vol.books) row.append(el("button", { class: "chip", text: bk.name.replace("JST, ", ""), onclick: () => go({ tab: "scriptures", book: bk.slug }) }));
         body.append(row);
       }
       return;
     }
     const bk = shelf.volumes.flatMap((v) => v.books).find((x) => x.slug === b.book);
-    body.append(el("div", { class: "crumbs" }, [el("button", { text: "Scriptures", onclick: () => { state.browse = { tab: "scriptures" }; renderHome(); } }), el("span", { text: bk.name })]));
+    body.append(el("div", { class: "crumbs" }, [el("button", { text: "Scriptures", onclick: () => go({ tab: "scriptures" }) }), el("span", { text: bk.name })]));
     const grid = el("div", { class: "chapters" });
     for (const c of bk.chapters) grid.append(el("button", { text: String(c.n), disabled: !c.doc_id, onclick: () => openDoc(c.doc_id, null) }));
     body.append(grid);
@@ -631,12 +797,12 @@
 
   async function browseCollection(body, slug) {
     const b = state.browse || {};
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: slug }; renderHome(); });
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: slug }));
     const data = await api("browse", { collection: slug });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with a later nightly build." })); return; }
     if (books.length === 1) return renderBookToc(body, books[0].uri, null);
-    for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: slug, bookUri: bk.uri }; renderHome(); } }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} pages` })]));
+    for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => go({ tab: slug, bookUri: bk.uri }) }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} pages` })]));
   }
 
   // The Joseph Smith Papers: a series (journals, revelations, histories…), then its volumes, then the papers.
@@ -646,13 +812,13 @@
     if (!all.length) { body.append(el("div", { class: "empty", text: "The Joseph Smith Papers arrive with the nightly builds, a series at a time: journals first, then revelations and translations, histories, and the documents." })); return; }
     const chips = el("div", { class: "shelf" });
     const series = b.series || all[0].slug;
-    for (const c of all) chips.append(el("button", { class: "chip" + (series === c.slug ? " on" : ""), text: c.title.replace(/^Joseph Smith Papers: /, "") + (c.docs ? "" : " (soon)"), onclick: () => { state.browse = { tab: "jsp", series: c.slug }; renderHome(); } }));
+    for (const c of all) chips.append(el("button", { class: "chip" + (series === c.slug ? " on" : ""), text: c.title.replace(/^Joseph Smith Papers: /, "") + (c.docs ? "" : " (soon)"), onclick: () => go({ tab: "jsp", series: c.slug }) }));
     body.append(chips);
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => { state.browse = { tab: "jsp", series }; renderHome(); });
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: "jsp", series }));
     const data = await api("browse", { collection: series });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing from this series yet. It arrives with a later nightly build." })); return; }
-    for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => { state.browse = { tab: "jsp", series, bookUri: bk.uri }; renderHome(); } }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} ${bk.docs === 1 ? "page" : "pages"}` })]));
+    for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => go({ tab: "jsp", series, bookUri: bk.uri }) }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} ${bk.docs === 1 ? "page" : "pages"}` })]));
     body.append(el("p", { class: "deck-hint", text: "Transcriptions, source notes and historical introductions from josephsmithpapers.org (The Church Historian’s Press, © Intellectual Reserve, Inc.), for personal study. Tap a name in a paper for who or where it is." }));
   }
 
@@ -669,7 +835,7 @@
 
   // ------------------------------------------------------------ reader ----
   let currentDoc = null;
-  async function openDoc(id, pid, { push: doPush = true } = {}) {
+  async function openDoc(id, pid, { push: doPush = true, scroll = true } = {}) {
     if (!id) return;
     state.docId = id; state.pid = pid || null;
     if (doPush) push();
@@ -680,29 +846,33 @@
       try { currentDoc = await api("doc", { id }); }
       catch (e) { readerPane.replaceChildren(el("div", { class: "status error", text: `Could not open that page (${e.message}).` })); return; }
       if (!currentDoc) { readerPane.replaceChildren(el("div", { class: "status error", text: "That page is not in the library." })); return; }
+      if (state.docId !== id) return; // another page was opened while this one loaded
       renderDoc(currentDoc);
     }
-    focusParagraph(state.pid);
+    nameEntry(shortTitleOf(currentDoc));
+    refreshTrailButtons();
+    focusParagraph(state.pid, { scroll });
+    updateThinkFab();
     const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(state.pid || "") ? Number(state.pid.slice(1)) : null;
     store.set("lastRead", { id: currentDoc.id, title: currentDoc.title, where: crumbFor(currentDoc), pid: state.pid || null, verse });
   }
 
   function renderDoc(doc) {
     const bar = el("div", { class: "reader-bar" }, [
-      el("button", { class: "icon-btn back", "aria-label": "Back", onclick: () => history.back(), html: ICON_BACK }),
+      trailButton(),
       el("div", { class: "crumb", text: crumbFor(doc) }),
       el("div", { class: "spacer" }),
       el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
       el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
-      panel.lastEl && wide() ? el("button", { class: "text-btn", text: panel.lastTitle || "Back", title: "Back to the passages", onclick: () => panel.restore() }) : null,
+      panel.lastEl && wide() ? el("button", { class: "text-btn", text: `${panel.lastTitle || "Deck"} ›`, title: "Show the deck board here", onclick: () => panel.restore() }) : null,
       el("button", { class: "icon-btn", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: "Open on churchofjesuschrist.org", "aria-label": "Open on churchofjesuschrist.org", html: ICON_OUT }),
     ]);
-    const body = el("article", { class: "doc", html: doc.body_html || "" });
+    const body = sanitize(el("article", { class: "doc", html: doc.body_html || "" }));
     if (doc.footnotes && doc.footnotes.length) {
       const notes = el("section", { class: "notes" }, [el("h2", { text: "Footnotes" })]);
       const ol = el("ol");
-      for (const n of doc.footnotes) ol.append(el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), el("span", { html: n.html || esc(n.text) })]));
+      for (const n of doc.footnotes) ol.append(el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), sanitize(el("span", { html: n.html || esc(n.text) }))]));
       notes.append(ol);
       body.append(notes);
     }
@@ -721,9 +891,9 @@
       footBtn("Present", ICON_PRESENT, () => startPresenting()),
       el("span", { class: "slot-orig" }),
       footBtn("Text size", "<span class='glyph' style='font-size:20px;font-weight:700'>A</span>", (e) => { sizeRow.hidden = !sizeRow.hidden; e.currentTarget.classList.toggle("on", !sizeRow.hidden); }),
-      footBtn("To deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
+      footBtn("Add to deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
         const units = selectedUnits();
-        if (!units.length) { toast("Tap a verse or paragraph to select it, then To deck."); return; }
+        if (!units.length) { toast("Tap a verse or paragraph to select it first."); return; }
         const added = window.Deck?.addFromDoc(currentDoc, units);
         clearSelection();
         toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck." : `${added} passages on the deck.`);
@@ -740,6 +910,38 @@
       if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
     });
     highlightTerms(body);
+  }
+
+  // ---- Think it through, from anywhere ------------------------------------
+  // A floating button over the page being read, or over the results: the page (with anything
+  // selected) or the search goes to Claude on the Ask tab, which comes back with what the
+  // library holds that connects to it, each passage a card for the deck.
+  let thinkFab = null;
+  function updateThinkFab() {
+    if (!thinkFab) {
+      thinkFab = el("button", { type: "button", class: "fab-think", hidden: true, title: "Think it through with Claude", "aria-label": "Think it through with Claude", onclick: () => thinkHere() }, [
+        el("span", { class: "ic", html: ICON_THINK }), el("span", { class: "lb", text: "Think it through" })]);
+      document.body.append(thinkFab);
+    }
+    const askOpen = state.browse?.tab === "ask" && !listPane.hidden;
+    const page = !!(state.docId && currentDoc && currentDoc.id === state.docId && !readerPane.hidden);
+    const results = !page && !listPane.hidden && !!(state.lastSearch && state.lastSearch.hits && state.lastSearch.hits.length) && state.q.trim().length >= 2;
+    thinkFab.hidden = !(page || results) || (askOpen && !page) || !stage.hidden;
+    thinkFab.classList.toggle("over-reader", page);
+    $(".lb", thinkFab).textContent = page ? "Think it through" : "Think these through";
+  }
+  function thinkHere() {
+    if (!window.Ask) return;
+    const page = state.docId && currentDoc && currentDoc.id === state.docId;
+    const subject = page
+      ? window.Ask.subjectFor({ doc: currentDoc, selection: selectedUnits() })
+      : window.Ask.subjectFor({ query: state.q.trim(), hits: state.lastSearch?.hits || [] });
+    if (!window.Ask.hasKey()) toast("Thinking it through needs your Claude API key: add it under Ask.");
+    leaveSearch();
+    state.q = ""; syncControls();
+    if (!wide()) { state.docId = null; state.pid = null; } // on a phone the page gives way to the thinking; Back returns to it
+    state.browse = { tab: "ask", think: window.Ask.hasKey() ? subject : null };
+    renderHome(); showList(); push();
   }
 
   function footBtn(label, icon, onclick) {
@@ -782,6 +984,11 @@
           toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }),
         el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
+        el("button", { type: "button", class: "text-btn", text: "Copy", title: "Copy with the citation", onclick: () => {
+          const cite = (x) => x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
+          const text = selectedUnits().map((x) => `${x.text} (${cite(x)})`).join("\n\n");
+          navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
+        } }),
         el("button", { type: "button", class: "text-btn", text: "Clear", onclick: clearSelection }),
       ]);
       const rf = $(".reader-foot", readerPane);
@@ -790,10 +997,23 @@
     $(".n", bar).textContent = `${n} selected`;
   }
   function toast(text) {
-    const t = el("div", { class: "toast", text });
+    const t = el("div", { class: "toast", role: "status", text });
     document.body.append(t);
     setTimeout(() => t.classList.add("show"), 10);
     setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 1800);
+  }
+
+  // The library's HTML is the Church's own and the scraper already drops scripts;
+  // this is cheap insurance against anything that could run or leave the app.
+  function sanitize(root) {
+    for (const bad of root.querySelectorAll("script, style, iframe, object, embed, link, meta, form")) bad.remove();
+    for (const n of root.querySelectorAll("*")) {
+      for (const a of [...n.attributes]) {
+        if (/^on/i.test(a.name)) n.removeAttribute(a.name);
+        else if (/^(href|src|xlink:href|formaction)$/i.test(a.name) && /^\s*(javascript|vbscript|data):/i.test(a.value)) n.removeAttribute(a.name);
+      }
+    }
+    return root;
   }
 
   function crumbFor(doc) {
@@ -817,14 +1037,19 @@
       e.preventDefault();
       const res = await api("resolve", { href });
       if (res.found) openDoc(res.doc_id, res.pid);
-      else window.open(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href, "_blank", "noopener");
+      else openOutside(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href);
       return;
     }
-    if (href.startsWith("/")) { e.preventDefault(); window.open("https://www.churchofjesuschrist.org" + href, "_blank", "noopener"); }
-    else if (/^https?:/.test(href)) { a.target = "_blank"; a.rel = "noopener"; }
+    if (href.startsWith("/")) { e.preventDefault(); openOutside("https://www.churchofjesuschrist.org" + href); }
+    else if (/^https?:/.test(href)) { if (!navigator.onLine) { e.preventDefault(); toast("That page is on the web, and you are offline."); return; } a.target = "_blank"; a.rel = "noopener"; }
+  }
+  // A page the library does not hold: on the web, if there is a web
+  function openOutside(url) {
+    if (!navigator.onLine) { toast("That page is not in the library, and you are offline."); return; }
+    window.open(url, "_blank", "noopener");
   }
 
-  function focusParagraph(pid) {
+  function focusParagraph(pid, { scroll = true } = {}) {
     if (!pid || !currentDoc) return;
     const body = $(".doc", readerPane);
     if (!body) return;
@@ -833,7 +1058,7 @@
     if (!target && /^p\d+$/.test(pid)) target = body.querySelector(`.verse:nth-of-type(${pid.slice(1)})`);
     if (!target) return;
     target.classList.add("is-target");
-    requestAnimationFrame(() => target.scrollIntoView({ block: "center", behavior: "auto" }));
+    if (scroll) requestAnimationFrame(() => target.scrollIntoView({ block: "center", behavior: "auto" }));
   }
 
   function highlightTerms(body) {
@@ -924,12 +1149,23 @@
     openStage({ units: units.map((u) => ({ kind: u.kind || "para", html: u.html || esc(u.text || ""), text: u.text || "", where: u.where || "", pid: null, doc_id: u.doc_id || null })), i: 0, doc: null, theme: opts.theme || null });
   }
 
+  // The controls show on a touch, then fade: what the room sees is the words, not the buttons.
+  let controlsTimer = null;
+  function wakeControls() {
+    stage.classList.add("show-controls");
+    clearTimeout(controlsTimer);
+    controlsTimer = setTimeout(() => stage.classList.remove("show-controls"), 2500);
+  }
+  stage.addEventListener("pointerdown", wakeControls, { passive: true });
+  stage.addEventListener("pointermove", wakeControls, { passive: true });
   function openStage(next) {
     show = { ...next, scale: store.get("stageScale", 1) };
     document.body.classList.add("presenting");
+    wakeControls();
     stage.classList.toggle("themed", !!next.theme);
     for (const k of ["bg", "fg", "accent", "muted"]) stage.style.setProperty(`--stage-${k}`, next.theme?.[k] || "");
     stage.hidden = false;
+    updateThinkFab();
     renderStage();
     if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().catch(() => {});
     try { navigator.wakeLock?.request("screen").then((l) => { show.lock = l; }).catch(() => {}); } catch (_) {}
@@ -941,6 +1177,8 @@
     show.lock?.release?.();
     show = null;
     stage.hidden = true;
+    stage.classList.remove("blank");
+    updateThinkFab();
     stage.classList.remove("themed");
     document.body.classList.remove("presenting");
     if (document.fullscreenElement) document.exitFullscreen?.().catch?.(() => {});
@@ -982,6 +1220,7 @@
   }
 
   function stageStep(delta) {
+    stage.classList.remove("blank");
     if (!show) return;
     const n = show.i + delta;
     if (n < 0 || n >= show.units.length) return;
@@ -1035,12 +1274,10 @@
       if (inline) { inline.scrollIntoView({ block: "center" }); return; }
       bodyEl.replaceChildren(el("div", { text: "That note is not in the local copy." }));
     } else {
-      bodyEl.replaceChildren(n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, el("div", { html: n.html || esc(n.text) }));
+      bodyEl.replaceChildren(...[n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, sanitize(el("div", { html: n.html || esc(n.text) }))].filter(Boolean));
     }
     sheet.hidden = false;
-    const scrim = el("div", { class: "scrim", onclick: hideNote });
-    scrim.id = "scrim";
-    document.body.append(scrim);
+    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: hideNote }); scrim.id = "scrim"; document.body.append(scrim); }
     bodyEl.onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;
@@ -1049,7 +1286,7 @@
       api("resolve", { href }).then((res) => {
         hideNote();
         if (res.found) openDoc(res.doc_id, res.pid);
-        else window.open(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href, "_blank", "noopener");
+        else openOutside(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href);
       });
     };
   }
@@ -1079,10 +1316,18 @@
   for (const b of document.querySelectorAll(".scopes button")) {
     b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
   }
-  $("#homeBtn").addEventListener("click", () => { if (!state.ready) return; leaveSearch(); state.q = ""; state.docId = null; state.pid = null; state.browse = null; state.scope = "all"; syncControls(); renderHome(); showList(); push(); });
+  $("#homeBtn").addEventListener("click", () => { if (state.ready) goHome(); });
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
-  $("#askBtn").addEventListener("click", () => { if (!state.ready) return; leaveSearch(); state.q = ""; state.browse = { tab: "ask" }; syncControls(); renderHome(); showList(); push(); });
-  $("#deckBtn").addEventListener("click", () => { if (!state.ready) return; leaveSearch(); state.q = ""; state.browse = { tab: "deck" }; syncControls(); renderHome(); showList(); push(); });
+  function openTab(tab) {
+    if (!state.ready) return;
+    leaveSearch();
+    state.q = "";
+    if (!wide()) { state.docId = null; state.pid = null; }
+    state.browse = { tab };
+    syncControls(); renderHome(); showList(); push();
+  }
+  $("#askBtn").addEventListener("click", () => openTab("ask"));
+  $("#deckBtn").addEventListener("click", () => openTab("deck"));
   const applyFilters = () => {
     if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
@@ -1099,6 +1344,7 @@
       else if (e.key === "Escape") stopPresenting();
       else if (e.key === "+" || e.key === "=") stageScale(0.1);
       else if (e.key === "-") stageScale(-0.1);
+      else if (e.key === "b" || e.key === "B" || e.key === ".") { e.preventDefault(); stage.classList.toggle("blank"); } // a blank screen while the teacher talks
       return;
     }
     // Single-key shortcuts never fire while typing in any field (the Ask box, a deck title, a label).
@@ -1110,6 +1356,7 @@
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
   });
 
+  const ICON_THINK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2V17h5v-1.2c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z"/></svg>';
   const ICON_BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
   const ICON_PRESENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
   const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
@@ -1127,7 +1374,11 @@
     try { semState = await api("semanticStatus", {}); } catch (_) { return; }
     if (!semState.available || semState.ready) return;
     // the home screen's footer line shows the download, then that meaning search is on
-    const note = (text) => { const f = $("#homeStatus"); if (!f) return; if (!f.dataset.base) f.dataset.base = f.textContent; f.textContent = text ? `${f.dataset.base} · ${text}` : f.dataset.base; };
+    const note = (text) => {
+      const f = $("#homeStatus"); if (!f) return;
+      const base = f.textContent.replace(/ · (search by meaning is on|getting the search model[^·]*|preparing search by meaning…)$/, "");
+      f.textContent = text ? `${base} · ${text}` : base;
+    };
     try {
       await call("loadSemantic", { base: new URL("./", BASE).href }, (p) => {
         if (p.phase === "model" && p.total) note(`getting the search model (${mb(p.loaded)} of ${mb(p.total)}, once)…`);
@@ -1166,16 +1417,20 @@
     show(node, title) {
       panel.lastEl = node; panel.lastTitle = title || "";
       if (!wide()) return;
+      const was = currentDoc && currentDoc.id === state.docId ? currentDoc : null;
       currentDoc = null;
-      readerPane.replaceChildren(el("div", { class: "reader-bar" }, [el("div", { class: "crumb", text: title || "" })]), node);
+      const back = was ? el("button", { type: "button", class: "trail-back", "aria-label": `Back to ${shortTitleOf(was)}`, onclick: () => openDoc(was.id, state.pid, { push: false }) }, [el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: shortTitleOf(was) })]) : null;
+      readerPane.replaceChildren(el("div", { class: "reader-bar" }, [back, el("div", { class: "crumb", text: title || "" })]), node);
       readerPane.hidden = false;
       readerPane.scrollTop = 0;
+      updateThinkFab();
     },
     restore() { if (panel.lastEl) panel.show(panel.lastEl, panel.lastTitle); },
   };
 
   function searchFor(q) {
-    state.q = q; state.offset = 0; state.docId = null; state.pid = null;
+    state.q = q; state.offset = 0;
+    if (!wide()) { state.docId = null; state.pid = null; }
     syncControls(); showList(); runSearch({ typeahead: false });
   }
   window.GL = {
@@ -1188,10 +1443,12 @@
   // ------------------------------------------------------------- start ----
   (async () => {
     readUrl();
+    if (!history.state || !Number.isInteger(history.state.n)) history.replaceState({ n: 0, label: null, prev: null }, "", location.href);
     syncControls();
     const ok = await ensureLibrary();
     if (!ok) return;
     state.ready = true;
+    try { navigator.storage?.persist?.().catch(() => {}); } catch (_) {} // 150 MB that should not be evicted
     api("speakers", {}).then((rows) => { const dl = $("#speakerList"); for (const r of rows) dl.append(el("option", { value: r.name })); }).catch(() => {});
     await render();
     if (!state.q && !state.docId && wide()) input.focus();

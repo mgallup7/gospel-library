@@ -126,6 +126,23 @@
     return added;
   }
 
+  // Another tab saved the deck: take its newer state rather than writing over it later.
+  window.addEventListener("storage", (e) => {
+    if (e.key !== "gospel.deck" || !e.newValue) return;
+    try {
+      const other = JSON.parse(e.newValue);
+      if (other && other.updated > deck.updated) { deck = migrate(other); draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
+    } catch (_) { /* not ours */ }
+  });
+
+  /** A section heading at the end of the deck (what "Think it through" builds under). */
+  function addSection(title) {
+    const item = { id: uid(), type: "section", title: String(title || "").trim() };
+    deck.items.push(item);
+    save();
+    return item;
+  }
+
   /** Add one search hit or Ask passage: {doc_id, pid, kind, text, verses, citation, author, title, label, collection, verse}. */
   function addPassage(p, { show = false } = {}) {
     const existing = find(p.doc_id, p.pid);
@@ -673,10 +690,12 @@
 
   // ------------------------------------------------------------ new topic --
   // A new search or question while a deck is in progress: clear it, save it
-  // as it is and start a new one, or keep adding to it. Asked once per state
-  // of the deck, so refining the same search does not ask twice.
-  let asking = null, keptAt = null;
-  function shouldAsk() { return count() > 0 && deck.updated !== keptAt; }
+  // as it is and start a new one, or keep adding to it. Asked only about a deck
+  // left over from an earlier day, and once: a deck being built now (search,
+  // add, search again) never interrupts, and the answer is kept across launches.
+  const SESSION_START = Date.now();
+  let asking = null;
+  function shouldAsk() { return count() > 0 && deck.updated < SESSION_START - 60 * 1000 && store.get("deckKept") !== deck.id; }
   function askAboutDeck({ kind = "search" } = {}) {
     if (asking) return asking;
     if (!shouldAsk()) return Promise.resolve("keep");
@@ -704,7 +723,7 @@
       sheet.append(
         el("h2", { text: `Clear the deck for this ${kind}?` }),
         el("p", { class: "lede", text: `${deck.title ? `“${deck.title}” has` : "The deck has"} ${what}.` }),
-        el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { keptAt = deck.updated; finish("keep"); } }),
+        el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { store.set("deckKept", deck.id); finish("keep"); } }),
         el("button", { type: "button", class: "text-btn", text: "No, save it as it is, then start a new deck", onclick: (e) => { nameRow.hidden = false; e.currentTarget.hidden = true; name.focus(); name.select(); } }),
         nameRow,
         el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; save(); GL().toast("The deck is empty."); finish("new"); } }),
@@ -1309,8 +1328,18 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // The slide background for themes that have a gradient: drawn once on a
   // canvas, stored once in the file's slide master. Flat color when the
   // device cannot draw it.
+  // One background per theme per session (drawn once, as a JPEG: a gradient needs no PNG, and the
+  // file is a third of the size).
+  const backgrounds = new Map();
   function backgroundImage(t) {
     if (!t.gradient || typeof document === "undefined") return null;
+    const key = t.gradient.join(",");
+    if (backgrounds.has(key)) return backgrounds.get(key);
+    const data = drawBackground(t);
+    backgrounds.set(key, data);
+    return data;
+  }
+  function drawBackground(t) {
     try {
       const c = document.createElement("canvas");
       c.width = 1600; c.height = 900;
@@ -1322,8 +1351,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const glow = g.createRadialGradient(260, 140, 0, 260, 140, 1150);
       glow.addColorStop(0, "rgba(255,255,255,0.075)"); glow.addColorStop(1, "rgba(255,255,255,0)");
       g.fillStyle = glow; g.fillRect(0, 0, 1600, 900);
-      const data = c.toDataURL("image/png");
-      return data.startsWith("data:image/png") ? data.slice(5) : null;
+      const data = c.toDataURL("image/jpeg", 0.9);
+      return data.startsWith("data:image/jpeg") ? data.slice(5) : null;
     } catch (_) { return null; }
   }
 
@@ -1603,7 +1632,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   function schedulePrepare() {
     clearTimeout(prepareTimer);
     if (!deck.items.length || isPrepared()) return;
-    prepareTimer = setTimeout(() => { if (!linking && !pending && !preparing) preparePptx().then(() => syncDownloadButton()).catch(() => {}); }, 1800);
+    const run = () => { if (!linking && !pending && !preparing) preparePptx().then(() => syncDownloadButton()).catch(() => {}); };
+    prepareTimer = setTimeout(() => { if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 4000 }); else run(); }, 4000);
   }
   function syncDownloadButton() {
     if (!ui) return;
@@ -1651,7 +1681,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   }
 
   window.Deck = {
-    render, board: boardEl, showBoard, addFromDoc, addPassage, has, remove, toggle, count, updateBadge,
+    render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,

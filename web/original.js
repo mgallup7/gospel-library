@@ -279,5 +279,5 @@
     ]);
   }
 
-  window.Original = { attach, resultsHeader, hintLine, check, isBible };
+  window.Original = { attach, resultsHeader, hintLine, check, isBible, closeSheet };
 })();

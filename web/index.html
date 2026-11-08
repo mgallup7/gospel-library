@@ -26,17 +26,17 @@
     <button type="button" class="clear" aria-label="Clear">&times;</button>
   </form>
   <span class="bar-btns"><button id="askBtn" class="text-btn" type="button" title="Ask Claude about the library">Ask</button><button id="deckBtn" class="text-btn" type="button" title="Passages collected for a presentation">Deck</button><button id="filterBtn" class="icon-btn" type="button" aria-label="Filters" title="Filters"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M7 12h10M10 17h4"/></svg></button></span>
-  <div class="scopes" role="tablist" aria-label="Where to search">
-    <button type="button" data-scope="all" class="on">All</button>
-    <button type="button" data-scope="scriptures">Scriptures</button>
-    <button type="button" data-scope="conference">Conference</button>
-    <button type="button" data-scope="pmg">PMG</button>
-    <button type="button" data-scope="standards">Standards</button>
-    <button type="button" data-scope="handbook">Handbook</button>
-    <button type="button" data-scope="cfm">Come, Follow Me</button>
-    <button type="button" data-scope="manuals">Manuals</button>
-    <button type="button" data-scope="helps">Study helps</button>
-    <button type="button" data-scope="jsp">JS Papers</button>
+  <div class="scopes" role="group" aria-label="Where to search">
+    <button type="button" data-scope="all" class="on" aria-pressed="true">All</button>
+    <button type="button" data-scope="scriptures" aria-pressed="false">Scriptures</button>
+    <button type="button" data-scope="conference" aria-pressed="false">Conference</button>
+    <button type="button" data-scope="pmg" aria-pressed="false">PMG</button>
+    <button type="button" data-scope="standards" aria-pressed="false">Standards</button>
+    <button type="button" data-scope="handbook" aria-pressed="false">Handbook</button>
+    <button type="button" data-scope="cfm" aria-pressed="false">Come, Follow Me</button>
+    <button type="button" data-scope="manuals" aria-pressed="false">Manuals</button>
+    <button type="button" data-scope="helps" aria-pressed="false">Study helps</button>
+    <button type="button" data-scope="jsp" aria-pressed="false">JS Papers</button>
   </div>
 </header>
 
@@ -58,7 +58,7 @@
 </div>
 
 <main>
-  <section id="list" class="pane" aria-live="polite"></section>
+  <section id="list" class="pane"></section>
   <section id="reader" class="pane" hidden></section>
 </main>
 

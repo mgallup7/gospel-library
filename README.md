@@ -31,6 +31,19 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   line above the results says how the search was read ("Exact phrase
   found, then by words and meaning: faith, perfect knowledge · all
   shelves") with an "Only exact words" switch.
+- Think it through, from anywhere. A floating button over the page you are
+  reading (or over a set of results) hands it to Claude on the Ask tab, with
+  anything you have selected: Claude studies the chapter, lesson or talk,
+  searches the library itself, and comes back with what connects to it
+  across the shelves, the Hebrew or Greek behind a key word, questions to
+  ask, and a deck section to build from it, in one tap. The deck's own
+  "Think it through" still studies a chain of passages already on the deck.
+- A Back that says where it leads. Every place has an address (a shelf and
+  how far into it you are, a search, a page, Ask, Deck), so "‹ Alma 32" or
+  "‹ Results" in the reader bar, and at the top of every list on a phone,
+  retraces your steps exactly, cross-references included, with the scroll
+  position kept; it works in the home-screen app, where there is no browser
+  Back, and survives a reload.
 - The home screen: where you were (the last chapter or talk, the deck in
   progress), the shelves as tiles with what each holds, the latest
   conference, and a box to ask the library a question. Open a shelf and the

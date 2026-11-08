@@ -53,6 +53,33 @@ ${TOOLS_GUIDE}
 
 Build the piece from passages the tools returned. Quotation marks are a promise: anything inside them must be word for word from a passage the tools returned, followed by its [n]; never quote from memory or smooth the wording, and search first for any passage you want to use. Cite every paraphrase as [n] too. Follow the requested form and length closely. Voice: warm, direct, doctrinally careful, concrete. No em dashes. No filler openings. Headings only when the form calls for them (an outline, a lesson plan). If the passages are thin for part of the request, write that part briefly and say which searches would strengthen it.`;
 
+  // Think it through: the page being read (or the search being looked at) handed over whole,
+  // so Claude can study it and go looking for what connects to it.
+  const SYSTEM_THINK = `You are Claude, thinking a page through beside an experienced Latter-day Saint leader (a mission president) who is preparing to teach from it. He is reading the page given below: a chapter of scripture, a Come, Follow Me lesson, a conference talk, a manual page, or a page of the Joseph Smith Papers, and he may have selected some verses or paragraphs in it. ${LIBRARY}
+
+${TOOLS_GUIDE}
+
+Study the page the way a careful teacher would: what it teaches in its own words, what it assumes, where it is going. Then go looking, with the tools, for what connects to it across the library: the scriptures it quotes or echoes, the talks that expound it, Preach My Gospel or the handbook where it bears on missionary work, the Hebrew or Greek behind a key word when it is a Bible chapter (use original, then lexicon), and the Joseph Smith Papers when they bear on it (scope jsp). Six to ten tool calls is about right. If a deck in progress is described, favor connections that build on it.
+
+Write the answer under exactly these headings, in this order, with nothing before the first:
+
+## What this page teaches
+Two or three sentences. The doctrine, in plain words, as the page itself puts it. If verses or paragraphs were selected, this is about them first.
+
+## Connections
+Five to eight passages from across the library, strongest first, one line each: the [n] number, then why it connects (the shared word, the promise and its keeping, the doctrine this page assumes, the example that shows it). Mix the sources: at least one general conference talk and at least one other scripture, and the Papers when they bear on it. Only passages the tools returned, cited by their numbers.
+
+## In the original
+Only for a Bible chapter: one or two words worth knowing, each with the Hebrew or Greek word, its transliteration, what it means here, and where else it appears. Leave this heading out for any other page.
+
+## Questions
+Three or four questions a teacher could ask a zone or a class, each one the page itself answers.
+
+## For the deck
+One line: a title for a deck section built from this page (six words at most, in quotation marks), then the [n] numbers of the connections to put on it, in teaching order.
+
+Plain, warm, doctrinally precise prose; no em dashes; no preamble, no closing remarks. Quotation marks are a promise: anything inside them is word for word from a passage the tools returned.`;
+
   const TOOLS = [
     { name: "search", description: "Ranked full-text search of the whole library. Returns the best passages with their numbers for citing.",
       input_schema: { type: "object", properties: {
@@ -121,11 +148,13 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   };
 
   // --------------------------------------------------------------- render --
-  let handed = null; // a question typed on the home screen, asked as soon as the tab can
-  function render(container, { question = null } = {}) {
+  let handed = null;  // a question typed on the home screen, asked as soon as the tab can
+  let handedPage = null; // a page to think through, from the floating button
+  function render(container, { question = null, think = null } = {}) {
     view = container;
     container.replaceChildren();
     if (question) handed = question;
+    if (think) handedPage = think;
     if (!settings.key) { renderKeySetup(container); return; }
     const box = el("div", { class: "ask" });
     const modes = el("div", { class: "seg ask-mode" }, [
@@ -155,7 +184,32 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     box.append(el("div", { class: "ask-top" }, [modes, gear]), input, el("div", { class: "ask-actions" }, [go, el("button", { type: "button", class: "text-btn", text: "New thread", onclick: () => { thread = []; log.replaceChildren(); } })]), hint, log);
     container.append(box);
     if (handed) { input.value = handed; handed = null; submit(input, modes, log); return; }
+    if (handedPage) { const page = handedPage; handedPage = null; submit(input, modes, log, page); return; }
     if (GL().wide) input.focus();
+  }
+
+  // The floating button's work: the page (or the search) as Claude will see it.
+  // {doc, selection} for a page; {query, hits} for a search.
+  function subjectFor({ doc = null, selection = [], query = null, hits = [] } = {}) {
+    if (doc) {
+      const label = doc.collection === "general-conference" ? `${doc.title} (${[doc.author, doc.label].filter(Boolean).join(", ")})` : doc.citation || doc.title;
+      const plain = el("div", { html: doc.body_html || "" });
+      for (const junk of plain.querySelectorAll("sup.marker, .page-break, .notes, script, style")) junk.remove();
+      let body = plain.textContent.replace(/\s+/g, " ").trim();
+      if (body.length > 24000) body = body.slice(0, 24000) + " …(the page continues)";
+      const sel = selection.length ? "\n\nHe has selected these, so think about them first:\n" + selection.map((u) => `${u.verse ? `${u.verse} ` : ""}${u.text}`).join("\n") : "";
+      const deck = deckHint();
+      return { label, content: `The page: ${label}${doc.author && doc.collection !== "general-conference" ? `, ${doc.author}` : ""}${doc.collection ? ` (${doc.collection_title || doc.collection})` : ""}.\n\n${body}${sel}${deck}` };
+    }
+    const label = `the search “${query}”`;
+    const top = hits.slice(0, 8).map((h) => `${h.citation}: ${(h.text || "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
+    return { label, content: `He searched the library for: ${query}\n\nThe best passages the search found:\n${top}${deckHint()}\n\nThink through what he is likely looking for and what connects to it; the "page" here is the search and its best passages.` };
+  }
+  function deckHint() {
+    const d = window.Deck?.state;
+    const items = (d?.items || []).filter((i) => i.type === "passage");
+    if (!items.length) return "";
+    return `\n\nThe deck in progress${d.title ? ` (“${d.title}”)` : ""} already has: ${items.slice(0, 12).map((i) => i.citation).join("; ")}${items.length > 12 ? "; and more" : ""}.`;
   }
 
   function renderKeySetup(container) {
@@ -207,21 +261,22 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   }
 
   // --------------------------------------------------------------- submit --
-  async function submit(input, modes, log) {
-    const text = input.value.trim();
+  // subject: for "think it through", {label, content, deckHint}: the page as the card's title line, the text sent to Claude
+  async function submit(input, modes, log, subject = null) {
+    const text = subject ? subject.content : input.value.trim();
     if (!text || busy) return;
-    const mode = modes.querySelector("button.on")?.dataset.mode || "ask";
+    const mode = subject ? "think" : modes.querySelector("button.on")?.dataset.mode || "ask";
     if (!navigator.onLine) { log.prepend(el("div", { class: "status error", text: "Ask needs an internet connection. Search and reading work offline." })); return; }
-    // A deck in progress: ask what this question should do with it first.
-    if (window.Deck?.shouldAsk()) {
+    // A deck in progress: ask what this question should do with it first (thinking a page through builds on it)
+    if (!subject && window.Deck?.shouldAsk()) {
       const choice = await window.Deck.askAboutDeck({ kind: mode === "ask" ? "question" : "request" });
       if (choice === "cancel" || busy) return;
     }
     busy = true;
-    input.value = "";
-    const card = el("article", { class: "ask-card" });
-    const q = el("div", { class: "ask-q", text: text });
-    const status = el("div", { class: "ask-status", text: "Planning searches…" });
+    if (!subject) input.value = "";
+    const card = el("article", { class: "ask-card" + (subject ? " think-card" : "") });
+    const q = el("div", { class: "ask-q", text: subject ? `Thinking it through: ${subject.label}` : text });
+    const status = el("div", { class: "ask-status", text: subject ? `${modelName()} is reading the page…` : "Planning searches…" });
     const answer = el("div", { class: "ask-a" });
     const sources = el("div", { class: "ask-sources" });
     const tools = el("div", { class: "ask-tools" });
@@ -231,21 +286,30 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     log.prepend(card);
     try {
       const registry = new Registry();
-      const findings = new Findings(registry.list, text);
+      const findings = new Findings(registry.list, subject ? subject.label : text);
       findings.mount(inline);
-      // A head start: what the library's own search finds, before Claude asks for anything.
-      status.textContent = "Searching the library…";
-      const head = await registry.search({ query: text, limit: 10 });
-      findings.refresh();
-      status.textContent = head.length ? `${head.length} passages to start. Claude is searching further…` : "Claude is searching…";
+      if (!subject) {
+        // A head start: what the library's own search finds, before Claude asks for anything.
+        status.textContent = "Searching the library…";
+        const head = await registry.search({ query: text, limit: 10 });
+        findings.refresh();
+        status.textContent = head.length ? `${head.length} passages to start. Claude is searching further…` : "Claude is searching…";
+      }
       const trail = [];
       const reply = await agent(text, mode, registry, findings, status, answer, trail);
       lastPassages = registry.list;
-      thread.push({ role: "user", content: text }, { role: "assistant", content: reply });
-      if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
+      if (!subject) {
+        thread.push({ role: "user", content: text }, { role: "assistant", content: reply });
+        if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
+      } else {
+        // the page is now part of the conversation, so a follow-up question can refer to it
+        thread.push({ role: "user", content: `(I thought this page through with you: ${subject.label}.)` }, { role: "assistant", content: reply });
+        if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
+      }
       status.remove();
       finish(answer, sources, tools, reply, registry.list, input, modes, log, trail);
       findings.setCited([...new Set([...reply.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]);
+      if (subject) offerSection(tools, reply, registry.list, findings);
     } catch (err) {
       status.textContent = "";
       status.classList.add("error");
@@ -253,6 +317,27 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     } finally {
       busy = false;
     }
+  }
+
+  // "For the deck" names a section and the passages for it; one tap builds it.
+  function offerSection(toolsEl, reply, passages, findings) {
+    const m = String(reply).match(/##\s*For the deck\s*\n([\s\S]*?)(?:\n##|$)/i);
+    if (!m) return;
+    const line = m[1].trim();
+    const title = (line.match(/[“"]([^”"]{2,80})[”"]/) || [])[1] || "";
+    const nums = [...new Set([...line.matchAll(/\[(\d+)\]/g)].map((x) => Number(x[1])))].filter((n) => passages[n - 1]);
+    if (!nums.length || !window.Deck) return;
+    const btn = el("button", { type: "button", class: "primary small", text: `Put ${nums.length === 1 ? "it" : `these ${nums.length}`} on the deck${title ? ` as “${title}”` : ""}`, onclick: () => {
+      if (title) window.Deck.addSection(title);
+      let added = 0;
+      for (const n of nums) { const p = passages[n - 1]; if (p && !window.Deck.has(p.doc_id, p.pid)) { window.Deck.addPassage(findings.forDeck(p)); added++; } }
+      findings.sync();
+      btn.textContent = added ? `On the deck${title ? ` under “${title}”` : ""}` : "Already on the deck";
+      btn.disabled = true;
+      GL().toast(added ? `${added} ${added === 1 ? "passage" : "passages"} on the deck.` : "Already on the deck.");
+      if (GL().wide) window.Deck.showBoard();
+    } });
+    toolsEl.prepend(btn);
   }
 
   function friendlyError(err) {
@@ -430,6 +515,9 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     if (mode === "ask") {
       blocks.push(SYSTEM_ASK);
       if (sk.style) blocks.push(`House style for answers, from the person you are writing for:\n\n${sk.style}`);
+    } else if (mode === "think") {
+      blocks.push(SYSTEM_THINK);
+      if (sk.style) blocks.push(`House style for answers, from the person you are writing for:\n\n${sk.style}`);
     } else {
       blocks.push(SYSTEM_DRAFT);
       if (sk.voice) blocks.push(`The voice to write in. These rules were written by the person you write for, from his own edits; they outrank anything a draft could do:\n\n${sk.voice}`);
@@ -458,8 +546,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const head = registry.list.map((p) => passageLine(p)).join("\n\n");
     const k = modeSkill(mode);
     const lead = [weekLine(k)].filter(Boolean).join(" ");
-    const first = (lead ? lead + "\n\n" : "") + `${mode === "ask" ? "Question" : "Request"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
-    const messages = [...thread.map((m) => ({ role: m.role, content: m.content })), { role: "user", content: first }];
+    const first = mode === "think"
+      ? text
+      : (lead ? lead + "\n\n" : "") + `${mode === "ask" ? "Question" : "Request"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
+    // thinking a page through starts fresh: the page is the whole context
+    const messages = [...(mode === "think" ? [] : thread).map((m) => ({ role: m.role, content: m.content })), { role: "user", content: first }];
     let calls = 0, finalText = "";
     for (let turn = 0; turn < MAX_TOOL_CALLS + 4; turn++) {
       let buffer = "", pending = false;
@@ -832,5 +923,6 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return { text, blocks: clean, tool_uses: clean.filter((b) => b.type === "tool_use"), stop_reason };
   }
 
-  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key, complete, modelName: () => MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model };
+  function modelName() { return MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model; }
+  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key, complete, modelName, subjectFor };
 })();
