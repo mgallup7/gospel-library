@@ -281,6 +281,15 @@ LIBRARY_PASSPHRASE=test .venv/bin/python -m gospel_library bundle --out data/bun
 .venv/bin/python -m gospel_library discover /manual            # see what the site offers under a URI
 ```
 
+The JavaScript has tests of its own: `node --test tests/js/*.test.mjs` checks
+that the browser's parsers (`web/lib/scriptures.js`, `web/lib/query.js`) read
+references and queries exactly as the Python ones do (against
+`tests/fixtures/parsers.json`, frozen from the Python side), and
+`tests/js/browser/run.mjs` drives the app itself in Chromium at iPad and
+phone sizes (the trail and Back, links and My studies, highlights and notes,
+the concordance, focus, deck cards, the tile legend); its header says how to
+serve a copy for it to point at.
+
 `bin/gen-web-data.py` regenerates `web/lib/scriptures-data.js` if the scripture
 metadata changes. Data lives in `data/` (ignored by git); set
 `GOSPEL_LIBRARY_DATA` to put it elsewhere.

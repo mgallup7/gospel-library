@@ -1,0 +1,627 @@
+{
+ "references": {
+  "Alma 32:21": {
+   "uri": "/scriptures/bofm/alma/32",
+   "pid": "p21",
+   "label": "Alma 32:21",
+   "verseEnd": null,
+   "book": "alma",
+   "chapter": 32
+  },
+  "alma 32 21": {
+   "uri": "/scriptures/bofm/alma/32",
+   "pid": "p21",
+   "label": "Alma 32:21",
+   "verseEnd": null,
+   "book": "alma",
+   "chapter": 32
+  },
+  "d&c 76:22-24": {
+   "uri": "/scriptures/dc-testament/dc/76",
+   "pid": "p22",
+   "label": "D&C 76:22–24",
+   "verseEnd": 24,
+   "book": "sections",
+   "chapter": 76
+  },
+  "D&C 76": {
+   "uri": "/scriptures/dc-testament/dc/76",
+   "pid": null,
+   "label": "D&C 76",
+   "verseEnd": null,
+   "book": "sections",
+   "chapter": 76
+  },
+  "js-h 1:17": {
+   "uri": "/scriptures/pgp/js-h/1",
+   "pid": "p17",
+   "label": "Joseph Smith—History 1:17",
+   "verseEnd": null,
+   "book": "joseph-smith-history",
+   "chapter": 1
+  },
+  "1 Nephi 3:7": {
+   "uri": "/scriptures/bofm/1-ne/3",
+   "pid": "p7",
+   "label": "1 Nephi 3:7",
+   "verseEnd": null,
+   "book": "1-nephi",
+   "chapter": 3
+  },
+  "1 ne 3 7": {
+   "uri": "/scriptures/bofm/1-ne/3",
+   "pid": "p7",
+   "label": "1 Nephi 3:7",
+   "verseEnd": null,
+   "book": "1-nephi",
+   "chapter": 3
+  },
+  "Moroni 10:4-5": {
+   "uri": "/scriptures/bofm/moro/10",
+   "pid": "p4",
+   "label": "Moroni 10:4–5",
+   "verseEnd": 5,
+   "book": "moroni",
+   "chapter": 10
+  },
+  "Gen 1:1": {
+   "uri": "/scriptures/ot/gen/1",
+   "pid": "p1",
+   "label": "Genesis 1:1",
+   "verseEnd": null,
+   "book": "genesis",
+   "chapter": 1
+  },
+  "Genesis 1": {
+   "uri": "/scriptures/ot/gen/1",
+   "pid": null,
+   "label": "Genesis 1",
+   "verseEnd": null,
+   "book": "genesis",
+   "chapter": 1
+  },
+  "Psalm 23": {
+   "uri": "/scriptures/ot/ps/23",
+   "pid": null,
+   "label": "Psalm 23",
+   "verseEnd": null,
+   "book": "psalms",
+   "chapter": 23
+  },
+  "Ps. 23:1": {
+   "uri": "/scriptures/ot/ps/23",
+   "pid": "p1",
+   "label": "Psalm 23:1",
+   "verseEnd": null,
+   "book": "psalms",
+   "chapter": 23
+  },
+  "3 Nephi 11": {
+   "uri": "/scriptures/bofm/3-ne/11",
+   "pid": null,
+   "label": "3 Nephi 11",
+   "verseEnd": null,
+   "book": "3-nephi",
+   "chapter": 11
+  },
+  "Moses 1:39": {
+   "uri": "/scriptures/pgp/moses/1",
+   "pid": "p39",
+   "label": "Moses 1:39",
+   "verseEnd": null,
+   "book": "moses",
+   "chapter": 1
+  },
+  "Abr 3:22": {
+   "uri": "/scriptures/pgp/abr/3",
+   "pid": "p22",
+   "label": "Abraham 3:22",
+   "verseEnd": null,
+   "book": "abraham",
+   "chapter": 3
+  },
+  "A of F 1:13": {
+   "uri": "/scriptures/pgp/a-of-f/1",
+   "pid": "p13",
+   "label": "Articles of Faith 1:13",
+   "verseEnd": null,
+   "book": "articles-of-faith",
+   "chapter": 1
+  },
+  "JST Matthew 7:1": {
+   "uri": "/scriptures/jst/jst-matt/7",
+   "pid": "p1",
+   "label": "JST, Matthew 7:1",
+   "verseEnd": null,
+   "book": "jst-matthew",
+   "chapter": 7
+  },
+  "John 3:16": {
+   "uri": "/scriptures/nt/john/3",
+   "pid": "p16",
+   "label": "John 3:16",
+   "verseEnd": null,
+   "book": "john",
+   "chapter": 3
+  },
+  "Matt 5:3-12": {
+   "uri": "/scriptures/nt/matt/5",
+   "pid": "p3",
+   "label": "Matthew 5:3–12",
+   "verseEnd": 12,
+   "book": "matthew",
+   "chapter": 5
+  },
+  "faith": null,
+  "faith hope": null,
+  "alma 999": null,
+  "Alma 32:21-27": {
+   "uri": "/scriptures/bofm/alma/32",
+   "pid": "p21",
+   "label": "Alma 32:21–27",
+   "verseEnd": 27,
+   "book": "alma",
+   "chapter": 32
+  },
+  "Doctrine and Covenants 84:88": {
+   "uri": "/scriptures/dc-testament/dc/84",
+   "pid": "p88",
+   "label": "D&C 84:88",
+   "verseEnd": null,
+   "book": "sections",
+   "chapter": 84
+  },
+  "Ether 12:6": {
+   "uri": "/scriptures/bofm/ether/12",
+   "pid": "p6",
+   "label": "Ether 12:6",
+   "verseEnd": null,
+   "book": "ether",
+   "chapter": 12
+  },
+  "Rev 22:21": {
+   "uri": "/scriptures/nt/rev/22",
+   "pid": "p21",
+   "label": "Revelation 22:21",
+   "verseEnd": null,
+   "book": "revelation",
+   "chapter": 22
+  },
+  "Helaman 5:12": {
+   "uri": "/scriptures/bofm/hel/5",
+   "pid": "p12",
+   "label": "Helaman 5:12",
+   "verseEnd": null,
+   "book": "helaman",
+   "chapter": 5
+  },
+  "2 Nephi 2:25": {
+   "uri": "/scriptures/bofm/2-ne/2",
+   "pid": "p25",
+   "label": "2 Nephi 2:25",
+   "verseEnd": null,
+   "book": "2-nephi",
+   "chapter": 2
+  },
+  "Jacob 4:6": {
+   "uri": "/scriptures/bofm/jacob/4",
+   "pid": "p6",
+   "label": "Jacob 4:6",
+   "verseEnd": null,
+   "book": "jacob",
+   "chapter": 4
+  },
+  "Mormon 9:20": {
+   "uri": "/scriptures/bofm/morm/9",
+   "pid": "p20",
+   "label": "Mormon 9:20",
+   "verseEnd": null,
+   "book": "mormon",
+   "chapter": 9
+  },
+  "Enos 1:4": {
+   "uri": "/scriptures/bofm/enos/1",
+   "pid": "p4",
+   "label": "Enos 1:4",
+   "verseEnd": null,
+   "book": "enos",
+   "chapter": 1
+  },
+  "Omni 1:26": {
+   "uri": "/scriptures/bofm/omni/1",
+   "pid": "p26",
+   "label": "Omni 1:26",
+   "verseEnd": null,
+   "book": "omni",
+   "chapter": 1
+  },
+  "Words of Mormon 1:7": {
+   "uri": "/scriptures/bofm/w-of-m/1",
+   "pid": "p7",
+   "label": "Words of Mormon 1:7",
+   "verseEnd": null,
+   "book": "words-of-mormon",
+   "chapter": 1
+  },
+  "Jarom 1:2": {
+   "uri": "/scriptures/bofm/jarom/1",
+   "pid": "p2",
+   "label": "Jarom 1:2",
+   "verseEnd": null,
+   "book": "jarom",
+   "chapter": 1
+  },
+  "4 Nephi 1:15": {
+   "uri": "/scriptures/bofm/4-ne/1",
+   "pid": "p15",
+   "label": "4 Nephi 1:15",
+   "verseEnd": null,
+   "book": "4-nephi",
+   "chapter": 1
+  },
+  "Isaiah 53:5": {
+   "uri": "/scriptures/ot/isa/53",
+   "pid": "p5",
+   "label": "Isaiah 53:5",
+   "verseEnd": null,
+   "book": "isaiah",
+   "chapter": 53
+  },
+  "Mal. 3:10": {
+   "uri": "/scriptures/ot/mal/3",
+   "pid": "p10",
+   "label": "Malachi 3:10",
+   "verseEnd": null,
+   "book": "malachi",
+   "chapter": 3
+  },
+  "mosiah 2:17": {
+   "uri": "/scriptures/bofm/mosiah/2",
+   "pid": "p17",
+   "label": "Mosiah 2:17",
+   "verseEnd": null,
+   "book": "mosiah",
+   "chapter": 2
+  }
+ },
+ "queries": {
+  "faith|0": {
+   "match": "\"faith\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith"
+   ]
+  },
+  "faith|1": {
+   "match": "\"faith\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith"
+   ]
+  },
+  "faith hope|0": {
+   "match": "\"faith\" \"hope\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith",
+    "hope"
+   ]
+  },
+  "faith hope|1": {
+   "match": "\"faith\" \"hope\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith",
+    "hope"
+   ]
+  },
+  "\"plan of happiness\"|0": {
+   "match": "\"plan of happiness\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "plan of happiness"
+   ]
+  },
+  "\"plan of happiness\"|1": {
+   "match": "\"plan of happiness\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "plan of happiness"
+   ]
+  },
+  "speaker:nelson covenant|0": {
+   "match": "\"covenant\"",
+   "collections": [],
+   "speaker": "nelson",
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "covenant"
+   ]
+  },
+  "speaker:nelson covenant|1": {
+   "match": "\"covenant\"*",
+   "collections": [],
+   "speaker": "nelson",
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "covenant"
+   ]
+  },
+  "year:2015-2020 faith|0": {
+   "match": "\"faith\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": 2015,
+   "yearTo": 2020,
+   "bookSlug": null,
+   "terms": [
+    "faith"
+   ]
+  },
+  "year:2015-2020 faith|1": {
+   "match": "\"faith\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": 2015,
+   "yearTo": 2020,
+   "bookSlug": null,
+   "terms": [
+    "faith"
+   ]
+  },
+  "book:alma faith knowledge|0": {
+   "match": "\"faith\" \"knowledge\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": "alma",
+   "terms": [
+    "faith",
+    "knowledge"
+   ]
+  },
+  "book:alma faith knowledge|1": {
+   "match": "\"faith\" \"knowledge\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": "alma",
+   "terms": [
+    "faith",
+    "knowledge"
+   ]
+  },
+  "in:conference identity|0": {
+   "match": "\"identity\"",
+   "collections": [
+    "general-conference"
+   ],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "identity"
+   ]
+  },
+  "in:conference identity|1": {
+   "match": "\"identity\"*",
+   "collections": [
+    "general-conference"
+   ],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "identity"
+   ]
+  },
+  "faith -works|0": {
+   "match": "(\"faith\") NOT \"works\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith"
+   ]
+  },
+  "faith -works|1": {
+   "match": "(\"faith\") NOT \"works\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith"
+   ]
+  },
+  "faith OR hope|0": {
+   "match": "\"faith\" OR \"hope\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith",
+    "hope"
+   ]
+  },
+  "faith OR hope|1": {
+   "match": "\"faith\" OR \"hope\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith",
+    "hope"
+   ]
+  },
+  "faith is not to have a perfect knowledge|0": {
+   "match": "\"faith\" \"is\" \"not\" \"to\" \"have\" \"a\" \"perfect\" \"knowledge\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith",
+    "is",
+    "not",
+    "to",
+    "have",
+    "a",
+    "perfect",
+    "knowledge"
+   ]
+  },
+  "faith is not to have a perfect knowledge|1": {
+   "match": "\"faith\" \"is\" \"not\" \"to\" \"have\" \"a\" \"perfect\" \"knowledge\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "faith",
+    "is",
+    "not",
+    "to",
+    "have",
+    "a",
+    "perfect",
+    "knowledge"
+   ]
+  },
+  "what did nelson say about covenants|0": {
+   "match": "\"what\" \"did\" \"nelson\" \"say\" \"about\" \"covenants\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "what",
+    "did",
+    "nelson",
+    "say",
+    "about",
+    "covenants"
+   ]
+  },
+  "what did nelson say about covenants|1": {
+   "match": "\"what\" \"did\" \"nelson\" \"say\" \"about\" \"covenants\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "what",
+    "did",
+    "nelson",
+    "say",
+    "about",
+    "covenants"
+   ]
+  },
+  "the holy spirit or spirit of god in pmg|0": {
+   "match": "\"the\" \"holy\" \"spirit\" \"or\" \"spirit\" \"of\" \"god\" \"in\" \"pmg\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "the",
+    "holy",
+    "spirit",
+    "or",
+    "spirit",
+    "of",
+    "god",
+    "in",
+    "pmg"
+   ]
+  },
+  "the holy spirit or spirit of god in pmg|1": {
+   "match": "\"the\" \"holy\" \"spirit\" \"or\" \"spirit\" \"of\" \"god\" \"in\" \"pmg\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "the",
+    "holy",
+    "spirit",
+    "or",
+    "spirit",
+    "of",
+    "god",
+    "in",
+    "pmg"
+   ]
+  },
+  "covenant path|0": {
+   "match": "\"covenant\" \"path\"",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "covenant",
+    "path"
+   ]
+  },
+  "covenant path|1": {
+   "match": "\"covenant\" \"path\"*",
+   "collections": [],
+   "speaker": null,
+   "yearFrom": null,
+   "yearTo": null,
+   "bookSlug": null,
+   "terms": [
+    "covenant",
+    "path"
+   ]
+  }
+ }
+}
