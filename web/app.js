@@ -66,7 +66,7 @@
   // ------------------------------------------------------------- state ----
   const state = {
     q: "", scope: "all", speaker: "", from: "", to: "", book: "", group: "passages",
-    docId: null, pid: null, studyId: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false, asTyped: false,
+    docId: null, pid: null, studyId: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false, asTyped: false, view: null,
   };
   let searchSeq = 0;
   let typeTimer = null;
@@ -96,6 +96,7 @@
       if (state.scope !== "all") p.set("scope", state.scope);
       for (const k of ["speaker", "from", "to", "book"]) if (state[k]) p.set(k, state[k]);
       if (state.group !== "passages") p.set("group", state.group);
+      if (state.view) p.set("view", state.view);
     } else if (state.browse?.tab) {
       base = state.browse.tab;
       for (const k of BROWSE_KEYS) if (state.browse[k]) p.set(`b.${k}`, String(state.browse[k]));
@@ -120,6 +121,7 @@
     state.to = searching ? p.get("to") || "" : "";
     state.book = searching ? p.get("book") || "" : "";
     state.group = p.get("group") || "passages";
+    state.view = searching && p.get("view") === "all" ? "all" : null;
     if (!searching && /^[a-z][\w-]*$/.test(base)) {
       state.browse = { tab: base };
       for (const k of BROWSE_KEYS) { const v = p.get(`b.${k}`); if (v !== null) state.browse[k] = k === "year" ? Number(v) : k === "all" ? v === "true" : v; }
@@ -139,7 +141,7 @@
   function labelNow() {
     if (state.docId) return currentDoc && currentDoc.id === state.docId ? shortTitleOf(currentDoc) : "Back";
     if (state.studyId) return currentStudy && currentStudy.id === state.studyId ? shortTitleOf(currentStudy) : "Back";
-    if (state.q.trim().length >= 2) return "Results";
+    if (state.q.trim().length >= 2) return state.view === "all" ? "Every match" : "Results";
     const tab = state.browse?.tab;
     if (tab === "ask") return "Ask";
     if (tab === "deck") return "Deck";
@@ -158,7 +160,7 @@
   function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
   function rememberScroll() { setEntry({ scroll: { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY, study: studyScroll } }); }
   // place: the kind of entry, so typing in the same place refines it instead of stacking entries
-  function placeNow() { return state.q.trim() ? "search" : state.browse?.tab || "home"; }
+  function placeNow() { return state.q.trim() ? (state.view === "all" ? "concordance" : "search") : state.browse?.tab || "home"; }
   function push(replace = false) {
     const url = urlFor();
     if (location.hash === url || (url === "#" && !location.hash)) return;
@@ -487,8 +489,8 @@
       }
       state.lastSearch = data;
       state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
-      renderResults(data);
-      if (!silent) { push(history.state?.place === "search"); setEntry({ place: "search", label: "Results" }); } // a new search from elsewhere is a move; refining one is not
+      if (state.view === "all" && !typeahead) renderConcordance(data); else renderResults(data);
+      if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow() }); } // a new search from elsewhere is a move; refining one is not
       if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
       if (mySeq !== searchSeq) return;
@@ -575,8 +577,10 @@
     }
     const total = data.total || 0;
     if (data.hits.length || data.documents.length) {
-      const whole = data.lexical_total && data.lexical_total > total ? ` · ${data.lexical_total.toLocaleString()} with these words` : "";
-      frag.append(el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}${whole}` }));
+      const lexAll = data.lexical_total && data.lexical_total > total && state.group !== "documents" && !data.typeahead && (data.smart?.terms || []).length;
+      const line = el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}` });
+      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline", text: `${data.lexical_total.toLocaleString()} with these words`, title: "Every match, in reading order", onclick: () => { state.view = "all"; runSearch({ typeahead: false }); } }));
+      frag.append(line);
     } else if (data.typeahead && !data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty" }, [el("div", { text: "Keep typing, or press return to search more widely." })]));
     } else if (!data.jump && !(data.titles || []).length) {
@@ -663,6 +667,47 @@
     btn.setAttribute("aria-pressed", "true");
     if (!wide()) toast("On the deck.");
   }
+  // Every passage with the words, in the order of the books, each chapter or talk with its count:
+  // a concordance, for the teacher who wants to see them all rather than the best.
+  async function renderConcordance(data) {
+    const terms = (data.smart?.terms || []).flatMap((t) => t.split(" ")).filter((w) => w.length > 1);
+    const phrase = /^".*"$/.test(data.query.trim()) ? data.query.trim().replace(/"/g, "") : null;
+    listPane.replaceChildren(el("div", { class: "status", text: "Gathering every match…" }));
+    let all;
+    try { all = await api("matches", phrase ? { phrase, scope: state.scope, limit: 600 } : { words: terms.join(" "), mode: "all", scope: state.scope, limit: 600 }); }
+    catch (e) { listPane.replaceChildren(el("div", { class: "status error", text: `Could not gather the matches (${e.message}).` })); return; }
+    if (state.view !== "all") return;
+    const frag = document.createDocumentFragment();
+    const t = listTrail(); if (t) frag.append(t);
+    frag.append(el("div", { class: "conc-head" }, [
+      el("h2", { text: phrase ? `“${phrase}”` : terms.join(", ") }),
+      el("div", { class: "conc-sub", text: `${all.total.toLocaleString()} ${all.total === 1 ? "passage" : "passages"} in ${(all.by_document || []).length.toLocaleString()} ${(all.by_document || []).length === 1 ? "chapter or talk" : "chapters and talks"}${scopeLabel()}, in reading order${all.passages.length < all.total ? ` · the first ${all.passages.length.toLocaleString()} shown` : ""}` }),
+    ]));
+    const terms2 = phrase ? phrase.split(/\s+/) : terms;
+    const re = terms2.length ? new RegExp("\\b(" + terms2.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi") : null;
+    let lastDoc = null;
+    for (const p of all.passages) {
+      if (p.doc_id !== lastDoc) {
+        lastDoc = p.doc_id;
+        const n = (all.by_document || []).find((d) => d.title === p.title && d.book_title === p.book_title)?.n;
+        frag.append(el("button", { type: "button", class: "conc-doc", "data-doc": p.doc_id, onclick: () => openDoc(p.doc_id, null) }, [
+          el("span", { class: "t", text: p.collection === "scriptures" ? p.citation.replace(/:\d.*$/, "") : p.title }),
+          el("span", { class: "m", text: [p.collection !== "scriptures" ? whereOf(p) : p.label, n ? `${n} ${n === 1 ? "match" : "matches"}` : null].filter(Boolean).join(" · ") }),
+        ]));
+      }
+      const snip = re ? esc(p.text).replace(re, "<mark>$1</mark>") : esc(p.text);
+      frag.append(el("button", { type: "button", class: "conc-row", "data-doc": p.doc_id, "data-pid": p.pid, onclick: () => openDoc(p.doc_id, p.pid) }, [
+        p.verse ? el("span", { class: "vn", text: String(p.verse) }) : null,
+        el("span", { class: "snip", html: snip }),
+      ].filter(Boolean)));
+    }
+    if (!all.passages.length) frag.append(el("div", { class: "empty", text: "No passage has these words." }));
+    listPane.replaceChildren(frag);
+    listPane.scrollTop = 0;
+    markActive();
+    updateThinkFab();
+  }
+
   function hitRow(h, { nested = false } = {}) {
     const row = el("div", { class: "hit-row" + (nested ? " nested" : "") }, [
       el("div", { class: "hit-main" }, [
@@ -1660,7 +1705,7 @@
   // ----------------------------------------------------------- controls ----
   input.addEventListener("input", () => {
     if (!state.ready) return;
-    state.q = input.value;
+    state.q = input.value; state.view = null;
     if (!wide() && !readerPane.hidden) { state.docId = null; state.pid = null; state.studyId = null; showList(); }
     scheduleSearch();
   });

@@ -25,6 +25,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   that says "trust in the Lord's timing" turns up for "patience with God's
   plan" even though no word is shared. Until the model has arrived, or on a
   browser that cannot run it, search goes by words alone and says so.
+- Every match, when you want them all: the "800 with these words" count
+  above the results opens a concordance, each passage in the order of the
+  books under its chapter or talk with the count, the words marked, a tap
+  from its place; Back returns to the ranked results.
 - Results with their context. The best match is shown in its place, with
   the verse or paragraph before and after it, and Open, + Deck and Present
   right there. The other hits from the same chapter or talk are folded

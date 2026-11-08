@@ -930,13 +930,14 @@ async function document(id, uri) {
 const VOLUMES = { ot: "Old Testament", nt: "New Testament", bofm: "Book of Mormon", dc: "Doctrine and Covenants", pgp: "Pearl of Great Price" };
 // Every passage in a scope with a word family or an exact phrase, in reading
 // order: the tool for "all the references to…" in any part of the library.
-function allMatches({ words, phrase, scope = "all", limit = 400, edition = null, exclude_edition = null }) {
+function allMatches({ words, phrase, mode = "any", scope = "all", limit = 400, edition = null, exclude_edition = null }) {
   let match;
   if (phrase && String(phrase).trim()) match = `"${String(phrase).trim().replace(/"/g, " ")}"`;
   else {
     const terms = String(words || "").toLowerCase().split(/[\s,]+|\bor\b/).map((w) => w.replace(/[^\p{L}\p{N}'’*]/gu, "")).filter((w) => w.length > 1);
     if (!terms.length) return { total: 0, passages: [], query: "" };
-    match = terms.map((t) => (t.endsWith("*") ? `"${t.slice(0, -1)}"*` : `"${t}"*`)).join(" OR ");
+    // any of the words (the Ask tools' default), or all of them (the concordance's "with these words")
+    match = terms.map((t) => (t.endsWith("*") ? `"${t.slice(0, -1)}"*` : `"${t}"*`)).join(mode === "all" ? " AND " : " OR ");
   }
   const where = ["paragraphs MATCH ?", "p.kind IN ('verse','para')"];
   const params = [match];
