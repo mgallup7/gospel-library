@@ -987,8 +987,9 @@
       el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
       panel.lastEl && wide() ? el("button", { class: "text-btn", text: `${panel.lastTitle || "Deck"} ›`, title: "Show the deck board here", onclick: () => panel.restore() }) : null,
       el("button", { class: "icon-btn", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
-      el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: "Open on churchofjesuschrist.org", "aria-label": "Open on churchofjesuschrist.org", html: ICON_OUT }),
-    ]);
+      doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
+      el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
+    ].filter(Boolean));
     const body = sanitize(el("article", { class: "doc", html: doc.body_html || "" }));
     if (doc.footnotes && doc.footnotes.length) {
       const notes = el("section", { class: "notes" }, [el("h2", { text: "Footnotes" })]);
@@ -1012,6 +1013,7 @@
       footBtn("Present", ICON_PRESENT, () => startPresenting()),
       el("span", { class: "slot-orig" }),
       footBtn("Text size", "<span class='glyph' style='font-size:20px;font-weight:700'>A</span>", (e) => { sizeRow.hidden = !sizeRow.hidden; e.currentTarget.classList.toggle("on", !sizeRow.hidden); }),
+      doc.collection && doc.collection.startsWith("jsp-") ? footBtn("Cite", "<span class='glyph' style='font-size:18px;font-weight:700'>“”</span>", () => citePapers(doc)) : null,
       footBtn("Add to deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
         const units = selectedUnits();
         if (!units.length) { toast("Tap a verse or paragraph to select it first."); return; }
@@ -1034,6 +1036,23 @@
     });
     highlightTerms(body);
     applyMarks(doc, body);
+  }
+
+  // A citation for a Joseph Smith Papers page, in the Papers' own form, with the manuscript page
+  // when the page is known (the title carries it, or the selection sits under a page marker).
+  function pageOf(doc) { const m = /, page (\d+[a-z]?)$/i.exec(doc.title || ""); return m ? m[1] : null; }
+  function citePapers(doc) {
+    const sel = $(".doc .sel", readerPane);
+    let page = pageOf(doc);
+    if (!page && sel) { let n = sel; while (n && n !== readerPane) { let prev = n.previousElementSibling; while (prev) { if (prev.classList?.contains("jsp-page")) { const m = /\[p\.\s*([^\]]+)\]/.exec(prev.textContent || ""); if (m) page = m[1].trim(); break; } prev = prev.previousElementSibling; } if (page) break; n = n.parentElement; } }
+    const title = (doc.title || "").replace(/, page \d+[a-z]?$/i, "");
+    const when = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    const text = `“${title},” ${page ? `p. ${page}, ` : ""}The Joseph Smith Papers, accessed ${when}, ${doc.source_url}`;
+    navigator.clipboard?.writeText(text).then(() => toast("Citation copied."), () => {
+      const bodyEl = $(".sheet-body", sheet);
+      bodyEl.replaceChildren(el("div", { class: "nm", text: "Citation" }), el("p", { class: "note-passage", text }));
+      openSheet("Citation");
+    });
   }
 
   // ---- Highlights and notes -------------------------------------------------
@@ -1519,6 +1538,8 @@
   function presentUnits(doc) {
     const scratch = el("div", { html: doc.body_html || "" });
     const units = [];
+    const jsp = !!(doc.collection && doc.collection.startsWith("jsp-"));
+    let page = jsp ? pageOf(doc) : null; // the manuscript page a paragraph is on, kept with it on the stage
     const take = (node, kind) => {
       const c = node.cloneNode(true);
       for (const junk of c.querySelectorAll("sup.marker, .page-break, a.study-note-ref sup")) junk.remove();
@@ -1526,9 +1547,10 @@
       const html = c.innerHTML.trim();
       const text = c.textContent.replace(/\s+/g, " ").trim();
       if (!text) return;
-      units.push({ pid: node.id || null, kind, html, text });
+      units.push({ pid: node.id || null, kind, html, text, where: page ? `${doc.title.replace(/, page \d+[a-z]?$/i, "")}, p. ${page}` : "" });
     };
-    for (const node of scratch.querySelectorAll("h1, h2, h3, p, li, figcaption")) {
+    for (const node of scratch.querySelectorAll("h1, h2, h3, p, li, figcaption, .jsp-page")) {
+      if (node.classList.contains("jsp-page")) { const m = /\[p\.\s*([^\]]+)\]/.exec(node.textContent || ""); if (m) page = m[1].trim(); continue; }
       if (node.closest("nav, video, audio, .byline, footer, .notes")) continue;
       if (node.tagName === "LI" && node.querySelector("p, li")) continue;
       const cls = node.classList;
@@ -1596,7 +1618,7 @@
     const u = show.units[show.i];
     const d = show.doc;
     let where = u.where || "";
-    if (d) {
+    if (d && !(u.where && d.collection && d.collection.startsWith("jsp-"))) {
       const ref = u.kind === "verse" && d.book_slug && u.pid ? `${d.citation.replace(/:\d.*$/, "")}:${u.pid.replace(/^p/, "")}` : null;
       where = d.collection === "general-conference" ? [d.author, d.title, d.label.replace(" General Conference", "")].filter(Boolean).join("  \u00b7  ") : (ref || d.citation);
     }

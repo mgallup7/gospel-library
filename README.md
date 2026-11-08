@@ -187,6 +187,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   does "in the Joseph Smith Papers" in a plain-language search; Ask can be
   pointed at them. Long papers (a journal, a history volume) come one page at
   a time with previous and next; short ones as one piece with page markers.
+  Cite, in the reader bar, copies the Papers' own citation form (title,
+  manuscript page, accessed date, address); when a paper is presented, each
+  paragraph's manuscript page stays with it on the screen.
 - Every night a job on GitHub checks churchofjesuschrist.org for anything new
   or changed and publishes a fresh library. The app offers the update when it
   sees one.
