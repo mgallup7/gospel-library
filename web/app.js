@@ -76,6 +76,11 @@
   const input = $("#q");
   const filters = $("#filters");
   const mainEl = $("main");
+  // On a wide screen the deck board has a pane of its own beside the reader, in the same place:
+  // one of the two shows at a time, and the other stays mounted, so the page keeps its scroll and
+  // its selection while the board is up, and the board keeps its state while the page is.
+  const panelPane = el("section", { id: "panel", class: "pane", hidden: true });
+  readerPane.after(panelPane);
 
   // ----------------------------------------------------------- routing ----
   // Hash routes, so the app works from any static host. Every place has an address:
@@ -261,13 +266,15 @@
     if (searching && !state.terms.length) state.terms = termsFrom(state.q);
     const listWork = searching ? runSearch({ typeahead: false, silent: true }) : (state.lastSearch = null, renderHome());
     const boardFirst = wide() && !searching && state.browse?.tab === "deck";
-    if ((state.docId || state.studyId) && !boardFirst) {
-      const pageWork = state.docId ? openDoc(state.docId, state.pid, { push: false, scroll: !restore }) : openStudy(state.studyId, { push: false, scroll: restore?.study || 0 });
+    // #deck with a page open shows the board, and the page loads behind it for the switch to offer
+    if (boardFirst) paneView = "board";
+    else if (state.docId || state.studyId) paneView = "page";
+    if (state.docId || state.studyId) {
+      const pageWork = state.docId ? openDoc(state.docId, state.pid, { push: false, scroll: !restore && !boardFirst }) : openStudy(state.studyId, { push: false, scroll: restore?.study || 0 });
       // on a phone the page is what you see, and the list behind it catches up on its own
       if (wide()) await Promise.all([listWork, pageWork]); else { await pageWork; listWork.catch(() => {}); }
     } else {
       await listWork;
-      if (boardFirst && state.docId) currentDoc = null;
       showList();
     }
     if (restore) {
@@ -280,14 +287,14 @@
   }
   function showList() {
     listPane.hidden = false;
-    readerPane.hidden = wide() ? !(state.docId || state.studyId || (panel.lastEl && readerPane.contains(panel.lastEl))) : true;
+    if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; }
     document.body.classList.toggle("reading", !wide() && !readerPane.hidden);
     syncControls();
     updateThinkFab();
   }
   function showReader() {
     listPane.hidden = !wide();
-    readerPane.hidden = false;
+    if (wide()) placePanes(); else { readerPane.hidden = false; panelPane.hidden = true; }
     document.body.classList.toggle("reading", !wide());
     window.scrollTo(0, 0);
     updateThinkFab();
@@ -985,7 +992,7 @@
   async function openDoc(id, pid, { push: doPush = true, scroll = true } = {}) {
     if (!id) return;
     state.docId = id; state.pid = pid || null; state.studyId = null; currentStudy = null;
-    if (doPush) push();
+    if (doPush) { push(); paneView = "page"; } // a page chosen now is what the pane should show
     markActive();
     showReader();
     if (!currentDoc || currentDoc.id !== id) {
@@ -1013,10 +1020,10 @@
       el("div", { class: "spacer" }),
       el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
       el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
-      panel.lastEl && wide() ? el("button", { class: "text-btn", text: `${panel.lastTitle || "Deck"} ›`, title: "Show the deck board here", onclick: () => panel.restore() }) : null,
       el("button", { class: "icon-btn", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
       el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
+      el("span", { class: "pane-switch-slot" }),
     ].filter(Boolean));
     const body = sanitize(el("article", { class: "doc", html: doc.body_html || "" }));
     if (doc.footnotes && doc.footnotes.length) {
@@ -1055,6 +1062,8 @@
     readerPane.classList.remove("has-study");
     releaseStudyUrl();
     readerPane.scrollTop = 0;
+    unseen = readerPane.hidden; // drawn behind the board: it finds its verse when it is first shown
+    refreshSwitches();
     body.addEventListener("click", onBodyClick);
     body.addEventListener("click", onSelectClick);
     for (const unit of body.querySelectorAll("p.verse, .body-block p[id], .body-block li[id]")) unit.tabIndex = 0;
@@ -1188,7 +1197,7 @@
     if (!id || !window.Studies) return;
     state.docId = null; state.pid = null; state.studyId = id;
     currentDoc = null;
-    if (doPush) push();
+    if (doPush) { push(); paneView = "page"; }
     markActive();
     showReader();
     if (!currentStudy || currentStudy.id !== id) {
@@ -1210,6 +1219,7 @@
       trailButton(),
       el("div", { class: "crumb", text: `My studies · added ${new Date(rec.added).toLocaleDateString([], { month: "short", day: "numeric" })}` }),
       el("div", { class: "spacer" }),
+      el("span", { class: "pane-switch-slot" }),
     ]);
     const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts allow-forms" });
     // a blob address rather than srcdoc, so the page's own #links and hash navigation work as they
@@ -1220,6 +1230,7 @@
     frame.addEventListener("load", () => { if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*"); });
     readerPane.replaceChildren(bar, frame);
     readerPane.classList.add("has-study");
+    refreshSwitches();
     fitStudyFrame();
   }
   // the frame fills what is left of the pane under the bar
@@ -1972,22 +1983,53 @@
   }
 
   // What ask.js needs from the app.
-  // A view that borrows the reader pane on wide screens (Ask's passages, for one).
+  // The deck board's pane on wide screens. deck.js calls show() with its board; lastEl says the
+  // board has been opened this session, which is when the Page | Deck switch appears. Which of
+  // the two panes shows is paneView; the switch only changes that, never the address or the trail.
+  let paneView = "page", unseen = false;
   const panel = {
     lastEl: null, lastTitle: "",
     show(node, title) {
       panel.lastEl = node; panel.lastTitle = title || "";
       if (!wide()) return;
-      const was = currentDoc && currentDoc.id === state.docId ? currentDoc : null;
-      currentDoc = null;
-      const back = was ? el("button", { type: "button", class: "trail-back", "aria-label": `Back to ${shortTitleOf(was)}`, onclick: () => openDoc(was.id, state.pid, { push: false }) }, [el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: shortTitleOf(was) })]) : null;
-      readerPane.replaceChildren(el("div", { class: "reader-bar" }, [back, el("div", { class: "crumb", text: title || "" })]), node);
-      readerPane.hidden = false;
-      readerPane.scrollTop = 0;
-      updateThinkFab();
+      if (!panelPane.contains(node)) { // mounted once; later calls only bring it forward
+        panelPane.replaceChildren(el("div", { class: "reader-bar" }, [trailButton(), el("div", { class: "crumb", text: panel.lastTitle }), el("div", { class: "spacer" }), el("span", { class: "pane-switch-slot" })]), node);
+        panelPane.scrollTop = 0;
+      }
+      paneView = "board";
+      placePanes();
     },
     restore() { if (panel.lastEl) panel.show(panel.lastEl, panel.lastTitle); },
+    page() {
+      paneView = "page";
+      placePanes();
+      if (unseen && !readerPane.hidden) { unseen = false; focusParagraph(state.pid); }
+      if (state.studyId) fitStudyFrame();
+    },
   };
+  function pageOpen() {
+    return !!((state.docId && currentDoc && currentDoc.id === state.docId) || (state.studyId && currentStudy && currentStudy.id === state.studyId));
+  }
+  // Wide screens only: the board when it was asked for, otherwise the page if there is one.
+  function placePanes() {
+    const board = paneView === "board" && !!panel.lastEl;
+    panelPane.hidden = !(board && panelPane.contains(panel.lastEl));
+    readerPane.hidden = board || !(state.docId || state.studyId);
+    refreshSwitches();
+    updateThinkFab();
+  }
+  function refreshSwitches() {
+    const on = wide() && !!panel.lastEl && pageOpen();
+    const boardUp = !panelPane.hidden;
+    for (const slot of document.querySelectorAll(".pane-switch-slot")) {
+      if (!on) { slot.replaceChildren(); continue; }
+      const seg = (label, active, go) => el("button", { type: "button", class: active ? "on" : "", "aria-pressed": String(active), text: label, onclick: () => { if (!active) go(); } });
+      slot.replaceChildren(el("div", { class: "pane-switch", role: "group", "aria-label": "Show in this pane" }, [
+        seg("Page", !boardUp, () => panel.page()),
+        seg("Deck", boardUp, () => panel.restore()),
+      ]));
+    }
+  }
 
   function searchFor(q) {
     state.q = q; state.offset = 0;

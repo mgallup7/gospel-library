@@ -129,6 +129,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   The Deck button in the header shows how many passages are on it, and the
   toast after an add has an Undo for five seconds that takes off exactly
   what that add put on.
+- Page | Deck: on an iPad, once the deck is open and a page is too, a switch at
+  the top of the right pane flips between them. Neither is closed: the page
+  keeps its place and its selected verses while the board is up.
 - The board: each passage is a card. Tap the first and last word of a phrase
   to highlight it. Every highlight ends in a dot; drag the dot onto a phrase
   in another passage (or onto the passage itself) and an arrow is drawn

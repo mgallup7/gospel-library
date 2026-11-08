@@ -292,9 +292,9 @@
   }
 
   // ---------------------------------------------------------------- board --
-  // One board element for the whole app. On a wide screen it borrows the
-  // right-hand pane while the left pane keeps finding passages; on a phone
-  // it is the Deck tab.
+  // One board element for the whole app. On a wide screen it has a right-hand
+  // pane of its own, beside the page (app.js switches between them), while the
+  // left pane keeps finding passages; on a phone it is the Deck tab.
   let board = null, ui = null;
   let pending = null;   // {id, i}: first word of a phrase being marked
   let active = null;    // {id, hl}: a highlight whose tools are showing

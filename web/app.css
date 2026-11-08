@@ -145,7 +145,12 @@ main {
 }
 .pane { min-width: 0; }
 #list { padding-bottom: calc(40px + var(--safe-bottom)); }
-#reader { background: var(--paper); }
+#reader, #panel { background: var(--paper); }
+/* Page | Deck: which of the two mounted panes fills the right side on a wide screen */
+.pane-switch-slot:empty { display: none; }
+.pane-switch { display: flex; gap: 2px; flex: none; margin-left: 4px; padding: 2px; border-radius: 9px; background: var(--chrome-2); font-family: var(--sans); }
+.pane-switch button { height: 28px; padding: 0 12px; border-radius: 7px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.pane-switch button.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
 /* On a phone, reading takes the whole screen: the reader bar carries the way back and the bottom bar the tools. */
 @media (max-width: 759px) {
   body.reading .scopes, body.reading #filters { display: none; }
@@ -243,15 +248,15 @@ main {
 .home-foot { font-size: 13px; color: var(--ink-3); line-height: 1.4; }
 body.overview .scopes { display: none; }
 @media (min-width: 760px) {
-  body.overview main:has(#reader[hidden]) { grid-template-columns: 1fr; }
-  body.overview main:has(#reader[hidden]) #list { border-right: 0; }
-  main:has(#reader[hidden]) .home.overview { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); grid-template-areas: "shelves latest" "continue latest" "foot ask"; column-gap: 36px; max-width: 1180px; margin: 0 auto; padding: 22px 24px 30px; align-content: start; }
-  main:has(#reader[hidden]) .home.overview:not(:has(.sec-latest)) { grid-template-areas: "shelves ask" "continue ask" "foot ask"; }
-  main:has(#reader[hidden]) .sec-shelves { grid-area: shelves; }
-  main:has(#reader[hidden]) .sec-continue { grid-area: continue; }
-  main:has(#reader[hidden]) .sec-latest { grid-area: latest; }
-  main:has(#reader[hidden]) .sec-ask { grid-area: ask; align-self: start; }
-  main:has(#reader[hidden]) .home-foot { grid-area: foot; align-self: start; }
+  body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
+  body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
+  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .home.overview { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); grid-template-areas: "shelves latest" "continue latest" "foot ask"; column-gap: 36px; max-width: 1180px; margin: 0 auto; padding: 22px 24px 30px; align-content: start; }
+  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .home.overview:not(:has(.sec-latest)) { grid-template-areas: "shelves ask" "continue ask" "foot ask"; }
+  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .sec-shelves { grid-area: shelves; }
+  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .sec-continue { grid-area: continue; }
+  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .sec-latest { grid-area: latest; }
+  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .sec-ask { grid-area: ask; align-self: start; }
+  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .home-foot { grid-area: foot; align-self: start; }
 }
 .home .lede { padding: 14px 16px 2px; font: 16px/1.45 var(--serif); color: var(--ink-2); }
 .shelf { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 16px; }
