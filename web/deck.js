@@ -323,6 +323,8 @@
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       think, md,
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
+      el("button", { type: "button", class: "text-btn", text: "Add question", title: "A question for the room, as a slide of its own", onclick: () => addCard("question") }),
+      el("button", { type: "button", class: "text-btn", text: "Add note", title: "A thought or teaching point, as a slide of its own", onclick: () => addCard("note") }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
       el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => {
@@ -401,6 +403,20 @@
         const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
         inp.addEventListener("input", () => { it.title = inp.value; save({ redraw: false }); });
         card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
+        card.append(notesEl(it));
+        cards.append(card);
+        return;
+      }
+      if (it.type === "question" || it.type === "note") {
+        card.classList.add(it.type);
+        const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "A thought, a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Note" });
+        ta.value = it.text || "";
+        const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
+        ta.addEventListener("input", () => { it.text = ta.value; grow(); save({ redraw: false }); });
+        requestAnimationFrame(grow);
+        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Note" })]), tools]));
+        card.append(ta);
+        card.append(notesEl(it));
         cards.append(card);
         return;
       }
@@ -410,6 +426,7 @@
       card.append(textEl(it));
       // the talk and conference sit under the words, the way an attribution follows a quote
       if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
+      card.append(notesEl(it));
       if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint", text: "Now tap the last word of the phrase." }));
       if (active && active.id === it.id) {
         const h = hlById(it, active.hl);
@@ -439,6 +456,27 @@
       cards.append(card);
     });
     if (!deck.items.length) cards.append(el("div", { class: "board-empty", text: "The deck is empty." }));
+  }
+  function speakerNotes(s, it) { const text = (it.notes || "").trim(); if (text) { try { s.addNotes(text); } catch (_) {} } }
+  // A question or a note: a slide of its own, with words the teacher writes
+  function addCard(type) {
+    const item = { id: uid(), type, text: "", notes: "" };
+    deck.items.push(item);
+    save();
+    requestAnimationFrame(() => { const ta = ui && ui.cards.querySelector(`.bcard[data-id="${item.id}"] textarea`); if (ta) ta.focus(); });
+    return item;
+  }
+  // Speaker notes on any card: what to say, folded away until wanted; they travel into the PowerPoint
+  function notesEl(it) {
+    const wrap = el("div", { class: "bc-notes" + (it.notes ? " has" : "") });
+    const toggle = el("button", { type: "button", class: "text-btn small notes-toggle", text: it.notes ? "Speaker notes" : "Add speaker notes", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); const open = ta.hidden; ta.hidden = !open; toggle.setAttribute("aria-expanded", String(open)); if (open) { grow(); ta.focus(); } } });
+    const ta = el("textarea", { class: "bc-notes-text", rows: 2, hidden: true, placeholder: "What to say when this slide is up (goes into the PowerPoint as speaker notes)", "aria-label": "Speaker notes" });
+    ta.value = it.notes || "";
+    const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight + 2) + "px"; };
+    ta.addEventListener("input", () => { it.notes = ta.value; wrap.classList.toggle("has", !!ta.value.trim()); toggle.textContent = ta.value.trim() ? "Speaker notes" : "Add speaker notes"; grow(); save({ redraw: false }); });
+    ta.addEventListener("click", (e) => e.stopPropagation());
+    wrap.append(toggle, ta);
+    return wrap;
   }
   // A passage as tappable words, with verse numbers, highlights and a port after each highlight.
   function textEl(it) {
@@ -769,7 +807,10 @@
     if (deck.subtitle) out.push(deck.subtitle);
     out.push("");
     for (const it of sequence()) {
-      if (it.type === "section") { out.push(`## ${it.title || "—"}`, ""); continue; }
+      const notes = it.notes && it.notes.trim() ? [`*Speaker notes: ${it.notes.trim().replace(/\n+/g, " ")}*`, ""] : [];
+      if (it.type === "section") { out.push(`## ${it.title || "—"}`, "", ...notes); continue; }
+      if (it.type === "question") { out.push(`### Question`, "", it.text || "", "", ...notes); continue; }
+      if (it.type === "note") { out.push(`### Note`, "", it.text || "", "", ...notes); continue; }
       if (it.type === "link") {
         const a = endOf(it.from), b = endOf(it.to);
         if (!a || !b) continue;
@@ -780,7 +821,7 @@
       out.push(`### ${it.citation}`);
       out.push(`> ${mdWords(it, 0, wordsOf(it).length - 1)}`);
       if (it.where || it.label) out.push(`>`, `> ${[it.where, it.label].filter(Boolean).join(", ")}`);
-      out.push("");
+      out.push("", ...notes);
     }
     if (deck.links.length) {
       out.push("## The chain", "");
@@ -840,15 +881,18 @@ Answer with JSON only, no prose around it, in this shape:
 
 Rules. "labels" only for arrows that have no label or a weak one. "connections" only for arrows worth drawing that are not drawn; three at most; each must join two different passages and be something the words themselves support. "key_phrases" only for passages that have no highlighted phrase: the short phrase (three to eight words) a teacher would underline. Every "words" value must be copied exactly from the passage text given, with its punctuation; never paraphrase, never quote from memory. Plain, warm, doctrinally precise prose; no em dashes.`;
 
-  function chainUser() {
+  function chainUser(context = new Map()) {
     const passages = deck.items.filter((i) => i.type === "passage");
     const num = new Map(passages.map((p, i) => [p.id, i + 1]));
     const lines = [deck.title ? `Deck title: ${deck.title}` : "", "Passages, in the order they are presented:"];
     passages.forEach((p, i) => {
       const words = wordsOf(p);
       const hl = (p.hl || []).map((h) => `“${words.slice(h.s, h.e + 1).map((x) => x.w).join(" ")}”`);
-      lines.push(`[${i + 1}] ${p.citation}${p.where ? `, ${p.where}` : ""}${p.label ? `, ${p.label}` : ""}\n${p.verses ? p.verses.map((v) => `${v.n} ${v.text}`).join(" ") : p.text}\nHighlighted: ${hl.length ? hl.join("; ") : "nothing yet"}`);
+      const around = context.get(p.id);
+      lines.push(`[${i + 1}] ${p.citation}${p.where ? `, ${p.where}` : ""}${p.label ? `, ${p.label}` : ""}\n${p.verses ? p.verses.map((v) => `${v.n} ${v.text}`).join(" ") : p.text}\nHighlighted: ${hl.length ? hl.join("; ") : "nothing yet"}${around ? `\nAround it on the page (for its setting, not for the slide): ${around}` : ""}${p.notes ? `\nHis speaker notes: ${p.notes}` : ""}`);
     });
+    const cards = deck.items.filter((i) => i.type === "question" || i.type === "note").filter((i) => (i.text || "").trim());
+    if (cards.length) lines.push("Question and note slides he has written, in order:\n" + cards.map((c) => `- ${c.type === "question" ? "Question" : "Note"}: ${c.text.trim()}`).join("\n"));
     lines.push(deck.links.length ? "Arrows drawn so far:" : "No arrows drawn yet.");
     deck.links.forEach((l, i) => {
       const a = endOf(l.from), b = endOf(l.to);
@@ -883,7 +927,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const sk = GL().skills || {};
       const system = [{ type: "text", text: CHAIN_SYSTEM + (sk.style ? `\n\nHouse style for the caption and notes:\n${sk.style}` : ""), cache_control: { type: "ephemeral" } }];
       let thought = "";
-      const text = await Ask.complete({ model: Ask.settings.model, system, messages: [{ role: "user", content: chainUser() }], max_tokens: 16000, stream: true, thinking: Ask.settings.think,
+      const context = await contextAround();
+      const text = await Ask.complete({ model: Ask.settings.model, system, messages: [{ role: "user", content: chainUser(context) }], max_tokens: 16000, stream: true, thinking: Ask.settings.think,
         onThinking: (t) => { thought = (thought + t).slice(-2000); status.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
         onDelta: () => { status.textContent = "Writing…"; } });
       const m = String(text).match(/\{[\s\S]*\}/);
@@ -892,6 +937,21 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     } catch (err) {
       status.textContent = `Could not think it through: ${err.message}`;
     } finally { ui.think.disabled = count() < 2; }
+  }
+  // The verse or paragraph before and after each passage, from the library, so the chain is read in its setting
+  async function contextAround() {
+    const out = new Map();
+    const passages = deck.items.filter((i) => i.type === "passage" && i.doc_id && i.pid);
+    await Promise.all(passages.map(async (p) => {
+      try {
+        const ctx = await GL().api("context", { doc_id: p.doc_id, pid: p.pid, before: 1, after: (p.verses ? p.verses.length : 1) });
+        if (!ctx || !ctx.paragraphs) return;
+        const own = new Set(p.verses ? p.verses.map((v) => v.n) : []);
+        const near = ctx.paragraphs.filter((x) => x.pid !== p.pid && !(x.verse && own.has(x.verse))).map((x) => `${x.verse ? `${x.verse} ` : ""}${(x.text || "").slice(0, 300)}`);
+        if (near.length) out.set(p.id, near.join(" | "));
+      } catch (_) { /* no context, no harm */ }
+    }));
+    return out;
   }
   function renderThought(r, box) {
     const passages = deck.items.filter((i) => i.type === "passage");
@@ -981,6 +1041,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     if (deck.title) units.push({ kind: "title", html: esc(deck.title), where: deck.subtitle || "" });
     for (const it of sequence()) {
       if (it.type === "section") { units.push({ kind: "title", html: esc(it.title || "—"), where: "" }); continue; }
+      if (it.type === "question") { if ((it.text || "").trim()) units.push({ kind: "question", html: esc(it.text.trim()), where: "" }); continue; }
+      if (it.type === "note") { if ((it.text || "").trim()) units.push({ kind: "note", html: esc(it.text.trim()).replace(/\n/g, "<br>"), where: "" }); continue; }
       if (it.type === "link") { const u = linkUnit(it); if (u) units.push(u); continue; }
       for (const chunk of chunksOf(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
     }
@@ -1413,6 +1475,23 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         s.addText(it.title || "", { x: M, y: 1.9, w: inner, h: 1.4, fontFace: SERIF, fontSize: sf.size, bold: true, color: t.text, align: "center", valign: "middle", margin: 0 });
         rule(s, W / 2 - 0.45, 3.42, 0.9);
         footer(s, n);
+        speakerNotes(s, it);
+        continue;
+      }
+      if (it.type === "question" || it.type === "note") {
+        const text = (it.text || "").trim();
+        if (!text) continue;
+        n++;
+        const s = slide();
+        report.slides++; report.boxes++;
+        kicker(s, it.type === "question" ? "Question" : "Note");
+        const question = it.type === "question";
+        const f = fitSize({ text, font: question ? SERIF : SANS, boxW: inner - (question ? 0.6 : 0), boxH: 3.3, max: question ? 36 : 26, min: 16, lineSpacing: 1.15, paraSpace: 6 });
+        if (!f.fits) report.tight.push(n);
+        s.addText(text, { x: M + (question ? 0.3 : 0), y: 1.1, w: inner - (question ? 0.6 : 0), h: 3.3, fontFace: question ? SERIF : SANS, fontSize: f.size, color: question ? t.text : t.text, align: question ? "center" : "left", valign: "middle", lineSpacingMultiple: 1.15, margin: 0, italic: false });
+        if (question) rule(s, W / 2 - 0.45, 4.55, 0.9);
+        footer(s, n);
+        speakerNotes(s, it);
         continue;
       }
       if (it.type === "link") {
@@ -1493,6 +1572,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
           ], { x: M, y: 4.2, w: inner, h: 0.7, fontFace: SANS, valign: "top", margin: 0 });
         }
         footer(s, n);
+        if (ci === 0) speakerNotes(s, it);
       });
     }
 

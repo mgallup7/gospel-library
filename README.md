@@ -121,7 +121,13 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   connection ("fulfilled in", "same word", "defines", your own words) from
   the badge or the chip under the card. Arrows follow the cards as you scroll,
   reorder and re-wrap. Tap a highlight for Link to… (without dragging) or
-  Remove.
+  Remove. Under More, Add question and Add note put a slide of your own
+  words on the deck (a question for the room, centered and bold; a thought
+  or a line to say), and every card, passage or not, takes speaker notes,
+  folded away until wanted, which go into the PowerPoint as the slide's
+  notes and into the Markdown. The deck's Think it through reads them, and
+  the verse before and after each passage, so the chain is studied in its
+  setting.
 - PowerPoint: give the deck a title, pick a theme, and download a .pptx
   written on the device. Royal is the default: a deep blue background, white
   Georgia type, gold for verse numbers, references and highlighted phrases.

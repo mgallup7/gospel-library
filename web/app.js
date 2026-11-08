@@ -1546,6 +1546,8 @@
     const body = $(".stage-body", stage);
     body.style.setProperty("--stage-scale", show.scale);
     body.classList.toggle("is-title", u.kind === "title");
+    body.classList.toggle("is-question", u.kind === "question");
+    body.classList.toggle("is-note", u.kind === "note");
     body.classList.toggle("is-wide", u.kind === "link" || u.kind === "map");
     $(".stage-text", stage).innerHTML = u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html;
     $(".stage-ref", stage).textContent = where;
