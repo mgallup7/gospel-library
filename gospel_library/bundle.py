@@ -159,11 +159,10 @@ def decrypt_file(src: Path, dst: Path, passphrase: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def content_version(conn: sqlite3.Connection) -> str:
-    """Changes only when the text of the library changes, not when it was fetched."""
-    h = hashlib.sha256()
-    for uri, digest in conn.execute("SELECT uri, content_hash FROM documents ORDER BY uri"):
-        h.update(f"{uri}:{digest}\n".encode("utf-8"))
-    return h.hexdigest()[:16]
+    """The published version: the text, the meaning vectors and the tables that travel with them (delta.py)."""
+    from .delta import library_version
+
+    return library_version(conn)
 
 
 def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, skills_path: Path | None = None) -> dict:
@@ -194,22 +193,32 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
     compact = out_dir / "library.compact.sqlite"
     compact.unlink(missing_ok=True)
     conn.execute("VACUUM INTO ?", (str(compact),))
-    # The device gets each vector's sign bits, not the vectors themselves.
-    if emb_row:
-        from . import embed
-        cc = sqlite3.connect(compact)
-        try:
-            if cc.execute("SELECT 1 FROM sqlite_master WHERE name='vectors'").fetchone():
-                n = embed.pack_bits(cc)
-                cc.execute("VACUUM")
-                log.info("%d paragraph vectors packed as bits", n)
-        finally:
-            cc.close()
-    conn.close()
+    # The device gets each vector's sign bits, not the vectors themselves, and none of the job's own bookkeeping.
+    cc = sqlite3.connect(compact)
+    try:
+        cc.execute("DROP TABLE IF EXISTS snapshots")
+        if emb_row and cc.execute("SELECT 1 FROM sqlite_master WHERE name='vectors'").fetchone():
+            from . import embed
+            n = embed.pack_bits(cc)
+            log.info("%d paragraph vectors packed as bits", n)
+        cc.execute("VACUUM")
+    finally:
+        cc.close()
 
     extra = {"version": version, "kind": "library"}
     header = encrypt_file(compact, out_dir / "library.bin", passphrase, extra=extra)
+    # Deltas from the last few published versions to this one, and the snapshot of this one for next time.
+    deltas = []
+    try:
+        from . import delta as delta_mod
+        for stale in out_dir.glob("delta-*.bin"):
+            stale.unlink()
+        deltas = delta_mod.build_all(conn, compact, version, out_dir, passphrase)
+        delta_mod.save_snapshot(conn, delta_mod.take_snapshot(conn, version))
+    except Exception as exc:  # the bundle still ships without deltas
+        log.warning("deltas not built: %s", exc)
     compact.unlink(missing_ok=True)
+    conn.close()
     manifest = {
         "format": "GLIB1",
         "version": version,
@@ -229,6 +238,8 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
         manifest["originals"] = json.loads(orig_row[0])
     if emb_row:
         manifest["embeddings"] = json.loads(emb_row[0])
+    if deltas:
+        manifest["deltas"] = [{"from": d["from"], "file": d["file"], "size": d["size"], "sha256": d["sha256"], "documents_changed": d["documents_changed"], "documents_removed": d["documents_removed"]} for d in deltas]
     if skills_path.exists():
         json.loads(skills_path.read_text(encoding="utf-8"))  # must be valid JSON before it is sealed
         sh = encrypt_file(skills_path, out_dir / "skills.bin", passphrase, extra={"kind": "skills"})

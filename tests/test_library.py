@@ -279,6 +279,132 @@ def test_bundle_round_trip(tmp_path, monkeypatch):
         bundle.decrypt_file(out / "library.bin", tmp_path / "x.sqlite", "wrong")
 
 
+
+def _edited(payload, *changes):
+    """A copy of a fixture payload with the given text replaced, as if the site had changed the page."""
+    text = json.dumps(payload)
+    for old, new in changes:
+        assert old in text, old
+        text = text.replace(old, new)
+    return json.loads(text)
+
+def test_delta_between_builds(tmp_path, monkeypatch):
+    """A device at build 1 gets build 2 from a small delta that reproduces the library exactly."""
+    import sqlite3
+    from gospel_library import bundle, delta
+    from gospel_library.sync import context_for
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "lib.sqlite")
+    store = Store(config.DB_PATH)
+    cid = store.collection_id("scriptures", "Scriptures", "books", 0)
+    bid = store.book_id(cid, "/scriptures/bofm", "Book of Mormon")
+    alma = parse_content(CHAPTER_PAYLOAD, "/scriptures/bofm/alma/32")
+    store.save_document(collection_id=cid, book_id=bid, doc=alma, node=None, extra=context_for(alma.uri, node=None))
+    for n in range(34, 40):  # chapters that will not change: a delta is only worth shipping when most of the library stays
+        same = parse_content(_edited(CHAPTER_PAYLOAD, ("Alma 32", f"Alma {n}")), f"/scriptures/bofm/alma/{n}")
+        store.save_document(collection_id=cid, book_id=bid, doc=same, node=None, extra=context_for(same.uri, node=None))
+    gcid = store.collection_id("general-conference", "General Conference", "conference", 1)
+    gbid = store.book_id(gcid, "/general-conference/2023/10", "October 2023 general conference", year=2023, month=10)
+    state = decode_state(_state_html(BOOK_STATE))
+    node = toc.from_state(state, "/general-conference/2023/10").content_nodes[0]
+    talk = parse_content(TALK_PAYLOAD, node.uri)
+    store.save_document(collection_id=gcid, book_id=gbid, doc=talk, node=node, extra=context_for(node.uri, node=node))
+    store.optimize()
+    store.close()
+
+    # build 1: the device's library
+    site1 = tmp_path / "site1"
+    m1 = bundle.build(site1, "pw", db_path=config.DB_PATH, skills_path=tmp_path / "none.json")
+    assert "deltas" not in m1
+    device = tmp_path / "device.sqlite"
+    bundle.decrypt_file(site1 / "library.bin", device, "pw")
+
+    # the library changes: the talk is re-fetched with new text, a chapter is added, the counts move on
+    store = Store(config.DB_PATH)
+    changed = parse_content(_edited(TALK_PAYLOAD, ("celestial", "celestial and eternal")), node.uri)
+    _, outcome = store.save_document(collection_id=gcid, book_id=gbid, doc=changed, node=node, extra=context_for(node.uri, node=node))
+    assert outcome == "changed"
+    second = parse_content(_edited(CHAPTER_PAYLOAD, ("Alma 32", "Alma 33")), "/scriptures/bofm/alma/33")
+    store.save_document(collection_id=cid, book_id=bid, doc=second, node=None, extra=context_for(second.uri, node=None))
+    store.optimize()
+    store.close()
+
+    # build 2 ships a delta from build 1
+    site2 = tmp_path / "site2"
+    m2 = bundle.build(site2, "pw", db_path=config.DB_PATH, skills_path=tmp_path / "none.json")
+    assert m2["version"] != m1["version"]
+    assert m2["deltas"] and m2["deltas"][0]["from"] == m1["version"]
+    d = m2["deltas"][0]
+    assert d["documents_changed"] == 2 and d["documents_removed"] == 0
+    assert (site2 / d["file"]).stat().st_size < (site2 / "library.bin").stat().st_size
+    # the snapshots stay with the job, not the device
+    conn = sqlite3.connect(config.DB_PATH)
+    assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 2
+    conn.close()
+    full = tmp_path / "full2.sqlite"
+    bundle.decrypt_file(site2 / "library.bin", full, "pw")
+    assert not sqlite3.connect(full).execute("SELECT 1 FROM sqlite_master WHERE name='snapshots'").fetchone()
+
+    # applied to the device, the delta reproduces build 2 exactly
+    plain = tmp_path / "delta.sqlite"
+    bundle.decrypt_file(site2 / d["file"], plain, "pw")
+    dev = sqlite3.connect(device)
+    info = delta.apply_delta(dev, plain)
+    assert info["to"] == m2["version"]
+    assert delta.library_version(dev) == m2["version"]
+    assert dev.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 9
+    assert dev.execute("SELECT rowid FROM paragraphs WHERE paragraphs MATCH 'eternal'").fetchall()
+    assert dev.execute("SELECT title FROM documents_fts WHERE documents_fts MATCH 'Alma'").fetchall()
+    assert json.loads(dev.execute("SELECT value FROM meta WHERE key='counts'").fetchone()[0])["paragraphs"] == dev.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+    dev.close()
+    # a delta applied to the wrong library is refused and leaves it untouched
+    other = sqlite3.connect(full)
+    before = other.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+    with pytest.raises(ValueError):
+        delta.apply_delta(other, plain)
+    assert other.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0] == before
+    other.close()
+
+    # meaning vectors arrive between builds: the delta carries exactly the ones embedded since
+    from gospel_library import embed
+    e = embed.Embedder(_stub_model(tmp_path / "model"), threads=1)
+    conn = sqlite3.connect(config.DB_PATH)
+    embed.embed_missing(conn, e)
+    n_vectors = conn.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+    conn.close()
+    assert n_vectors > 5
+    site3 = tmp_path / "site3"
+    m3 = bundle.build(site3, "pw", db_path=config.DB_PATH, skills_path=tmp_path / "none.json")
+    assert m3["version"] != m2["version"]  # the text did not change, but what the device holds did
+    d3 = next(d for d in m3["deltas"] if d["from"] == m2["version"])
+    bundle.decrypt_file(site3 / d3["file"], plain, "pw")
+    dev = sqlite3.connect(device)
+    assert delta.apply_delta(dev, plain)["vecbits"] == n_vectors
+    assert dev.execute("SELECT COUNT(*) FROM vecbits").fetchone()[0] == n_vectors
+    dev.close()
+    # one chapter changes and is embedded again: the next delta ships that chapter's vectors, not all of them
+    store = Store(config.DB_PATH)
+    again = parse_content(_edited(CHAPTER_PAYLOAD, ("Alma 32", "Alma 39"), ("perfect knowledge", "perfect knowledge of all")), "/scriptures/bofm/alma/39")
+    _, outcome = store.save_document(collection_id=cid, book_id=bid, doc=again, node=None, extra=context_for(again.uri, node=None))
+    assert outcome == "changed"
+    store.close()
+    conn = sqlite3.connect(config.DB_PATH)
+    assert embed.embed_missing(conn, e)["count"] == n_vectors  # the chapter's vectors are back, nothing else moved
+    in_chapter = conn.execute("SELECT COUNT(*) FROM vectors v JOIN paragraphs p ON p.rowid = v.paragraph_id WHERE p.document_id = (SELECT id FROM documents WHERE uri='/scriptures/bofm/alma/39')").fetchone()[0]
+    conn.close()
+    assert 0 < in_chapter < n_vectors
+    site4 = tmp_path / "site4"
+    m4 = bundle.build(site4, "pw", db_path=config.DB_PATH, skills_path=tmp_path / "none.json")
+    d4 = next(d for d in m4["deltas"] if d["from"] == m3["version"])
+    bundle.decrypt_file(site4 / d4["file"], plain, "pw")
+    dd = sqlite3.connect(plain)
+    assert dd.execute("SELECT COUNT(*) FROM vecbits").fetchone()[0] == in_chapter and dd.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
+    dd.close()
+    dev = sqlite3.connect(device)
+    assert delta.apply_delta(dev, plain)["to"] == m4["version"] and dev.execute("SELECT COUNT(*) FROM vecbits").fetchone()[0] == n_vectors
+    dev.close()
+
+
 def test_book_moves_between_collections(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "lib.sqlite")
     store = Store(config.DB_PATH)
