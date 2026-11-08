@@ -692,7 +692,7 @@
     ["manuals", "Manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
     ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Arriving, a series a night"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Arriving nightly"],
-    ["studies", "My studies", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own, kept on this device` : "Pages of your own: add one from Files", (st) => st.studies ? `${st.studies} of your own` : "Add one from Files"],
+    ["studies", "My studies", (st) => [st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own` : "Pages of your own", st.marks ? `${st.marks} ${st.marks === 1 ? "highlight or note" : "highlights and notes"}` : "your highlights and notes"].join(", ") + ", kept on this device", (st) => st.studies || st.marks ? [st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"}` : null, st.marks ? `${st.marks} marks` : null].filter(Boolean).join(", ") : "Pages, highlights, notes"],
   ];
   function jspPages(st) { return st.collections.filter((c) => c.slug.startsWith("jsp-")).reduce((a, c) => a + c.docs, 0); }
   function latestName(st, short = false) {
@@ -723,7 +723,7 @@
     let st;
     try { st = await libraryStats(); }
     catch (e) { body.append(el("div", { class: "status error", text: `The library is not answering (${e.message}).` })); return; }
-    if (!tab && window.Studies) { try { st = { ...st, studies: (await window.Studies.list()).length }; } catch (_) {} }
+    if (!tab && window.Studies) { try { st = { ...st, studies: (await window.Studies.list()).length, marks: window.Marks ? await window.Marks.count() : 0 }; } catch (_) {} }
     nameEntry();
     try {
       if (!tab) return renderOverview(body, st);
@@ -965,7 +965,95 @@
       if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
     });
     highlightTerms(body);
+    applyMarks(doc, body);
   }
+
+  // ---- Highlights and notes -------------------------------------------------
+  // A teacher's marks on the page: a color behind a verse or paragraph, a note at its end.
+  // They are kept on the device by page address and paragraph id (marks.js), so they outlast
+  // library updates and come back whenever the page is opened.
+  let docMarks = new Map(); // pid -> mark, for the page open now
+  async function applyMarks(doc, body) {
+    docMarks = new Map();
+    if (!window.Marks || !doc?.uri) return;
+    let list = [];
+    try { list = await window.Marks.forDoc(doc.uri); } catch (_) { return; }
+    if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
+    for (const m of list) { docMarks.set(m.pid, m); drawMark(body, m); }
+  }
+  function drawMark(body, m) {
+    const unit = body.querySelector(`#${CSS.escape(m.pid)}`);
+    if (!unit) return;
+    for (const c of window.Marks.COLORS) unit.classList.remove(`hl-${c}`);
+    unit.classList.toggle("hl", !!m.color);
+    if (m.color) unit.classList.add(`hl-${m.color}`);
+    unit.querySelector(".note-mark")?.remove();
+    if (m.note) {
+      unit.classList.add("noted");
+      unit.append(el("button", { type: "button", class: "note-mark", title: m.note.length > 80 ? m.note.slice(0, 78) + "…" : m.note, "aria-label": `Note: ${m.note.slice(0, 80)}`, html: ICON_NOTE, onclick: (e) => { e.preventDefault(); e.stopPropagation(); editNote(unitInfo(unit)); } }));
+    } else unit.classList.remove("noted");
+  }
+  function undrawMark(body, pid) {
+    const unit = body.querySelector(`#${CSS.escape(pid)}`);
+    if (!unit) return;
+    unit.classList.remove("hl", "noted", ...window.Marks.COLORS.map((c) => `hl-${c}`));
+    unit.querySelector(".note-mark")?.remove();
+  }
+  function unitInfo(n) {
+    const c = n.cloneNode(true);
+    for (const junk of c.querySelectorAll("sup.marker, .verse-number, .page-break, .note-mark")) junk.remove();
+    const num = n.querySelector(".verse-number");
+    const verse = num ? parseInt(num.textContent, 10) : null;
+    return { pid: n.id, kind: n.classList.contains("verse") ? "verse" : "para", verse: Number.isFinite(verse) ? verse : null, text: c.textContent.replace(/\s+/g, " ").trim() };
+  }
+  function citeUnit(x) { return x.kind === "verse" && currentDoc?.citation ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || ""; }
+  // Color the selected paragraphs; the same color again takes it off
+  async function highlightSelection(color) {
+    if (!currentDoc || !window.Marks) return;
+    const units = selectedUnits();
+    if (!units.length) return;
+    const body = $(".doc", readerPane);
+    const allSame = units.every((u) => docMarks.get(u.pid)?.color === color);
+    for (const u of units) {
+      try {
+        const rec = await window.Marks.set({ uri: currentDoc.uri, doc_id: currentDoc.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: u.text, citation: citeUnit(u), title: currentDoc.title });
+        if (rec) { docMarks.set(u.pid, rec); drawMark(body, rec); } else { docMarks.delete(u.pid); undrawMark(body, u.pid); }
+      } catch (_) { toast("Could not save that mark."); return; }
+    }
+    clearSelection();
+    toast(allSame ? "Highlight removed." : units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
+  }
+  // A note on a paragraph, written in the sheet
+  function editNote(unit) {
+    if (!currentDoc || !window.Marks || !unit) return;
+    const existing = docMarks.get(unit.pid)?.note || "";
+    const bodyEl = $(".sheet-body", sheet);
+    const ta = el("textarea", { class: "note-text", rows: 5, placeholder: "Your note on this passage…", "aria-label": "Note" });
+    ta.value = existing;
+    const save = async () => {
+      try {
+        const rec = await window.Marks.set({ uri: currentDoc.uri, doc_id: currentDoc.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, note: ta.value, text: unit.text, citation: citeUnit(unit), title: currentDoc.title });
+        const body = $(".doc", readerPane);
+        if (rec) { docMarks.set(unit.pid, rec); if (body) drawMark(body, rec); } else { docMarks.delete(unit.pid); if (body) undrawMark(body, unit.pid); }
+        hideNote(); clearSelection();
+        toast(ta.value.trim() ? "Note saved." : "Note removed.");
+      } catch (_) { toast("Could not save the note."); }
+    };
+    bodyEl.replaceChildren(
+      el("div", { class: "nm", text: `Note on ${citeUnit(unit)}` }),
+      el("p", { class: "note-passage", text: unit.text.length > 180 ? unit.text.slice(0, 178) + "…" : unit.text }),
+      ta,
+      el("div", { class: "peek-row" }, [
+        el("button", { type: "button", class: "primary", text: "Save", onclick: save }),
+        existing ? el("button", { type: "button", class: "text-btn danger", text: "Delete", onclick: () => { ta.value = ""; save(); } }) : null,
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: hideNote }),
+      ].filter(Boolean)),
+    );
+    openSheet("Note");
+    ta.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); save(); } });
+    setTimeout(() => ta.focus(), 50);
+  }
+  const ICON_NOTE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v12H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>';
 
   // ---- My studies: your own pages in the reader ------------------------------
   // A study opens in a frame of its own (its look and its scripts intact, sandboxed away from
@@ -1046,6 +1134,7 @@
       : "Pages of your own, kept on this device: a study you built, a lesson, notes. Add an HTML, Markdown or text file from Files; it opens here, offline, and its links to the scriptures and to talks open the library's copy." });
     body.append(intro);
     body.append(el("div", { class: "studies-add" }, [el("button", { type: "button", class: "primary", text: list.length ? "Add a page" : "Add a page from Files", onclick: () => pick.click() })]));
+    await renderMarks(body);
     if (!list.length) return;
     const rows = el("div", { class: "study-list" });
     for (const rec of list) {
@@ -1064,6 +1153,53 @@
       ]));
     }
     body.append(rows);
+  }
+
+  // Highlights and notes across the library, newest first, with a way to keep them safe
+  async function renderMarks(body) {
+    if (!window.Marks) return;
+    let marks = [];
+    try { marks = await window.Marks.all(); } catch (_) { marks = []; }
+    const sec = el("section", { class: "marks-sec" });
+    const head = el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" })]);
+    sec.append(head);
+    if (!marks.length) {
+      sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note: your marks come back whenever the page opens, and are listed here." }));
+    } else {
+      const list = el("div", { class: "mark-list" });
+      for (const m of marks.slice(0, 200)) {
+        list.append(el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
+          let id = m.doc_id;
+          try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
+          if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
+        } }, [
+          el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
+          el("span", { class: "mk-text", text: m.text.length > 140 ? m.text.slice(0, 138) + "…" : m.text }),
+          m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
+        ].filter(Boolean)));
+      }
+      sec.append(list);
+    }
+    const pick = el("input", { type: "file", accept: ".json,application/json", hidden: true, "aria-hidden": "true" });
+    pick.addEventListener("change", async () => {
+      const file = pick.files && pick.files[0];
+      if (!file) return;
+      try { const n = await window.Marks.importJson(await file.text()); toast(n ? `${n} ${n === 1 ? "mark" : "marks"} brought in.` : "Nothing new in that file."); renderHome(); }
+      catch (err) { toast(err.message || "That file could not be read."); }
+      pick.value = "";
+    });
+    sec.append(el("div", { class: "marks-tools" }, [
+      marks.length ? el("button", { type: "button", class: "text-btn", text: "Export", title: "Save your highlights and notes to a file", onclick: async () => {
+        try {
+          const blob = new Blob([await window.Marks.exportJson()], { type: "application/json" });
+          const a = el("a", { href: URL.createObjectURL(blob), download: `gospel-marks-${new Date().toISOString().slice(0, 10)}.json` });
+          document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        } catch (_) { toast("Could not export just now."); }
+      } }) : null,
+      el("button", { type: "button", class: "text-btn", text: "Import", title: "Bring in highlights and notes from a file", onclick: () => pick.click() }),
+      pick,
+    ].filter(Boolean)));
+    body.append(sec);
   }
 
   // ---- Think it through, from anywhere ------------------------------------
@@ -1089,7 +1225,7 @@
     const page = state.docId && currentDoc && currentDoc.id === state.docId;
     const study = !page && state.studyId && currentStudy && currentStudy.id === state.studyId;
     const subject = page
-      ? window.Ask.subjectFor({ doc: currentDoc, selection: selectedUnits() })
+      ? window.Ask.subjectFor({ doc: currentDoc, selection: selectedUnits(), marks: [...docMarks.values()] })
       : study ? window.Ask.subjectFor({ doc: { title: currentStudy.title, body_html: `<p>${esc(window.Studies.plainText(currentStudy))}</p>`, collection: "studies", collection_title: "My studies" } })
       : window.Ask.subjectFor({ query: state.q.trim(), hits: state.lastSearch?.hits || [] });
     if (!window.Ask.hasKey()) toast("Thinking it through needs your Claude API key: add it under Ask.");
@@ -1117,7 +1253,7 @@
     if (!body) return [];
     return [...body.querySelectorAll(".sel")].map((n) => {
       const c = n.cloneNode(true);
-      for (const junk of c.querySelectorAll("sup.marker, .verse-number, .page-break")) junk.remove();
+      for (const junk of c.querySelectorAll("sup.marker, .verse-number, .page-break, .note-mark")) junk.remove();
       const num = n.querySelector(".verse-number");
       const verse = num ? parseInt(num.textContent, 10) : null;
       return { pid: n.id, kind: n.classList.contains("verse") ? "verse" : "para", verse: Number.isFinite(verse) ? verse : null, text: c.textContent.replace(/\s+/g, " ").trim() };
@@ -1134,18 +1270,20 @@
     if (!bar) {
       bar = el("div", { class: "select-bar" }, [
         el("span", { class: "n" }),
-        el("button", { type: "button", class: "primary", text: "Add to deck", onclick: () => {
+        window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
+        window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the first selected passage", onclick: () => { const u = selectedUnits()[0]; if (u) editNote(u); } }) : null,
+        el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
           const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
           clearSelection();
           toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
-        } }),
-        el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
+        } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
+        el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
         el("button", { type: "button", class: "text-btn", text: "Copy", title: "Copy with the citation", onclick: () => {
           const cite = (x) => x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
           const text = selectedUnits().map((x) => `${x.text} (${cite(x)})`).join("\n\n");
           navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
         } }),
-        el("button", { type: "button", class: "text-btn", text: "Clear", onclick: clearSelection }),
+        el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: clearSelection }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),
       ]);
       const rf = $(".reader-foot", readerPane);
       if (rf) rf.before(bar); else readerPane.append(bar);

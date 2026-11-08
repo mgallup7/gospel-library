@@ -10,7 +10,7 @@
    - the data files (the library bundle and its manifest): network only. */
 const SHELL = "gospel-shell-v28";
 const ASSETS = "gospel-assets-v1";
-const FILES = ["./", "./index.html", "./app.css", "./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./engine.js", "./semantic.js", "./lib/wordpiece.js", "./vendor/pptxgen.bundle.js", "./lib/query.js", "./lib/scriptures.js",
+const FILES = ["./", "./index.html", "./app.css", "./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./marks.js", "./engine.js", "./semantic.js", "./lib/wordpiece.js", "./vendor/pptxgen.bundle.js", "./lib/query.js", "./lib/scriptures.js",
   "./lib/scriptures-data.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
 const NETWORK_WAIT = 3000;
 

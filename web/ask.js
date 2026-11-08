@@ -190,16 +190,18 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
 
   // The floating button's work: the page (or the search) as Claude will see it.
   // {doc, selection} for a page; {query, hits} for a search.
-  function subjectFor({ doc = null, selection = [], query = null, hits = [] } = {}) {
+  function subjectFor({ doc = null, selection = [], marks = [], query = null, hits = [] } = {}) {
     if (doc) {
       const label = doc.collection === "general-conference" ? `${doc.title} (${[doc.author, doc.label].filter(Boolean).join(", ")})` : doc.citation || doc.title;
       const plain = el("div", { html: doc.body_html || "" });
-      for (const junk of plain.querySelectorAll("sup.marker, .page-break, .notes, script, style")) junk.remove();
+      for (const junk of plain.querySelectorAll("sup.marker, .page-break, .notes, .note-mark, script, style")) junk.remove();
       let body = plain.textContent.replace(/\s+/g, " ").trim();
       if (body.length > 24000) body = body.slice(0, 24000) + " …(the page continues)";
       const sel = selection.length ? "\n\nHe has selected these, so think about them first:\n" + selection.map((u) => `${u.verse ? `${u.verse} ` : ""}${u.text}`).join("\n") : "";
+      const marked = marks.filter((m) => m.color || m.note);
+      const his = marked.length ? "\n\nHis own marks on this page (earlier study; build on them, and answer his notes where they ask something):\n" + marked.map((m) => `${m.verse ? `${m.verse} ` : ""}${m.color ? `[highlighted] ` : ""}${(m.text || "").slice(0, 200)}${m.note ? `\n  His note: ${m.note}` : ""}`).join("\n") : "";
       const deck = deckHint();
-      return { label, content: `The page: ${label}${doc.author && doc.collection !== "general-conference" ? `, ${doc.author}` : ""}${doc.collection ? ` (${doc.collection_title || doc.collection})` : ""}.\n\n${body}${sel}${deck}` };
+      return { label, content: `The page: ${label}${doc.author && doc.collection !== "general-conference" ? `, ${doc.author}` : ""}${doc.collection ? ` (${doc.collection_title || doc.collection})` : ""}.\n\n${body}${sel}${his}${deck}` };
     }
     const label = `the search “${query}”`;
     const top = hits.slice(0, 8).map((h) => `${h.citation}: ${(h.text || "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n");

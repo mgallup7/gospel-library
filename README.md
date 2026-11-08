@@ -53,6 +53,14 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   shows first in a sheet where you are, with Open and Add to deck; a page or
   a book opens in place. Only a page the library does not hold goes to the
   web, and only online.
+- Highlights and notes. Tap a verse or paragraph, then a color (yellow,
+  green, blue, pink) or Note; the mark comes back whenever the page opens,
+  outlasts library updates (it is kept by page address and paragraph, on
+  the device), and is listed under My studies with the passage and the
+  note, newest first, each a tap from its place. Think it through reads
+  your marks on the page as earlier study and answers the notes that ask
+  something. Export writes them all to a file; Import brings them back on
+  another device.
 - My studies: pages of your own, read inside the app. Add an HTML page (a
   study built with Claude, say), a Markdown file or plain text from Files;
   it is kept on the device, apart from the library, with its own look and
