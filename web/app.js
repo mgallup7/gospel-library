@@ -646,7 +646,7 @@
       h.after ? el("div", { class: "ctx", text: `${h.after.verse ? h.after.verse + " " : ""}${h.after.text}` }) : null,
       el("div", { class: "best-actions" }, [
         el("button", { type: "button", class: "primary", text: h.collection === "scriptures" ? "Open the chapter" : "Open", onclick: () => openDoc(h.doc_id, h.pid) }),
-        el("button", { type: "button", class: "text-btn", text: window.Deck?.has(h.doc_id, h.pid) ? "On the deck" : "Add to deck", onclick: (e) => addHit(h, e.currentTarget) }),
+        el("button", { type: "button", class: "text-btn", "data-deck-doc": String(h.doc_id), "data-deck-pid": h.pid, text: window.Deck?.has(h.doc_id, h.pid) ? "On the deck" : "Add to deck", onclick: (e) => addHit(h, e.currentTarget) }),
         el("button", { type: "button", class: "text-btn", text: "Present", onclick: () => startPresentingUnits([{ text: h.text, kind: h.kind, where: h.citation, doc_id: h.doc_id }]) }),
         h.more && h.more.length ? moreToggle(h) : null,
       ]),
@@ -691,7 +691,7 @@
     window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: wide() });
     btn.textContent = btn.classList.contains("add") ? "\u2713" : "On the deck";
     btn.setAttribute("aria-pressed", "true");
-    if (!wide()) toast("On the deck.");
+    if (!wide()) deckToast(1, "On the deck.");
   }
   // Every passage with the words, in the order of the books, each chapter or talk with its count:
   // a concordance, for the teacher who wants to see them all rather than the best.
@@ -743,7 +743,7 @@
         ]),
         h.more && h.more.length && !nested ? moreToggle(h) : null,
       ]),
-      el("button", { class: "add", "aria-label": "On the deck", "aria-pressed": String(!!window.Deck?.has(h.doc_id, h.pid)), title: "Add to deck", text: window.Deck?.has(h.doc_id, h.pid) ? "\u2713" : "+", onclick: (e) => { e.stopPropagation(); addHit(h, e.currentTarget); } }),
+      el("button", { class: "add", "data-deck-doc": String(h.doc_id), "data-deck-pid": h.pid, "aria-label": "On the deck", "aria-pressed": String(!!window.Deck?.has(h.doc_id, h.pid)), title: "Add to deck", text: window.Deck?.has(h.doc_id, h.pid) ? "\u2713" : "+", onclick: (e) => { e.stopPropagation(); addHit(h, e.currentTarget); } }),
     ]);
     return row;
   }
@@ -1047,7 +1047,7 @@
         if (!units.length) { toast("Tap a verse or paragraph to select it first."); return; }
         const added = window.Deck?.addFromDoc(currentDoc, units);
         clearSelection();
-        toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck." : `${added} passages on the deck.`);
+        deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
       }),
       el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
     ]);
@@ -1399,7 +1399,7 @@
         el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
           const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
           clearSelection();
-          toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
+          deckToast(added, added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
         el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${currentDoc.citation.replace(/:\d.*$/, "")}:${x.verse}` : crumbFor(currentDoc) }))); } }),
         el("button", { type: "button", class: "text-btn", text: "Copy", title: "Copy with the citation", onclick: () => {
@@ -1414,12 +1414,41 @@
     }
     $(".n", bar).textContent = `${n} selected`;
   }
-  function toast(text) {
-    const t = el("div", { class: "toast", role: "status", text });
+  // toast(text, { action: "Undo", onAction }) adds a button and stays about five seconds, long
+  // enough to reach it; the plain toast still goes after two. A newer toast replaces an older one.
+  function toast(text, { action, onAction } = {}) {
+    for (const old of document.querySelectorAll(".toast")) old.remove();
+    const t = el("div", { class: "toast" + (action ? " has-action" : ""), role: "status" }, [el("span", { text })]);
+    let timer = null;
+    const close = () => { clearTimeout(timer); t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
+    const arm = (ms) => { clearTimeout(timer); timer = setTimeout(close, ms); };
+    if (action) {
+      t.append(el("button", { type: "button", class: "toast-action", text: action, onclick: () => { close(); try { onAction?.(); } catch (_) {} } }));
+      // a finger or the focus on the button keeps it from going away under them
+      t.addEventListener("pointerenter", () => clearTimeout(timer));
+      t.addEventListener("pointerleave", () => arm(2500));
+      t.addEventListener("focusin", () => clearTimeout(timer));
+      t.addEventListener("focusout", () => arm(2500));
+    }
     document.body.append(t);
     setTimeout(() => t.classList.add("show"), 10);
-    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 1800);
+    arm(action ? 5000 : 1800);
   }
+  // The toast after an add, with an Undo that takes off exactly what that add put on.
+  function deckToast(added, text) {
+    const ids = added ? window.Deck?.lastAdded?.() || [] : [];
+    if (!ids.length) { toast(added === 0 ? "Already on the deck." : text); return; }
+    toast(text, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); } });
+  }
+  // The + and Add to deck buttons on results follow the deck, whatever changed it: an undo, the board's remove, another tab.
+  function syncHitButtons() {
+    for (const b of document.querySelectorAll("button[data-deck-pid]")) {
+      const on = !!window.Deck?.has(Number(b.dataset.deckDoc), b.dataset.deckPid);
+      if (b.classList.contains("add")) { b.textContent = on ? "\u2713" : "+"; b.setAttribute("aria-pressed", String(on)); }
+      else b.textContent = on ? "On the deck" : "Add to deck";
+    }
+  }
+  window.addEventListener("deck:change", syncHitButtons);
 
   // The library's HTML is the Church's own and the scraper already drops scripts;
   // this is cheap insurance against anything that could run or leave the app.
@@ -1499,7 +1528,7 @@
             const doc = await api("doc", { id: res.doc_id });
             const units = verses.filter((x) => x.kind === "verse" || x.kind === "para").map((x) => ({ pid: x.pid, kind: x.kind, verse: x.verse, text: x.text }));
             const added = window.Deck.addFromDoc(doc, units);
-            toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck." : `${added} passages on the deck.`);
+            deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
           } catch (_) { toast("Could not add that just now."); }
         } }) : null,
       ].filter(Boolean)),

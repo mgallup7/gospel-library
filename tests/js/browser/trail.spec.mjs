@@ -37,7 +37,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await step("shelf", () => page.click("#homeBody .shelf-tile:has-text('Scriptures')"));
     await step("book", () => page.click("#homeBody .chip:has-text('Alma')"));
     await step("chapter", () => page.click("#homeBody .chapters button:text-is('32')"));
-    await step("type", async () => { await page.fill("#q", "faith"); await page.waitForTimeout(500); await page.fill("#q", "faith hope"); });
+    await step("type", async () => { await page.fill("#q", "faith"); await page.waitForTimeout(500); await page.fill("#q", "faith hope"); await page.waitForFunction(() => location.hash.includes("faith+hope"), null, { timeout: 5000 }).catch(() => {}); });
     await step("enter", () => page.press("#q", "Enter"));
     await step("back1", () => page.evaluate(() => document.querySelector(".trail-back") ? [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click() : history.back()));
     await step("back2", () => page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()));

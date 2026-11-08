@@ -76,9 +76,15 @@
   }
 
   function count() { return deck.items.filter((i) => i.type === "passage").length; }
+  // The header button carries the count as a small pill, so the teacher sees the deck grow
+  // from any screen; the label says it in words for VoiceOver.
   function updateBadge() {
     const b = $("#deckBtn");
-    if (b) b.textContent = count() ? `Deck ${count()}` : "Deck";
+    if (!b) return;
+    const n = count();
+    b.replaceChildren("Deck");
+    if (n) b.append(Object.assign(document.createElement("span"), { className: "deck-count", textContent: String(n) }));
+    b.setAttribute("aria-label", n ? `Deck, ${n} ${n === 1 ? "passage" : "passages"}` : "Deck");
   }
   const byId = (id) => deck.items.find((i) => i.id === id) || null;
   function find(doc_id, pid) { return deck.items.find((i) => i.type === "passage" && i.doc_id === doc_id && i.pid === pid) || null; }
@@ -91,6 +97,22 @@
     if (active && active.id === it.id) active = null;
     save();
   }
+  // Take off the items one add put on (the Undo in its toast); one save, one redraw.
+  function removeIds(ids) {
+    const gone = new Set(ids || []);
+    const before = deck.items.length;
+    deck.items = deck.items.filter((i) => !gone.has(i.id));
+    if (deck.items.length === before) return 0;
+    deck.links = deck.links.filter((l) => !gone.has(l.from.id) && !gone.has(l.to.id));
+    if (pending && gone.has(pending.id)) pending = null;
+    if (active && gone.has(active.id)) active = null;
+    if (linking && gone.has(linking.id)) linking = null;
+    save();
+    return before - deck.items.length;
+  }
+  // The ids the last addFromDoc or addPassage put on the deck; empty when it added nothing.
+  let lastAddedIds = [];
+  function lastAdded() { return lastAddedIds.slice(); }
   /** Put a passage on the deck or take it off. Returns true when it was added. */
   function toggle(p) {
     if (has(p.doc_id, p.pid)) { remove(p.doc_id, p.pid); return false; }
@@ -111,15 +133,18 @@
       }
     }
     let added = 0;
+    lastAddedIds = [];
     for (const r of runs) {
       const verses = r.kind === "verse" ? r.units.map((u) => ({ n: u.verse, text: u.text })) : null;
       const text = verses ? verses.map((v) => v.text).join(" ") : r.units.map((u) => u.text).join("\n\n");
       if (has(doc.id, r.units[0].pid)) continue;
+      const id = uid();
       deck.items.push({
-        id: uid(), type: "passage", kind: r.kind === "verse" ? "verse" : "para",
+        id, type: "passage", kind: r.kind === "verse" ? "verse" : "para",
         text, verses, doc_id: doc.id, pid: r.units[0].pid, hl: [],
         ...citationFor(doc, verses),
       });
+      lastAddedIds.push(id);
       added++;
     }
     save();
@@ -146,7 +171,7 @@
   /** Add one search hit or Ask passage: {doc_id, pid, kind, text, verses, citation, author, title, label, collection, verse}. */
   function addPassage(p, { show = false } = {}) {
     const existing = find(p.doc_id, p.pid);
-    if (existing) { if (show) showBoard(); return existing; }
+    if (existing) { lastAddedIds = []; if (show) showBoard(); return existing; }
     const verses = p.verses && p.verses.length ? p.verses.map((v) => ({ n: v.n, text: v.text })) : (p.kind === "verse" && p.verse ? [{ n: p.verse, text: p.text }] : null);
     const item = {
       id: uid(), type: "passage", kind: p.kind === "verse" ? "verse" : "para",
@@ -169,6 +194,7 @@
       }
     }
     deck.items.push(item);
+    lastAddedIds = [item.id];
     save();
     if (show) showBoard();
     return item;
@@ -277,6 +303,13 @@
   let editing = null;   // the link whose label editor is open
   let hintShown = false;
 
+  // The card tools, drawn as strokes in the app's icon style rather than text arrows,
+  // which sit at different heights in different fonts.
+  const toolIcon = (d) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+  const TOOL_UP = toolIcon("M12 19V5M6 11l6-6 6 6");
+  const TOOL_DOWN = toolIcon("M12 5v14M6 13l6 6 6-6");
+  const TOOL_REMOVE = toolIcon("M6 6l12 12M18 6L6 18");
+
   function boardEl() { if (!board) buildBoard(); return board; }
   function showBoard() {
     if (GL().wide) { GL().panel.show(boardEl(), "Deck"); draw(); }
@@ -335,7 +368,8 @@
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
     const thinkBox = el("div", { class: "board-think", hidden: true });
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, el("div", { class: "board-row" }, [download, present, more]), moreRow, banner, thinkBox]);
+    const actions = el("div", { class: "board-row" }, [download, present, more]);
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, actions, moreRow, banner, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -345,7 +379,7 @@
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
     board.append(head, canvas, saved, status, hint);
-    ui = { title, subtitle, themes, download, present, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { title, subtitle, themes, download, present, more, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
@@ -370,6 +404,9 @@
       ]));
     }
     const empty = !deck.items.length;
+    // An empty deck has nothing to theme, download or present: the board shows only how to add a passage.
+    ui.themes.hidden = empty; ui.actions.hidden = empty;
+    ui.moreRow.hidden = empty || ui.more.getAttribute("aria-expanded") !== "true";
     ui.download.disabled = empty; ui.present.disabled = empty;
     ui.think.disabled = count() < 2;
     ui.md.disabled = empty;
@@ -383,8 +420,8 @@
         el("button", { type: "button", class: "text-btn small", text: "Cancel", onclick: () => { linking = null; draw(); } }),
       );
     } else ui.banner.hidden = true;
-    ui.hint.textContent = empty
-      ? "Nothing here yet. Tick a passage under an Ask answer, tap + on a search result, or select verses while reading and choose Add to deck."
+    ui.hint.hidden = empty;
+    ui.hint.textContent = empty ? ""
       : count() === 1 ? "To highlight: tap the first and last word of a phrase. To link: add another passage, then drag the dot at the end of a highlight onto a phrase there."
       : "To highlight: tap the first and last word of a phrase. To link: drag the dot at the end of a highlight onto a phrase in another passage. To name a link: tap its number.";
   }
@@ -395,9 +432,9 @@
     deck.items.forEach((it, idx) => {
       const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : ""), "data-id": it.id, "data-type": it.type });
       const tools = el("div", { class: "bc-tools" }, [
-        el("button", { type: "button", "aria-label": "Move up", title: "Move up", text: "↑", disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
-        el("button", { type: "button", "aria-label": "Move down", title: "Move down", text: "↓", disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
-        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", text: "×", onclick: (e) => { e.stopPropagation(); removeItem(it); } }),
+        el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
+        el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
+        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeItem(it); } }),
       ]);
       if (it.type === "section") {
         const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
@@ -455,7 +492,13 @@
       }
       cards.append(card);
     });
-    if (!deck.items.length) cards.append(el("div", { class: "board-empty", text: "The deck is empty." }));
+    if (!deck.items.length) {
+      const savedAny = store.get("decks", []).length > 0;
+      cards.append(el("div", { class: "board-empty" }, [
+        el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
+        savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
+      ].filter(Boolean)));
+    }
   }
   function speakerNotes(s, it) { const text = (it.notes || "").trim(); if (text) { try { s.addNotes(text); } catch (_) {} } }
   // A question or a note: a slide of its own, with words the teacher writes
@@ -1761,7 +1804,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   }
 
   window.Deck = {
-    render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, toggle, count, updateBadge,
+    render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,

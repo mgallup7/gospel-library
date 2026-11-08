@@ -126,6 +126,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Deck tab. Pressing Return on a new search, or sending a new question, while
   a deck is in progress asks whether to clear it: keep adding to it, save it
   as it is and start a new one, or delete it and start over.
+  The Deck button in the header shows how many passages are on it, and the
+  toast after an add has an Undo for five seconds that takes off exactly
+  what that add put on.
 - The board: each passage is a card. Tap the first and last word of a phrase
   to highlight it. Every highlight ends in a dot; drag the dot onto a phrase
   in another passage (or onto the passage itself) and an arrow is drawn
