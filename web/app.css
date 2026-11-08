@@ -178,7 +178,7 @@ main {
 .hit.on, .doc-row.on, .toc-row.on { background: var(--chrome); }
 .hit .cite { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; font-weight: 600; color: var(--accent); }
 .hit .cite .where { flex: none; max-width: 55%; margin: 0; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hit .snip { font: 16px/1.45 var(--serif); margin-top: 3px; color: var(--ink); }
+.hit .snip { font: calc(var(--reading-size) - 1px)/1.45 var(--serif); margin-top: 3px; color: var(--ink); }
 .hit .where { margin-top: 4px; font-size: 12px; color: var(--ink-3); }
 .hit-row .hit-main { flex: 1; min-width: 0; }
 .hit-row .hit-main .hit { padding-bottom: 10px; }
@@ -192,8 +192,8 @@ main {
 .best-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-size: 12px; }
 .best-label { font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; font-size: 11px; white-space: nowrap; }
 .best-where { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.best .ctx { font: 14px/1.45 var(--serif); color: var(--ink-3); padding: 0 8px; }
-.best-text { font: 17px/1.5 var(--serif); color: var(--ink); background: var(--target); border-radius: 8px; padding: 8px; margin: 4px 0; }
+.best .ctx { font: calc(var(--reading-size) * .82)/1.45 var(--serif); color: var(--ink-3); padding: 0 8px; }
+.best-text { font: var(--reading-size)/1.5 var(--serif); color: var(--ink); background: var(--target); border-radius: 8px; padding: 8px; margin: 4px 0; }
 .best-text .best-cite { font: 600 13px var(--sans); color: var(--accent); margin-right: 4px; }
 .best-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; margin-top: 6px; margin-left: -4px; }
 .best-actions .primary { height: 36px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; margin-right: 4px; }
@@ -399,7 +399,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
   box-shadow: 0 -8px 30px rgba(0,0,0,.12);
   padding: 10px 18px calc(18px + var(--safe-bottom));
   max-height: 55vh; overflow-y: auto;
-  font-family: var(--serif); font-size: 16px; line-height: 1.5;
+  font-family: var(--serif); font-size: calc(var(--reading-size) - 1px); line-height: 1.5;
   transform: translateY(0); transition: transform .18s ease-out;
 }
 @media (prefers-reduced-motion: reduce) { .sheet { transition: none; } }
@@ -435,7 +435,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .conc-doc .t { font: 600 14px var(--sans); color: var(--ink); }
 .conc-doc .m { font-size: 12px; color: var(--ink-3); text-align: right; }
 .conc-doc.on .t { color: var(--accent); }
-.conc-row { display: flex; gap: 8px; align-items: baseline; width: 100%; padding: 6px 16px 6px 20px; text-align: left; font: 15px/1.45 var(--serif); color: var(--ink); border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
+.conc-row { display: flex; gap: 8px; align-items: baseline; width: 100%; padding: 6px 16px 6px 20px; text-align: left; font: calc(var(--reading-size) - 2px)/1.45 var(--serif); color: var(--ink); border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
 .conc-row .vn { flex: none; font: 600 11px var(--sans); color: var(--ink-3); min-width: 18px; }
 .conc-row .snip mark { background: transparent; color: var(--accent); font-weight: 600; }
 .conc-row.on { background: var(--chrome); }
@@ -471,7 +471,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .mark-row.hl-y { border-left-color: var(--hl-y-dot); } .mark-row.hl-g { border-left-color: var(--hl-g-dot); } .mark-row.hl-b { border-left-color: var(--hl-b-dot); } .mark-row.hl-p { border-left-color: var(--hl-p-dot); }
 .mark-row:active { background: var(--chrome); }
 .mk-cite { font: 600 13px var(--sans); color: var(--ink-2); }
-.mk-text { font: 15px/1.45 var(--serif); }
+.mk-text { font: calc(var(--reading-size) - 2px)/1.45 var(--serif); }
 .mk-note { display: flex; gap: 6px; align-items: flex-start; font: 14px/1.4 var(--sans); color: var(--ink); margin-top: 2px; }
 .mk-note .ic { display: inline-flex; color: var(--accent); flex: none; margin-top: 2px; }
 .mk-note .ic svg { width: 14px; height: 14px; }

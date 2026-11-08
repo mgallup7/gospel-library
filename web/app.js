@@ -1527,7 +1527,17 @@
     document.documentElement.style.setProperty("--reading-size", sizes[i] + "px");
     store.set("readingSize", sizes[i]);
   }
-  { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); }
+  // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
+  { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(26, Math.round(sys))) + "px"); } }
+  function systemTextSize() {
+    try {
+      const wrap = el("div", { style: "position:absolute;visibility:hidden;font-size:11px" }, [el("span", { style: "font: -apple-system-body" })]);
+      document.body.append(wrap);
+      const px = parseFloat(getComputedStyle(wrap.firstChild).fontSize);
+      wrap.remove();
+      return Number.isFinite(px) && px !== 11 && px >= 12 ? px : null; // 11px means the browser does not know the system font
+    } catch (_) { return null; }
+  }
 
   // ------------------------------------------------------------ present ----
   // One paragraph or verse at a time, large, on a plain background: for a
