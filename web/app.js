@@ -166,6 +166,37 @@
   }
   // A step within the shelves (a book, a year, a volume): a place of its own, so Back retraces it
   function go(browse) { state.browse = browse; renderHome(); push(); }
+  // Edge swipes in the home-screen app, where iOS keeps its own gesture for itself: in from the
+  // left edge goes back, in from the right edge goes forward. In Safari the system gesture does
+  // this already, so the app stays out of its way there.
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (standalone) {
+    const EDGE = 28, NEED = 80;
+    let swipe = null;
+    document.addEventListener("touchstart", (e) => {
+      swipe = null;
+      if (e.touches.length !== 1 || show || !state.ready) return;
+      const t = e.touches[0];
+      if (e.target.closest(".board, .port, .scopes, .shelf, .chapters, input, textarea, .stage, .sheet, .dsheet")) return;
+      if (t.clientX <= EDGE) swipe = { dir: -1, x: t.clientX, y: t.clientY };
+      else if (t.clientX >= window.innerWidth - EDGE) swipe = { dir: 1, x: t.clientX, y: t.clientY };
+    }, { passive: true });
+    document.addEventListener("touchmove", (e) => {
+      if (!swipe) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientY - swipe.y) > 50) swipe = null; // a scroll, not a swipe
+    }, { passive: true });
+    document.addEventListener("touchend", (e) => {
+      if (!swipe) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - swipe.x;
+      const go = swipe;
+      swipe = null;
+      if (Math.abs(t.clientY - go.y) > 50) return;
+      if (go.dir < 0 && dx >= NEED) { goBack(); }
+      else if (go.dir > 0 && dx <= -NEED) { history.forward(); }
+    }, { passive: true });
+  }
   // What Back says, wherever it is drawn
   function trailButton() {
     const label = backLabel();

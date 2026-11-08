@@ -43,7 +43,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   "‹ Results" in the reader bar, and at the top of every list on a phone,
   retraces your steps exactly, cross-references included, with the scroll
   position kept; it works in the home-screen app, where there is no browser
-  Back, and survives a reload.
+  Back, and survives a reload. In the home-screen app a swipe in from the
+  left edge goes back and from the right edge forward (in Safari the
+  browser's own swipe does the same).
 - The home screen: where you were (the last chapter or talk, the deck in
   progress), the shelves as tiles with what each holds, the latest
   conference, and a box to ask the library a question. Open a shelf and the
