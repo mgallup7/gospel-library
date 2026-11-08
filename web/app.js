@@ -55,7 +55,7 @@
   // ------------------------------------------------------------- state ----
   const state = {
     q: "", scope: "all", speaker: "", from: "", to: "", book: "", group: "passages",
-    docId: null, pid: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false, asTyped: false,
+    docId: null, pid: null, studyId: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false, asTyped: false,
   };
   let searchSeq = 0;
   let typeTimer = null;
@@ -72,8 +72,9 @@
   //   #scriptures?b.book=alma a shelf, with how far into it you are
   //   #search?q=faith&scope=… results
   //   #ask  #deck             the two tabs
-  // and the page open in the reader rides along on any of them as &doc=123&p=p21
-  // (an old #read/123 address still opens). On a phone the page covers the list.
+  // and the page open in the reader rides along on any of them as &doc=123&p=p21, or one of
+  // your own pages as &s=<id> (an old #read/123 address still opens). On a phone the page
+  // covers the list.
   const BROWSE_KEYS = ["year", "all", "bookUri", "book", "series"];
   function urlFor() {
     const p = new URLSearchParams();
@@ -89,6 +90,7 @@
       for (const k of BROWSE_KEYS) if (state.browse[k]) p.set(`b.${k}`, String(state.browse[k]));
     }
     if (state.docId) { p.set("doc", String(state.docId)); if (state.pid) p.set("p", state.pid); }
+    else if (state.studyId) p.set("s", state.studyId);
     const qs = p.toString();
     return base || qs ? `#${base}${qs ? "?" + qs : ""}` : "#";
   }
@@ -114,6 +116,7 @@
     } else state.browse = null;
     state.docId = p.get("doc") ? Number(p.get("doc")) : null;
     state.pid = p.get("p") || null;
+    state.studyId = !state.docId && p.get("s") ? p.get("s") : null;
   }
 
   // The trail. Every place you go is a history entry; history.state carries its depth within
@@ -124,6 +127,7 @@
   function here() { return history.state && Number.isInteger(history.state.n) ? history.state.n : 0; }
   function labelNow() {
     if (state.docId) return currentDoc && currentDoc.id === state.docId ? shortTitleOf(currentDoc) : "Back";
+    if (state.studyId) return currentStudy && currentStudy.id === state.studyId ? shortTitleOf(currentStudy) : "Back";
     if (state.q.trim().length >= 2) return "Results";
     const tab = state.browse?.tab;
     if (tab === "ask") return "Ask";
@@ -141,7 +145,7 @@
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
   function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
-  function rememberScroll() { setEntry({ scroll: { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY } }); }
+  function rememberScroll() { setEntry({ scroll: { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY, study: studyScroll } }); }
   // place: the kind of entry, so typing in the same place refines it instead of stacking entries
   function placeNow() { return state.q.trim() ? "search" : state.browse?.tab || "home"; }
   function push(replace = false) {
@@ -161,7 +165,7 @@
   }
   function goHome() {
     leaveSearch();
-    state.q = ""; state.docId = null; state.pid = null; state.browse = null; state.scope = "all";
+    state.q = ""; state.docId = null; state.pid = null; state.studyId = null; state.browse = null; state.scope = "all";
     syncControls(); renderHome(); showList(); push();
   }
   // A step within the shelves (a book, a year, a volume): a place of its own, so Back retraces it
@@ -244,8 +248,8 @@
     if (searching && !state.terms.length) state.terms = termsFrom(state.q);
     const listWork = searching ? runSearch({ typeahead: false, silent: true }) : (state.lastSearch = null, renderHome());
     const boardFirst = wide() && !searching && state.browse?.tab === "deck";
-    if (state.docId && !boardFirst) {
-      const pageWork = openDoc(state.docId, state.pid, { push: false, scroll: !restore });
+    if ((state.docId || state.studyId) && !boardFirst) {
+      const pageWork = state.docId ? openDoc(state.docId, state.pid, { push: false, scroll: !restore }) : openStudy(state.studyId, { push: false, scroll: restore?.study || 0 });
       // on a phone the page is what you see, and the list behind it catches up on its own
       if (wide()) await Promise.all([listWork, pageWork]); else { await pageWork; listWork.catch(() => {}); }
     } else {
@@ -263,7 +267,7 @@
   }
   function showList() {
     listPane.hidden = false;
-    readerPane.hidden = wide() ? !(state.docId || (panel.lastEl && readerPane.contains(panel.lastEl))) : true;
+    readerPane.hidden = wide() ? !(state.docId || state.studyId || (panel.lastEl && readerPane.contains(panel.lastEl))) : true;
     document.body.classList.toggle("reading", !wide() && !readerPane.hidden);
     syncControls();
     updateThinkFab();
@@ -673,6 +677,7 @@
     ["manuals", "Manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
     ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Arriving, a series a night"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Arriving nightly"],
+    ["studies", "My studies", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own, kept on this device` : "Pages of your own: add one from Files", (st) => st.studies ? `${st.studies} of your own` : "Add one from Files"],
   ];
   function jspPages(st) { return st.collections.filter((c) => c.slug.startsWith("jsp-")).reduce((a, c) => a + c.docs, 0); }
   function latestName(st, short = false) {
@@ -685,7 +690,7 @@
   // a shelf with nothing on it yet stays off the home screen (the conference shelf and the Papers say what is coming)
   function hasShelf(st, key) {
     if (key === "jsp") return st.collections.some((c) => c.slug.startsWith("jsp-") && c.docs > 0);
-    if (key === "conference") return true;
+    if (key === "conference" || key === "studies") return true;
     return count(st, key) > 0;
   }
   const TAB_TITLE = Object.fromEntries(SHELVES.map(([k, t]) => [k, t]));
@@ -703,6 +708,7 @@
     let st;
     try { st = await libraryStats(); }
     catch (e) { body.append(el("div", { class: "status error", text: `The library is not answering (${e.message}).` })); return; }
+    if (!tab && window.Studies) { try { st = { ...st, studies: (await window.Studies.list()).length }; } catch (_) {} }
     nameEntry();
     try {
       if (!tab) return renderOverview(body, st);
@@ -715,6 +721,7 @@
       if (tab === "conference") await browseConference(body);
       else if (tab === "scriptures") await browseScriptures(body);
       else if (tab === "jsp") await browseJsp(body);
+      else if (tab === "studies") await renderStudies(body);
       else await browseCollection(body, tab);
     } catch (e) {
       body.append(el("div", { class: "status error", text: e.message }));
@@ -868,7 +875,7 @@
   let currentDoc = null;
   async function openDoc(id, pid, { push: doPush = true, scroll = true } = {}) {
     if (!id) return;
-    state.docId = id; state.pid = pid || null;
+    state.docId = id; state.pid = pid || null; state.studyId = null; currentStudy = null;
     if (doPush) push();
     markActive();
     showReader();
@@ -932,6 +939,8 @@
       el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
     ]);
     readerPane.replaceChildren(bar, body, nav, foot, sizeRow, rfoot);
+    readerPane.classList.remove("has-study");
+    releaseStudyUrl();
     readerPane.scrollTop = 0;
     body.addEventListener("click", onBodyClick);
     body.addEventListener("click", onSelectClick);
@@ -941,6 +950,105 @@
       if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
     });
     highlightTerms(body);
+  }
+
+  // ---- My studies: your own pages in the reader ------------------------------
+  // A study opens in a frame of its own (its look and its scripts intact, sandboxed away from
+  // the app); its links come back to the app, which opens the local copy.
+  let currentStudy = null, studyScroll = 0, studyUrl = null;
+  function releaseStudyUrl() { if (studyUrl) { try { URL.revokeObjectURL(studyUrl); } catch (_) {} studyUrl = null; } }
+  async function openStudy(id, { push: doPush = true, scroll = 0 } = {}) {
+    if (!id || !window.Studies) return;
+    state.docId = null; state.pid = null; state.studyId = id;
+    currentDoc = null;
+    if (doPush) push();
+    markActive();
+    showReader();
+    if (!currentStudy || currentStudy.id !== id) {
+      readerPane.replaceChildren(el("div", { class: "status", text: "Opening…" }));
+      let rec = null;
+      try { rec = await window.Studies.get(id); } catch (_) { rec = null; }
+      if (state.studyId !== id) return;
+      if (!rec) { readerPane.replaceChildren(el("div", { class: "status error", text: "That page is no longer on this device." })); return; }
+      currentStudy = rec;
+      renderStudy(rec, scroll);
+    }
+    nameEntry(shortTitleOf(currentStudy));
+    refreshTrailButtons();
+    updateThinkFab();
+  }
+  function renderStudy(rec, scroll = 0) {
+    studyScroll = scroll || 0;
+    const bar = el("div", { class: "reader-bar" }, [
+      trailButton(),
+      el("div", { class: "crumb", text: `My studies · added ${new Date(rec.added).toLocaleDateString([], { month: "short", day: "numeric" })}` }),
+      el("div", { class: "spacer" }),
+    ]);
+    const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts allow-forms" });
+    // a blob address rather than srcdoc, so the page's own #links and hash navigation work as they
+    // do anywhere; the address stays valid while the page is open (its #links need it)
+    releaseStudyUrl();
+    studyUrl = URL.createObjectURL(new Blob([window.Studies.frameHtml(rec)], { type: "text/html;charset=utf-8" }));
+    frame.src = studyUrl;
+    frame.addEventListener("load", () => { if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*"); });
+    readerPane.replaceChildren(bar, frame);
+    readerPane.classList.add("has-study");
+    fitStudyFrame();
+  }
+  // the frame fills what is left of the pane under the bar
+  function fitStudyFrame() {
+    const frame = readerPane.querySelector(".study-frame");
+    if (!frame) { readerPane.classList.remove("has-study"); return; }
+    const top = frame.getBoundingClientRect().top;
+    const bottom = wide() ? readerPane.getBoundingClientRect().bottom : window.innerHeight;
+    frame.style.height = Math.max(240, Math.floor(bottom - top)) + "px";
+  }
+  window.addEventListener("resize", fitStudyFrame);
+  window.addEventListener("message", (e) => {
+    const frame = readerPane.querySelector(".study-frame");
+    if (!frame || e.source !== frame.contentWindow || !e.data || typeof e.data !== "object") return;
+    if (e.data.type === "gospel:link" && typeof e.data.href === "string") followLink(e.data.href);
+    else if (e.data.type === "gospel:scroll") studyScroll = Number(e.data.y) || 0;
+  });
+  // The shelf: the pages on this device, and a way to add one
+  async function renderStudies(body) {
+    const list = window.Studies ? await window.Studies.list() : [];
+    const pick = el("input", { type: "file", accept: ".html,.htm,.md,.markdown,.txt,text/html,text/markdown,text/plain", hidden: true, "aria-hidden": "true" });
+    pick.addEventListener("change", async () => {
+      const file = pick.files && pick.files[0];
+      if (!file) return;
+      try {
+        const rec = await window.Studies.add(file);
+        toast(`Added “${rec.title}”.`);
+        await renderHome();
+        openStudy(rec.id);
+      } catch (err) { toast(err.message || "That file could not be added."); }
+      pick.value = "";
+    });
+    body.append(pick);
+    const intro = el("p", { class: "lede studies-lede", text: list.length
+      ? "Pages of your own, kept on this device. Links to the scriptures and to talks open the library's copy."
+      : "Pages of your own, kept on this device: a study you built, a lesson, notes. Add an HTML, Markdown or text file from Files; it opens here, offline, and its links to the scriptures and to talks open the library's copy." });
+    body.append(intro);
+    body.append(el("div", { class: "studies-add" }, [el("button", { type: "button", class: "primary", text: list.length ? "Add a page" : "Add a page from Files", onclick: () => pick.click() })]));
+    if (!list.length) return;
+    const rows = el("div", { class: "study-list" });
+    for (const rec of list) {
+      rows.append(el("div", { class: "study-row" + (state.studyId === rec.id ? " on" : "") }, [
+        el("button", { type: "button", class: "study-open", onclick: () => openStudy(rec.id) }, [
+          el("span", { class: "t", text: rec.title }),
+          el("span", { class: "s", text: `${rec.kind === "html" ? "Page" : rec.kind === "md" ? "Markdown" : "Text"} · added ${new Date(rec.added).toLocaleDateString([], { month: "short", day: "numeric" })} · ${window.Studies.mb(rec.size)}` }),
+        ]),
+        el("button", { type: "button", class: "icon-btn study-remove", "aria-label": `Remove ${rec.title}`, title: "Remove from this device", text: "×", onclick: async () => {
+          if (!confirm(`Remove “${rec.title}” from this device?`)) return;
+          try { await window.Studies.remove(rec.id); } catch (_) { toast("Could not remove it just now."); return; }
+          if (state.studyId === rec.id) { currentStudy = null; state.studyId = null; releaseStudyUrl(); readerPane.replaceChildren(); readerPane.classList.remove("has-study"); push(true); }
+          toast("Removed.");
+          renderHome(); showList();
+        } }),
+      ]));
+    }
+    body.append(rows);
   }
 
   // ---- Think it through, from anywhere ------------------------------------
@@ -955,7 +1063,7 @@
       document.body.append(thinkFab);
     }
     const askOpen = state.browse?.tab === "ask" && !listPane.hidden;
-    const page = !!(state.docId && currentDoc && currentDoc.id === state.docId && !readerPane.hidden);
+    const page = !!(state.docId && currentDoc && currentDoc.id === state.docId && !readerPane.hidden) || !!(state.studyId && currentStudy && currentStudy.id === state.studyId && !readerPane.hidden);
     const results = !page && !listPane.hidden && !!(state.lastSearch && state.lastSearch.hits && state.lastSearch.hits.length) && state.q.trim().length >= 2;
     thinkFab.hidden = !(page || results) || (askOpen && !page) || !stage.hidden;
     thinkFab.classList.toggle("over-reader", page);
@@ -964,13 +1072,15 @@
   function thinkHere() {
     if (!window.Ask) return;
     const page = state.docId && currentDoc && currentDoc.id === state.docId;
+    const study = !page && state.studyId && currentStudy && currentStudy.id === state.studyId;
     const subject = page
       ? window.Ask.subjectFor({ doc: currentDoc, selection: selectedUnits() })
+      : study ? window.Ask.subjectFor({ doc: { title: currentStudy.title, body_html: `<p>${esc(window.Studies.plainText(currentStudy))}</p>`, collection: "studies", collection_title: "My studies" } })
       : window.Ask.subjectFor({ query: state.q.trim(), hits: state.lastSearch?.hits || [] });
     if (!window.Ask.hasKey()) toast("Thinking it through needs your Claude API key: add it under Ask.");
     leaveSearch();
     state.q = ""; syncControls();
-    if (!wide()) { state.docId = null; state.pid = null; } // on a phone the page gives way to the thinking; Back returns to it
+    if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; } // on a phone the page gives way to the thinking; Back returns to it
     state.browse = { tab: "ask", think: window.Ask.hasKey() ? subject : null };
     renderHome(); showList(); push();
   }
@@ -1064,15 +1174,59 @@
       return;
     }
     if (href.startsWith("#")) { e.preventDefault(); focusParagraph(href.slice(1)); return; }
-    if (/^(\/study\/|https?:\/\/(www\.)?churchofjesuschrist\.org\/study\/)/.test(href)) {
-      e.preventDefault();
-      const res = await api("resolve", { href });
-      if (res.found) openDoc(res.doc_id, res.pid);
-      else openOutside(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href);
-      return;
-    }
-    if (href.startsWith("/")) { e.preventDefault(); openOutside("https://www.churchofjesuschrist.org" + href); }
-    else if (/^https?:/.test(href)) { if (!navigator.onLine) { e.preventDefault(); toast("That page is on the web, and you are offline."); return; } a.target = "_blank"; a.rel = "noopener"; }
+    if (href.startsWith("/") || /^https?:/i.test(href)) { e.preventDefault(); followLink(href); }
+  }
+  // Every link goes through here: the library's own copy when it holds the page (a verse shows
+  // in a sheet first, a page or a book opens), the web otherwise.
+  const CHURCH = /^https?:\/\/([a-z0-9-]+\.)*(churchofjesuschrist\.org|lds\.org)(\/|$)/i;
+  async function followLink(href) {
+    const url = href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href;
+    if (!CHURCH.test(url)) { openOutside(url); return; }
+    let res = null;
+    try { res = await api("resolve", { href: url }); } catch (_) { res = null; }
+    if (!res || !res.found) { openOutside(url); return; }
+    if (res.kind === "book") { openBook(res); return; }
+    if (res.pid && /^p\d+$/.test(res.pid) && res.collection === "scriptures" && !(currentDoc && currentDoc.id === res.doc_id && state.docId === res.doc_id)) { peekPassage(res); return; }
+    hideNote();
+    openDoc(res.doc_id, res.pid);
+  }
+  const TAB_OF = { "general-conference": "conference", scriptures: "scriptures", "preach-my-gospel": "preach-my-gospel", "missionary-standards": "missionary-standards", handbook: "handbook", "come-follow-me": "come-follow-me", manuals: "manuals", "study-helps": "study-helps" };
+  function openBook(res) {
+    hideNote();
+    const tab = TAB_OF[res.collection] || (res.collection.startsWith("jsp-") ? "jsp" : "manuals");
+    const browse = res.book_slug ? { tab, book: res.book_slug } : { tab, bookUri: res.book_uri };
+    if (tab === "jsp") browse.series = res.collection.replace(/^jsp-/, "");
+    leaveSearch(); state.q = ""; if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
+    if (TAB_SCOPE[tab]) state.scope = TAB_SCOPE[tab];
+    syncControls(); state.browse = browse; renderHome(); showList(); push();
+  }
+  // A verse someone linked to, read where you are; Open goes to the chapter.
+  async function peekPassage(res) {
+    const bodyEl = $(".sheet-body", sheet);
+    bodyEl.replaceChildren(el("div", { class: "status", text: "Opening…" }));
+    openSheet("Passage");
+    let ctx = null;
+    const start = Number(res.pid.slice(1)), end = res.pid_end && /^p\d+$/.test(res.pid_end) ? Number(res.pid_end.slice(1)) : start;
+    try { ctx = await api("context", { doc_id: res.doc_id, pid: res.pid, before: 0, after: Math.max(0, Math.min(12, end - start)) }); } catch (_) { ctx = null; }
+    if (sheet.hidden) return;
+    if (!ctx) { hideNote(); openDoc(res.doc_id, res.pid); return; }
+    const open = () => { hideNote(); openDoc(res.doc_id, res.pid); };
+    const verses = ctx.paragraphs.filter((x) => x.kind !== "heading");
+    bodyEl.replaceChildren(
+      el("div", { class: "nm", text: ctx.citation || res.title }),
+      el("div", { class: "peek" }, verses.map((x) => el("p", { class: x.kind === "verse" ? "verse" : "para" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean)))),
+      el("div", { class: "peek-row" }, [
+        el("button", { type: "button", class: "primary", text: `Open ${res.title}`, onclick: open }),
+        window.Deck ? el("button", { type: "button", class: "text-btn", text: "Add to deck", onclick: async () => {
+          try {
+            const doc = await api("doc", { id: res.doc_id });
+            const units = verses.filter((x) => x.kind === "verse" || x.kind === "para").map((x) => ({ pid: x.pid, kind: x.kind, verse: x.verse, text: x.text }));
+            const added = window.Deck.addFromDoc(doc, units);
+            toast(added === 0 ? "Already on the deck." : added === 1 ? "On the deck." : `${added} passages on the deck.`);
+          } catch (_) { toast("Could not add that just now."); }
+        } }) : null,
+      ].filter(Boolean)),
+    );
   }
   // A page the library does not hold: on the web, if there is a web
   function openOutside(url) {
@@ -1307,18 +1461,19 @@
     } else {
       bodyEl.replaceChildren(...[n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, sanitize(el("div", { html: n.html || esc(n.text) }))].filter(Boolean));
     }
+    openSheet("Footnote");
+  }
+  function openSheet(label) {
+    sheet.setAttribute("aria-label", label);
     sheet.hidden = false;
     if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: hideNote }); scrim.id = "scrim"; document.body.append(scrim); }
-    bodyEl.onclick = (e) => {
+    $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;
       e.preventDefault();
       const href = a.getAttribute("href") || "";
-      api("resolve", { href }).then((res) => {
-        hideNote();
-        if (res.found) openDoc(res.doc_id, res.pid);
-        else openOutside(href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href);
-      });
+      if (href.startsWith("#")) { hideNote(); focusParagraph(href.slice(1)); return; }
+      followLink(href);
     };
   }
   function hideNote() { sheet.hidden = true; $("#scrim")?.remove(); }
@@ -1328,7 +1483,7 @@
   input.addEventListener("input", () => {
     if (!state.ready) return;
     state.q = input.value;
-    if (!wide() && !readerPane.hidden) { state.docId = null; state.pid = null; showList(); }
+    if (!wide() && !readerPane.hidden) { state.docId = null; state.pid = null; state.studyId = null; showList(); }
     scheduleSearch();
   });
   $("#searchForm").addEventListener("submit", async (e) => {
@@ -1353,7 +1508,7 @@
     if (!state.ready) return;
     leaveSearch();
     state.q = "";
-    if (!wide()) { state.docId = null; state.pid = null; }
+    if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
     state.browse = { tab };
     syncControls(); renderHome(); showList(); push();
   }

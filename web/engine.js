@@ -828,18 +828,70 @@ function normalizeUri(uri) {
   return uri.replace(/\/+$/, "") || "/";
 }
 
+// Where a link leads inside the library: a page (and the paragraph on it), a whole book, or
+// nothing. The Church's pages write the same place several ways, and all of them should open
+// the local copy:
+//   /study/scriptures/bofm/alma/32?lang=eng&id=p21#p21      /study/scriptures/bofm/alma/32.21-27?lang=eng
+//   /study/manual/preach-my-gospel-2023/06-chapter-3?lang=eng&id=p12#p12
+//   /study/manual/preach-my-gospel-2023?lang=eng               (a book: its contents open)
+//   https://www.churchofjesuschrist.org/study/general-conference/2023/10/51nelson?lang=eng
+//   https://www.lds.org/scriptures/bofm/alma/32.21?lang=eng#20   (the old site: verses counted from 0)
+const CHURCH_HOST = /(^|\.)(churchofjesuschrist\.org|lds\.org)$/i;
 function resolve(href) {
   let u;
   try { u = new URL(href, "https://www.churchofjesuschrist.org"); } catch (_) { return { found: false, href }; }
-  const uri = normalizeUri(u.pathname);
-  let pid = null;
+  if (!CHURCH_HOST.test(u.hostname)) return { found: false, href };
+  let uri = normalizeUri(u.pathname);
+  let pid = null, pidEnd = null;
+  const span = (txt) => { // "p21-p27", "21-27", "p21,p23" -> the first and last paragraph named
+    const parts = String(txt || "").split(/[,;]/)[0].split("-").map((x) => x.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const norm = (x) => /^\d+$/.test(x) ? `p${x}` : x;
+    pid = norm(parts[0]);
+    if (parts.length > 1 && /^p?\d+$/.test(parts[parts.length - 1])) pidEnd = norm(parts[parts.length - 1]);
+  };
   const idp = u.searchParams.get("id");
-  if (idp) pid = idp.split(",")[0].split("-")[0];
-  if (!pid && u.hash) pid = u.hash.slice(1);
-  const r = row("SELECT d.id, d.uri, d.title, c.slug AS collection FROM documents d JOIN collections c ON c.id=d.collection_id WHERE d.uri=?", [uri]);
-  if (!r) return { found: false, href };
-  return { found: true, doc_id: r.id, uri: r.uri, title: r.title, pid, collection: r.collection };
+  if (idp) span(idp);
+  // a verse written into the path: alma/32.21-27
+  const m = uri.match(/^(.*\/[^/.]+)\.(\d+(?:-\d+)?)$/);
+  if (m && !row("SELECT 1 FROM documents WHERE uri=?", [uri])) { uri = m[1]; if (!pid) span(m[2]); }
+  if (!pid && u.hash) {
+    const h = decodeURIComponent(u.hash.slice(1));
+    if (/^\d+$/.test(h)) pid = /lds\.org$/i.test(u.hostname) ? `p${Number(h) + 1}` : `p${h}`;
+    else if (h) pid = h.split(/[,-]/)[0];
+  }
+  const find = (x) => row("SELECT d.id, d.uri, d.title, c.slug AS collection FROM documents d JOIN collections c ON c.id=d.collection_id WHERE d.uri=?", [x]);
+  const r = find(uri);
+  if (r) return { found: true, kind: "page", doc_id: r.id, uri: r.uri, title: r.title, pid, pid_end: pidEnd, collection: r.collection };
+  if (/^\/scriptures\/[^/]+\/[^/]+$/.test(uri)) { // a book of scripture: its chapters
+    const sb = S.bookForUri(uri);
+    if (sb && sb.book && !sb.chapter) return { found: true, kind: "book", collection: "scriptures", book_slug: sb.book.slug, title: sb.book.name };
+  }
+  const findBook = (x) => row("SELECT b.id, b.uri, b.title, c.slug AS collection FROM books b JOIN collections c ON c.id=b.collection_id WHERE b.uri=?", [x]);
+  const asBook = (b) => ({ found: true, kind: "book", book_id: b.id, book_uri: b.uri, title: b.title, collection: b.collection });
+  const b = findBook(uri);
+  if (b) return asBook(b);
+  // a section of a page the library holds under the page's own address (/manual/x/chapter/section),
+  // or a page of a book the library holds without that page: the book's contents open
+  let parent = uri.replace(/\/[^/]+$/, "");
+  if (parent.split("/").length >= 3) {
+    const pr = find(parent);
+    if (pr) return { found: true, kind: "page", doc_id: pr.id, uri: pr.uri, title: pr.title, pid: pid || uri.slice(parent.length + 1), pid_end: pidEnd, collection: pr.collection };
+  }
+  for (let up = parent; up.split("/").length >= 3; up = up.replace(/\/[^/]+$/, "")) {
+    const pb = findBook(up);
+    if (pb) return asBook(pb);
+  }
+  // an earlier edition of a book the library holds: the edition it holds opens
+  for (const [old, now] of EDITIONS) {
+    if (uri === old || uri.startsWith(old + "/")) { const nb = findBook(now); if (nb) return asBook(nb); }
+  }
+  return { found: false, href };
 }
+const EDITIONS = [
+  ["/manual/preach-my-gospel-a-guide-to-missionary-service", "/manual/preach-my-gospel-2023"],
+  ["/manual/missionary-standards-for-disciples-of-jesus-christ", "/manual/missionary-standards-for-disciples-of-jesus-christ-2023"],
+];
 
 function speakers(prefix) {
   let where = "WHERE c.slug='general-conference' AND d.author IS NOT NULL AND d.author != ''";

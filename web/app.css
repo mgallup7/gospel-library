@@ -411,6 +411,30 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 
 .scrim { position: fixed; inset: 0; z-index: 29; background: transparent; }
 
+/* a verse read in the sheet before (or instead of) going to its chapter */
+.sheet .peek { margin: 4px 0 10px; }
+.sheet .peek p { margin: 0 0 8px; font-size: var(--reading-size, 17px); line-height: 1.5; }
+.sheet .peek .vn { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink-3); margin-right: 6px; vertical-align: 2px; }
+.sheet .peek-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-family: var(--sans); }
+.sheet .peek-row .primary { height: 40px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 15px; }
+.sheet .peek-row .text-btn { height: 40px; font-size: 15px; }
+
+/* ---- my studies: a page of your own in a frame -------------------------- */
+.study-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: light dark; }
+#reader.has-study { overflow: hidden; }
+.studies-lede { font-size: 15px; line-height: 1.5; color: var(--ink-2); margin: 0 0 12px; }
+.studies-add { margin: 0 0 16px; }
+.study-list { border-top: 1px solid var(--rule); }
+.study-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--rule); }
+.study-row.on { background: var(--chrome); }
+.study-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 4px; text-align: left; }
+.study-open .t { font: 16px/1.35 var(--serif); }
+.study-open .s { font-size: 13px; color: var(--ink-2); }
+.study-remove { width: 40px; height: 40px; flex: none; color: var(--ink-3); font-size: 22px; border-radius: 8px; }
+.study-remove:active { background: var(--chrome-2); }
+.studies-add .primary { height: 44px; padding: 0 18px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+@media (max-width: 759px) { main:has(#reader.has-study) ~ .fab-think.over-reader { bottom: calc(18px + var(--safe-bottom)); } } /* no bottom bar under a study */
+
 /* ---- first-run setup and update banner ----------------------------- */
 .setup { max-width: 60ch; margin: 0 auto; padding: 40px 20px 60px; font-family: var(--serif); }
 body.first-run .bar, body.first-run #filters { display: none; }

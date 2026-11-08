@@ -46,6 +46,19 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Back, and survives a reload. In the home-screen app a swipe in from the
   left edge goes back and from the right edge forward (in Safari the
   browser's own swipe does the same).
+- Links stay in the app. A cross-reference, a footnote, a link from
+  Missionary Standards to Preach My Gospel, however the Church's page
+  writes the address (`alma/32?id=p21`, `alma/32.21-27`, a whole book, the
+  old lds.org form): if the library holds it, the local copy opens. A verse
+  shows first in a sheet where you are, with Open and Add to deck; a page or
+  a book opens in place. Only a page the library does not hold goes to the
+  web, and only online.
+- My studies: pages of your own, read inside the app. Add an HTML page (a
+  study built with Claude, say), a Markdown file or plain text from Files;
+  it is kept on the device, apart from the library, with its own look and
+  its own scripts intact in a sandboxed frame, and every link in it to the
+  scriptures or to a talk opens the library's copy. Think it through works
+  on it too.
 - The home screen: where you were (the last chapter or talk, the deck in
   progress), the shelves as tiles with what each holds, the latest
   conference, and a box to ask the library a question. Open a shelf and the
