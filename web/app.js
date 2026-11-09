@@ -1701,9 +1701,11 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   // projector, a TV over AirPlay, or a tablet turned toward the room.
   const stage = $("#stage");
   let show = null; // { units: [{pid, kind, html, verse}], i, doc }
+  const stageKicker = el("div", { class: "stage-kicker", hidden: true, text: "Question" });
+  stage.append(stageKicker);
 
   function presentUnits(doc) {
-    const scratch = el("div", { html: doc.body_html || "" });
+    const scratch = sanitize(el("div", { html: doc.body_html || "" })); // the same cleaning renderDoc gives the page
     const units = [];
     const jsp = !!(doc.collection && doc.collection.startsWith("jsp-"));
     let page = jsp ? pageOf(doc) : null; // the manuscript page a paragraph is on, kept with it on the stage
@@ -1774,6 +1776,18 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     stageClock = setInterval(tickStage, 1000);
   }
   stageTimer.addEventListener("click", () => { resetStageClock(); wakeControls(); });
+  // An iPad mirrored to a projector shows the room whatever the controls show: this hides the
+  // timer and the "Next:" line until it is pressed again, and the choice is remembered.
+  const speakerBtn = el("button", { type: "button", class: "stage-speaker", "aria-label": "Show the timer and the Next line", "aria-pressed": "true", title: "Timer and Next line: shown (hide them when the screen is mirrored)" });
+  speakerBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 2M10 3h4"/><path class="slash" d="M4 4l16 16"/></svg>`;
+  function setSpeakerLines(on) {
+    stage.classList.toggle("no-speaker", !on);
+    speakerBtn.setAttribute("aria-pressed", String(on));
+    speakerBtn.title = on ? "Timer and Next line: shown (hide them when the screen is mirrored)" : "Timer and Next line: hidden (tap to show them)";
+  }
+  speakerBtn.addEventListener("click", () => { const on = stage.classList.contains("no-speaker"); setSpeakerLines(on); store.set("stageSpeaker", on); wakeControls(); });
+  stageTimer.after(speakerBtn);
+  setSpeakerLines(store.get("stageSpeaker", true));
   // The first words of a passage, for the "Next:" line: plain text, without a verse's number.
   function firstWords(u, n = 6) {
     let t = u.text || new DOMParser().parseFromString(u.html || "", "text/html").body.textContent || "";
@@ -1837,7 +1851,11 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     body.classList.toggle("is-question", u.kind === "question");
     body.classList.toggle("is-note", u.kind === "note");
     body.classList.toggle("is-wide", u.kind === "link" || u.kind === "map");
-    $(".stage-text", stage).innerHTML = u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html;
+    // What goes on the stage is cleaned as renderDoc cleans the page: a deck card or an Ask passage is HTML too.
+    const clean = sanitize(el("div", { html: u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html }));
+    $(".stage-text", stage).replaceChildren(...clean.childNodes);
+    // A question wears a small kicker and a rule, as its PowerPoint slide does, so it never reads as a title.
+    stageKicker.hidden = u.kind !== "question";
     $(".stage-ref", stage).textContent = where;
     $(".stage-count", stage).textContent = `${show.i + 1} / ${show.units.length}`;
     $(".stage-prev", stage).disabled = show.i === 0;
