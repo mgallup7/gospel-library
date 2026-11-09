@@ -1173,6 +1173,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     try { list = await window.Marks.forDoc(doc.uri); } catch (_) { return; }
     if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
     for (const m of list) { docMarks.set(m.pid, m); drawMark(body, m); }
+    drawRanges(body);
   }
   function drawMark(body, m) {
     const unit = body.querySelector(`#${CSS.escape(m.pid)}`);
@@ -1183,8 +1184,31 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     unit.querySelector(".note-mark")?.remove();
     if (m.note) {
       unit.classList.add("noted");
-      unit.append(el("button", { type: "button", class: "note-mark", title: m.note.length > 80 ? m.note.slice(0, 78) + "…" : m.note, "aria-label": `Note: ${m.note.slice(0, 80)}`, html: ICON_NOTE, onclick: (e) => { e.preventDefault(); e.stopPropagation(); editNote(unitInfo(unit)); } }));
+      // the marker sits on the first verse of the note's range; the label says how far it reaches
+      const over = m.pid_end && m.citation ? ` on ${m.citation}` : "";
+      unit.append(el("button", { type: "button", class: "note-mark", title: m.note.length > 80 ? m.note.slice(0, 78) + "…" : m.note, "aria-label": `Note${over}: ${m.note.slice(0, 80)}`, html: ICON_NOTE, onclick: (e) => { e.preventDefault(); e.stopPropagation(); editNote(unitInfo(unit)); } }));
     } else unit.classList.remove("noted");
+  }
+  // The passages from one paragraph to another, in reading order (a note's range, a selection's span)
+  const UNIT_SEL = "p.verse, .body-block p[id], .body-block li[id]";
+  function unitsBetween(body, fromPid, toPid) {
+    const all = [...body.querySelectorAll(UNIT_SEL)];
+    const a = all.findIndex((n) => n.id === fromPid), b = all.findIndex((n) => n.id === toPid);
+    if (a < 0) return [];
+    return b < a ? [all[a]] : all.slice(a, b + 1);
+  }
+  // A note over several verses: a light bracket in the margin from its first verse to its last
+  function drawRanges(body) {
+    if (!body) return;
+    for (const n of body.querySelectorAll(".note-range")) n.classList.remove("note-range", "note-range-start", "note-range-end");
+    for (const m of docMarks.values()) {
+      if (!m.note || !m.pid_end) continue;
+      const span = unitsBetween(body, m.pid, m.pid_end);
+      if (span.length < 2) continue;
+      for (const n of span) n.classList.add("note-range");
+      span[0].classList.add("note-range-start");
+      span[span.length - 1].classList.add("note-range-end");
+    }
   }
   function undrawMark(body, pid) {
     const unit = body.querySelector(`#${CSS.escape(pid)}`);
@@ -1210,7 +1234,8 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     const allSame = units.every((u) => docMarks.get(u.pid)?.color === color);
     for (const u of units) {
       try {
-        const rec = await window.Marks.set({ uri: page.uri, doc_id: page.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: u.text, citation: citeUnit(u), title: page.title });
+        const ranged = !!docMarks.get(u.pid)?.pid_end; // a verse that opens a note's range keeps the range's words and citation
+        const rec = await window.Marks.set({ uri: page.uri, doc_id: page.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: ranged ? undefined : u.text, citation: ranged ? undefined : citeUnit(u), title: page.title });
         if (currentDoc !== page) return;
         if (rec) { docMarks.set(u.pid, rec); drawMark(body, rec); } else { docMarks.delete(u.pid); undrawMark(body, u.pid); }
       } catch (_) { toast("Could not save that mark."); return; }
@@ -1220,25 +1245,40 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     updateSelectBar();
     toast(allSame ? "Highlight removed." : units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
   }
-  // A note on a paragraph, written in the sheet
-  function editNote(unit) {
+  // A note on a passage, written in the sheet: one verse or paragraph, or a run of them (end is the
+  // last; an existing note brings its own range back). The note is kept on the first.
+  function editNote(unit, end = null) {
     if (!currentDoc || !window.Marks || !unit) return;
-    const existing = docMarks.get(unit.pid)?.note || "";
+    const old = docMarks.get(unit.pid) || null;
+    const existing = old?.note || "";
+    const body = $(".doc", readerPane);
+    if (!end && old?.pid_end) { const n = body?.querySelector(`#${CSS.escape(old.pid_end)}`); if (n) end = unitInfo(n); }
+    const span = end && end.pid !== unit.pid && body ? unitsBetween(body, unit.pid, end.pid).map(unitInfo) : [unit];
+    const last = span[span.length - 1];
+    const ranged = span.length > 1;
+    const cite = ranged && unit.kind === "verse" && last.kind === "verse" && currentDoc.citation ? `${chapterOf(currentDoc.citation)}:${unit.verse}-${last.verse}` : citeUnit(unit);
+    const words = span.map((x) => x.text).join(" ");
+    const page = currentDoc;
     const bodyEl = $(".sheet-body", sheet);
-    const ta = el("textarea", { class: "note-text", rows: 5, placeholder: "Your note on this passage…", "aria-label": "Note" });
+    const ta = el("textarea", { class: "note-text", rows: 5, placeholder: ranged ? "Your note on these passages…" : "Your note on this passage…", "aria-label": `Note on ${cite}` });
     ta.value = existing;
     const save = async () => {
       try {
-        const rec = await window.Marks.set({ uri: currentDoc.uri, doc_id: currentDoc.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, note: ta.value, text: unit.text, citation: citeUnit(unit), title: currentDoc.title });
-        const body = $(".doc", readerPane);
-        if (rec) { docMarks.set(unit.pid, rec); if (body) drawMark(body, rec); } else { docMarks.delete(unit.pid); if (body) undrawMark(body, unit.pid); }
+        const keep = !!ta.value.trim();
+        const rec = await window.Marks.set({ uri: page.uri, doc_id: page.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, note: ta.value,
+          pid_end: keep && ranged ? last.pid : null, verse_end: keep && ranged ? last.verse : null,
+          text: keep ? words : unit.text, citation: keep ? cite : citeUnit(unit), title: page.title });
+        if (currentDoc !== page) { closeSheet(); return; }
+        const b = $(".doc", readerPane);
+        if (rec) { docMarks.set(unit.pid, rec); if (b) drawMark(b, rec); } else { docMarks.delete(unit.pid); if (b) undrawMark(b, unit.pid); }
+        drawRanges(b);
         closeSheet(); updateSelectBar(); // the selection stays, for a color or Add to deck after the note
-        toast(ta.value.trim() ? "Note saved." : "Note removed.");
+        toast(keep ? "Note saved." : "Note removed.");
       } catch (_) { toast("Could not save the note."); }
     };
     bodyEl.replaceChildren(
-      el("div", { class: "nm", text: `Note on ${citeUnit(unit)}` }),
-      el("p", { class: "note-passage", text: unit.text.length > 180 ? unit.text.slice(0, 178) + "…" : unit.text }),
+      el("div", { class: "nm", text: `Note on ${cite}` }),
+      el("p", { class: "note-passage", text: words.length > 180 ? words.slice(0, 178) + "…" : words }),
       ta,
       el("div", { class: "peek-row" }, [
         el("button", { type: "button", class: "primary", text: "Save", onclick: save }),
@@ -1474,7 +1514,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       bar = el("div", { class: "select-bar" }, [
         el("span", { class: "n" }),
         window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
-        window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the first selected passage", onclick: () => { const u = selectedUnits()[0]; if (u) editNote(u); } }) : null,
+        window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the selected passages, first to last", onclick: () => { const u = selectedUnits(); if (u.length) editNote(u[0], u.length > 1 ? u[u.length - 1] : null); } }) : null,
         el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
           const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
           clearSelection();

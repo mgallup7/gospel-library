@@ -613,6 +613,12 @@ body.presenting { overflow: hidden; }
 .doc .sel { background: color-mix(in srgb, var(--accent) 9%, var(--paper)); box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 9%, var(--paper)), inset 3px 0 0 var(--accent); border-radius: 2px; position: relative; }
 .doc .sel::before { content: "✓"; position: absolute; left: -24px; top: .2em; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 700 12px/18px var(--sans); text-align: center; }
 .doc .sel.is-target { background: color-mix(in srgb, var(--accent) 9%, var(--target)); }
+/* a note over several verses: a light bracket in the right margin from its first verse to its last */
+.doc .note-range { position: relative; }
+.doc .note-range::after { content: ""; position: absolute; right: -11px; top: -.3em; bottom: -.3em; width: 4px; border-right: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); pointer-events: none; }
+.doc p.hl.note-range::after, .doc li.hl.note-range::after { right: -5px; } /* the same line whether or not the verse is colored */
+.doc .note-range-start::after { top: .25em; border-top: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-top-right-radius: 3px; }
+.doc .note-range-end::after { bottom: .25em; border-bottom: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-bottom-right-radius: 3px; }
 /* a selection kept after a color shows the color under it */
 .doc .sel.hl-y { background: var(--hl-y); } .doc .sel.hl-g { background: var(--hl-g); } .doc .sel.hl-b { background: var(--hl-b); } .doc .sel.hl-p { background: var(--hl-p); }
 .select-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 6px; padding: 10px 14px calc(10px + var(--safe-bottom)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
