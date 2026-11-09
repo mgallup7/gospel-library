@@ -305,8 +305,10 @@ LIBRARY_PASSPHRASE=test .venv/bin/python -m gospel_library bundle --out data/bun
 .venv/bin/python -m gospel_library discover /manual            # see what the site offers under a URI
 ```
 
-The JavaScript has tests of its own: `node --test tests/js/*.test.mjs` checks
-that the browser's parsers (`web/lib/scriptures.js`, `web/lib/query.js`) read
+The JavaScript has tests of its own: `node --test tests/js/*.test.mjs` parses
+every file under `web/` and `web/lib/` as the module it is loaded as (plain
+`node --check` reads a `.js` file as a script and lets a duplicate declaration
+through), checks that the browser's parsers (`web/lib/scriptures.js`, `web/lib/query.js`) read
 references and queries exactly as the Python ones do (against
 `tests/fixtures/parsers.json`, frozen from the Python side), and
 `tests/js/browser/run.mjs` drives the app itself in Chromium at iPad and
