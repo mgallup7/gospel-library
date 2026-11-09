@@ -50,7 +50,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // still selected: Add to deck carries the color and the note
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(600);
-    const card = await page.evaluate(() => { const d = JSON.parse(localStorage.getItem("gospel.deck") || "{}"); return (d.items || []).find((i) => i.pid === "p21") || null; });
+    const card = await page.evaluate(() => { return window.Deck.state.items.find((i) => i.pid === "p21") || null; });
     check(card && card.color === "y", `the card should carry the reader's yellow: ${card && card.color}`);
     check(card && /Two verses, one note\./.test(card.notes || ""), `the range note should be the card's speaker note: ${card && card.notes}`);
     check(card && Array.isArray(card.hl) && card.hl.length === 0, "the card's phrase highlights (and so the PowerPoint) are unchanged");

@@ -311,10 +311,10 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     hideNote(); if (!stage.hidden) stopPresenting();
     const left = { doc: state.docId, pid: state.pid };
     readUrl(); syncControls();
-    if (keepTyped !== null) { input.value = keepTyped; keepTyped = null; } // a letter still in the box after a search too short to run
+    if (typedLeft !== null) { input.value = typedLeft; typedLeft = null; } // a letter still in the box after a search too short to run
     render({ restore: history.state?.scroll || null }).then(() => focusAfterBack(left), () => {});
   });
-  let keepTyped = null;
+  let typedLeft = null;
   // On a phone Back swaps the whole screen and the focus went with it: it lands on the row of the
   // page just left when the list has one, else on the list's own Back.
   function focusAfterBack(left) {
@@ -625,7 +625,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (q.length < 2) {
       leaveSearch(); state.q = ""; state.view = null;
       // the search was a step from that place: step back to it rather than leave it in history twice
-      if (!silent && here() > 0 && history.state?.place === "search" && history.state?.prevUrl === urlFor()) { keepTyped = input.value; history.back(); return; }
+      if (!silent && here() > 0 && history.state?.place === "search" && history.state?.prevUrl === urlFor()) { typedLeft = input.value; history.back(); return; }
       renderHome(); if (!silent) { push(true); setEntry({ place: placeNow(), label: labelNow() }); }
       return;
     }
@@ -2216,6 +2216,10 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   let stageOpener = null;
   function openStage(next) {
     show = { ...next, scale: store.get("stageScale", 1) };
+    // A sheet still up goes first, so its inert set (which holds the stage) is undone before the
+    // stage makes its own; its marker entry becomes the stage's, so one Back closes the stage.
+    if (overlay === "sheet") { hideNote(); overlay = "stage"; history.replaceState({ ...(history.state || {}), overlay: "stage" }, "", location.href); }
+    else if (!sheet.hidden) hideNote();
     openOverlay("stage");
     resetStageClock();
     stageOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
@@ -2224,6 +2228,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     stage.classList.toggle("themed", !!next.theme);
     for (const k of ["bg", "fg", "accent", "muted"]) stage.style.setProperty(`--stage-${k}`, next.theme?.[k] || "");
     stage.hidden = false;
+    inertBehind(stage, true);
     updateThinkFab();
     renderStage();
     stage.tabIndex = -1;
@@ -2239,6 +2244,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     show = null;
     clearInterval(stageClock); stageClock = null;
     stage.hidden = true;
+    inertBehind(stage, false); // Escape, Close, Back and leaving full screen all come through here
     stage.classList.remove("blank");
     updateThinkFab();
     stage.classList.remove("themed");

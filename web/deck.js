@@ -321,6 +321,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   function addSection(title) {
     const item = { id: uid(), type: "section", title: String(title || "").trim() };
     deck.items.push(item);
+    selectedId = item.id; // a question added next (addCard goes after the selected card) lands under it
     save();
     return item;
   }
@@ -496,7 +497,8 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   }
   function summaryText() {
     const n = count(), l = deck.links.length;
-    if (!n) return "Nothing on the deck yet.";
+    // a deck of questions or slide text alone is not empty, so it does not say so
+    if (!n) { const k = deck.items.length; return k ? `${k} ${k === 1 ? "card" : "cards"}, no passages yet.` : "Nothing on the deck yet."; }
     return `${n} ${n === 1 ? "passage" : "passages"}${l ? `, ${l} ${l === 1 ? "connection" : "connections"}` : ""}.`;
   }
 
@@ -679,13 +681,15 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   function speakerNotes(s, it) { const text = (it.notes || "").trim(); if (text) { try { s.addNotes(text); } catch (_) {} } }
   // A question or slide text (kind "note" in the data, so saved decks still load): a slide of its
   // own, with words the teacher writes. It goes in after the card last touched, or at the end.
-  function addCard(type) {
+  // focus: the board's own buttons put the cursor in the new card; a card sent from Ask or a word
+  // sheet leaves focus on the button that sent it.
+  function addCard(type, { focus = true } = {}) {
     const item = { id: uid(), type, text: "", notes: "" };
     const at = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
     if (at >= 0) deck.items.splice(at + 1, 0, item); else deck.items.push(item);
     selectedId = item.id;
     save();
-    requestAnimationFrame(() => { const ta = ui && ui.cards.querySelector(`.bcard[data-id="${item.id}"] textarea`); if (ta) ta.focus(); });
+    if (focus) requestAnimationFrame(() => { const ta = ui && ui.cards.querySelector(`.bcard[data-id="${item.id}"] textarea`); if (ta) ta.focus(); });
     return item;
   }
   // Speaker notes on any card: what to say, folded away until wanted; they travel into the PowerPoint
@@ -1953,9 +1957,9 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
     // a question card with its words written (Ask's Think it through): addCard, then the text
-    addQuestion: (text) => { const it = addCard("question"); it.text = String(text || "").trim(); lastAddedIds = [it.id]; save(); return it; },
+    addQuestion: (text) => { const it = addCard("question", { focus: false }); it.text = String(text || "").trim(); lastAddedIds = [it.id]; save(); return it; },
     // a note card with its words already written (a Hebrew or Greek word from its sheet); Undo takes it off by its id
-    addNote: (text, notes = "") => { const it = addCard("note"); it.text = String(text || ""); it.notes = String(notes || ""); lastAddedIds = [it.id]; save(); return it; },
+    addNote: (text, notes = "") => { const it = addCard("note", { focus: false }); it.text = String(text || ""); it.notes = String(notes || ""); lastAddedIds = [it.id]; save(); return it; },
   };
   updateBadge();
 })();
