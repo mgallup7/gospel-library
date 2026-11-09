@@ -21,7 +21,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
         await page.waitForTimeout(700);
         const jump = await page.$("#list .jump"); if (jump && await jump.isVisible()) await jump.click();
         await page.waitForFunction((t) => document.querySelector("#reader .doc h1")?.textContent.includes(t), ref, { timeout: 15000 });
-        if (!(await page.$("#reader .orig .ow"))) {
+        // the tiles come back by themselves once shown (the choice is remembered); give them a moment first
+        if (!(await page.waitForSelector("#reader .orig .ow", { timeout: 3000 }).catch(() => null))) {
           const top = await page.$("#reader .reader-bar .orig-btn");
           if (top && await top.isVisible()) await top.click(); else await page.click("#reader .reader-foot .foot-btn[aria-label='Hebrew']");
         }
