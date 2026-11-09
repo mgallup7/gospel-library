@@ -176,8 +176,91 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await ctx.close();
   }
   function location(h) { return h || ""; }
+
+  // Markdown and text studies in the library's flow: plain references become links (not in code),
+  // #anchors and heading ids work, a .txt links its addresses, an empty file is refused, a search
+  // finds a study's words and opens it at the nearest heading, and a chapter a study links to says so.
+  const filler = Array.from({ length: 40 }, (_, i) => `Line ${i + 1} of the notes, kept here so the page is long enough to scroll.`).join("\n\n");
+  fs.writeFileSync(OUT + "faith-notes.md", `# Faith notes\n\n## The seed\nAlma compares the word to a seed in Alma 32:28, and see [the harvest](#the-harvest).\n\n\`\`\`\nAlma 32:21 inside a code block\n\`\`\`\n\n${filler}\n\n## The harvest\nNourish the tree with patience, Alma 32:41-43.\n\n${filler}\n`);
+  fs.writeFileSync(OUT + "plain-notes.txt", "Plain notes\n\nRead Moroni 10:4 tonight.\nThe chapter: https://www.churchofjesuschrist.org/study/scriptures/bofm/moro/10?lang=eng\n");
+  fs.writeFileSync(OUT + "empty.txt", "  \n");
+  async function notes(name, viewport) {
+    const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+    const page = await ctx.newPage();
+    const check = (cond, msg) => { if (!cond) errors.push(`${name} notes: ${msg}`); };
+    page.on("pageerror", (e) => errors.push(`${name} notes: ${e}`));
+    const shot = (label) => page.screenshot({ path: `${OUT}${name}-notes-${label}.png` });
+    await page.goto(BASE);
+    await page.fill("div.setup input", PASS);
+    await page.press("div.setup input", "Enter");
+    await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
+    await page.click("#homeBody .shelf-tile:has-text('My studies')");
+    await page.waitForSelector(".studies-add .primary");
+    // an empty file is refused, with a word why
+    await page.setInputFiles("#homeBody input[type=file]", OUT + "empty.txt");
+    await page.waitForSelector(".toast", { timeout: 5000 });
+    check(/empty/.test(await page.textContent(".toast")), `empty file toast: ${await page.textContent(".toast")}`);
+    check(await page.evaluate(async () => (await window.Studies.list()).length) === 0, "the empty file was kept");
+    // the Markdown study
+    await page.setInputFiles("#homeBody input[type=file]", OUT + "faith-notes.md");
+    await page.waitForSelector("#reader .study-frame", { timeout: 20000 });
+    await page.waitForTimeout(800);
+    const fr = page.frameLocator("#reader .study-frame");
+    check(await fr.locator("h2#the-seed").count() === 1 && await fr.locator("h2#the-harvest").count() === 1, "headings have no ids");
+    check(await fr.locator("a", { hasText: /^Alma 32:28$/ }).count() === 1, "Alma 32:28 is not a link");
+    check(await fr.locator("a", { hasText: /^Alma 32:41-43$/ }).count() === 1, "Alma 32:41-43 is not a link");
+    check(await fr.locator("pre a").count() === 0, "a reference inside a code block was linked");
+    check(await fr.locator('a[href="#the-harvest"]').count() === 1, "the #anchor link was dropped");
+    await shot("01-markdown");
+    await fr.locator("a", { hasText: /^Alma 32:28$/ }).click();
+    await page.waitForSelector("#sheet:not([hidden]) .peek p", { timeout: 8000 });
+    check(/Alma 32:28/.test(await page.textContent("#sheet .nm")), `reference opened ${await page.textContent("#sheet .nm")}`);
+    await shot("02-reference-peek");
+    await page.click("#sheet .close");
+    const frame = page.frames().find((f) => f.url().startsWith("blob:"));
+    await fr.locator('a[href="#the-harvest"]').click();
+    await page.waitForTimeout(400);
+    check(await frame.evaluate(() => window.scrollY) > 400, "the #anchor did not scroll");
+    // the text study: its address and its reference are links, its lines kept
+    await page.click("#homeBtn");
+    await page.waitForSelector("#homeBody .shelf-grid");
+    await page.click("#homeBody .shelf-tile:has-text('My studies')");
+    await page.waitForSelector(".studies-add .primary");
+    await page.setInputFiles("#homeBody input[type=file]", OUT + "plain-notes.txt");
+    await page.waitForSelector("#reader .study-frame", { timeout: 20000 });
+    await page.waitForTimeout(800);
+    const tf = page.frameLocator("#reader .study-frame");
+    check(await tf.locator("pre.plain a").count() === 2, `text study links: ${await tf.locator("pre.plain a").count()}`);
+    await shot("03-text");
+    // a search finds the study's words and opens it at the nearest heading
+    await page.fill("#q", "nourish patience"); await page.press("#q", "Enter");
+    await page.waitForSelector("#list .studies-hits .study-hit", { timeout: 8000 });
+    const where = await page.textContent("#list .studies-hits .study-hit .where");
+    check(/The harvest/.test(where), `study hit says ${where}`);
+    check(/<b>Nourish<\/b>/i.test(await page.innerHTML("#list .studies-hits .study-hit .snip")), "the words are not marked in the snippet");
+    await shot("04-search");
+    await page.click("#list .studies-hits .study-hit");
+    await page.waitForSelector("#reader .study-frame", { timeout: 8000 });
+    await page.waitForTimeout(1200);
+    const f2 = page.frames().find((f) => f.url().startsWith("blob:"));
+    const top = await f2.evaluate(() => document.getElementById("the-harvest").getBoundingClientRect().top);
+    check(Math.abs(top) < 60, `the study did not open at The harvest (top ${top})`);
+    await shot("05-opened-at-heading");
+    // the chapter the study links to says so under its title
+    await page.fill("#q", "Alma 32"); await page.press("#q", "Enter");
+    await page.waitForTimeout(700);
+    const jump = await page.$("#list .jump"); if (jump && await jump.isVisible()) await jump.click();
+    await page.waitForSelector("#reader .doc .in-studies", { timeout: 10000 });
+    check(/In your studies: Faith notes/.test(await page.textContent("#reader .doc .in-studies")), `chapter line: ${await page.textContent("#reader .doc .in-studies")}`);
+    await shot("06-chapter-line");
+    await page.click("#reader .doc .in-studies button");
+    await page.waitForSelector("#reader .study-frame", { timeout: 8000 });
+    await ctx.close();
+  }
+
   for (const [name, vp] of [["ipad", { width: 1180, height: 820 }], ["iphone", { width: 393, height: 852 }]]) {
     try { await session(name, vp); } catch (e) { errors.push(`${name} aborted: ${e.message.split("\n")[0]}`); }
+    try { await notes(name, vp); } catch (e) { errors.push(`${name} notes aborted: ${e.message.split("\n")[0]}`); }
   }
   return errors;
 }

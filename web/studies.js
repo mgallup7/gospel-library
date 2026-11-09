@@ -10,6 +10,7 @@
    A small script added to the page hands its links to the web over to the app, which
    resolves them against the library (app.js followLink). */
 import { markdown as renderMarkdown } from "./lib/markdown.js";
+import { findReferences } from "./lib/refs.js";
 
 (() => {
   "use strict";
@@ -35,8 +36,11 @@ import { markdown as renderMarkdown } from "./lib/markdown.js";
   }
   const list = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.added - a.added).map(meta); } catch (_) { return []; } };
   const get = (id) => tx("readonly", (s) => s.get(id));
-  const put = (rec) => tx("readwrite", (s) => s.put(rec));
-  const remove = (id) => tx("readwrite", (s) => s.delete(id));
+  // the app keeps what it read from the studies (their words for search, the chapters they link to)
+  // until this says they changed
+  const changed = () => window.dispatchEvent(new Event("studies:change"));
+  const put = async (rec) => { const r = await tx("readwrite", (s) => s.put(rec)); changed(); return r; };
+  const remove = async (id) => { const r = await tx("readwrite", (s) => s.delete(id)); changed(); return r; };
   const meta = ({ id, title, kind, added, size, source }) => ({ id, title, kind, added, size, source });
 
   // ---- taking a file in -------------------------------------------------
@@ -44,6 +48,7 @@ import { markdown as renderMarkdown } from "./lib/markdown.js";
     if (!file) throw new Error("No file was chosen.");
     if (file.size > MAX_BYTES) throw new Error(`That file is ${mb(file.size)}; pages up to ${mb(MAX_BYTES)} can be added.`);
     const text = await file.text();
+    if (!text.trim()) throw new Error(`“${file.name || "That file"}” is empty; there is nothing in it to add.`);
     const name = file.name || "page";
     const ext = (name.match(/\.([a-z0-9]+)$/i) || [, ""])[1].toLowerCase();
     const looksHtml = /^\s*(<!doctype html|<html|<head|<body|<div|<article|<section|<p|<h1)/i.test(text) || ext === "html" || ext === "htm";
@@ -85,7 +90,8 @@ document.addEventListener("click",function(e){
   if(/^(https?:)?\\/\\//i.test(h)||h.indexOf("/study/")===0||h.indexOf("/scriptures/")===0||h.indexOf("/")===0){ e.preventDefault(); e.stopPropagation(); parent.postMessage({type:"gospel:link",href:h},"*"); }
 },true);
 var t=null; addEventListener("scroll",function(){clearTimeout(t);t=setTimeout(function(){parent.postMessage({type:"gospel:scroll",y:scrollY},"*");},150);},{passive:true});
-addEventListener("message",function(e){if(e.data&&e.data.type==="gospel:scrollTo")scrollTo(0,e.data.y||0);});
+addEventListener("message",function(e){if(e.data&&e.data.type==="gospel:scrollTo")scrollTo(0,e.data.y||0);
+  if(e.data&&e.data.type==="gospel:anchor"){var t=document.getElementById(String(e.data.id||""));if(t){var d=t.closest("details");if(d)d.open=true;t.scrollIntoView({block:"start"});}}});
 })();</script>`;
   function frameHtml(rec) {
     if (rec.kind === "html") {
@@ -94,7 +100,7 @@ addEventListener("message",function(e){if(e.data&&e.data.type==="gospel:scrollTo
       if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + "<head>" + HANDOFF + "</head>");
       return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${HANDOFF}</head><body>${html}</body></html>`;
     }
-    const body = rec.kind === "md" ? markdown(rec.text || "") : `<pre class="plain">${esc(rec.text || "")}</pre>`;
+    const body = bodyOf(rec);
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">${HANDOFF}
 <style>
 :root{color-scheme:light dark;--bg:#fbfaf7;--ink:#1d1f22;--ink2:#5b6068;--accent:#2e5aac;--rule:#e2e0d9}
@@ -119,5 +125,66 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
     return (doc.body ? doc.body.textContent : "").replace(/\s+/g, " ").trim();
   }
 
-  window.Studies = { list, get, add, remove, frameHtml, plainText, mb };
+  // A Markdown or text page as HTML, with its plain references and web addresses made links: a
+  // .txt keeps its lines (pre-wrap) but is no longer a dead block of text.
+  function bodyOf(rec) {
+    const html = rec.kind === "md" ? markdown(rec.text || "") : `<pre class="plain">${esc(rec.text || "")}</pre>`;
+    return linkify(html);
+  }
+  const URL_RE = /\bhttps?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)\]]/g;
+  // Every reference ("Alma 32:21") and web address in the words of the page becomes a link, the
+  // way a link written by hand would be; nothing inside a link already, or in code, is touched.
+  function linkify(html) {
+    const doc = new DOMParser().parseFromString(`<!doctype html><body>${html}`, "text/html");
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.parentElement.closest("a, code, script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      const text = node.nodeValue;
+      const spans = [];
+      for (const m of text.matchAll(URL_RE)) spans.push({ start: m.index, end: m.index + m[0].length, href: m[0] });
+      for (const r of findReferences(text)) if (!spans.some((s) => r.start < s.end && s.start < r.end)) spans.push(r);
+      if (!spans.length) continue;
+      spans.sort((a, b) => a.start - b.start);
+      const frag = doc.createDocumentFragment();
+      let last = 0;
+      for (const s of spans) {
+        frag.append(text.slice(last, s.start));
+        const a = doc.createElement("a");
+        a.href = s.href;
+        a.textContent = text.slice(s.start, s.end);
+        frag.append(a);
+        last = s.end;
+      }
+      frag.append(text.slice(last));
+      node.replaceWith(frag);
+    }
+    return doc.body.innerHTML;
+  }
+  // What the app keeps of a study to search it and to know which chapters it links to: its words,
+  // its headings (where each begins in the words, and its id, so a match opens at the nearest one)
+  // and its links (each with where it sits in the words).
+  function index(rec) {
+    const html = rec.kind === "html" ? rec.html || "" : bodyOf(rec);
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    for (const junk of doc.querySelectorAll("script, style, noscript, template")) junk.remove();
+    let text = "";
+    const anchors = [], links = [];
+    const walker = doc.createTreeWalker(doc.body || doc.documentElement, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      if (n.nodeType === 3) {
+        const t = n.nodeValue.replace(/\s+/g, " ");
+        if (t.trim()) text += !text ? t.trimStart() : (!text.endsWith(" ") && !t.startsWith(" ") ? " " : "") + t;
+        continue;
+      }
+      if (/^H[1-6]$/.test(n.tagName)) {
+        const holder = n.id ? n : n.closest("[id]");
+        if (holder && holder.id) anchors.push({ at: text.length, id: holder.id, label: n.textContent.replace(/\s+/g, " ").trim().slice(0, 80) });
+      } else if (n.tagName === "A" && n.getAttribute("href")) links.push({ href: n.getAttribute("href"), at: text.length });
+    }
+    return { id: rec.id, title: rec.title, kind: rec.kind, text, anchors, links };
+  }
+
+  window.Studies = { list, get, add, remove, frameHtml, plainText, mb, index };
 })();

@@ -695,6 +695,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     listPane.scrollTop = 0;
     markActive();
     updateThinkFab();
+    studiesInResults(data);
   }
   function scopeLabel() { return state.scope === "all" ? "" : ` in ${SCOPE_NAME[state.scope] || state.scope}`; }
 
@@ -1142,6 +1143,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     });
     highlightTerms(body);
     applyMarks(doc, body);
+    showInStudies(doc, body);
   }
 
   // A citation for a Joseph Smith Papers page, in the Papers' own form, with the manuscript page
@@ -1258,8 +1260,12 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   // the app); its links come back to the app, which opens the local copy.
   let currentStudy = null, studyScroll = 0, studyUrl = null;
   function releaseStudyUrl() { if (studyUrl) { try { URL.revokeObjectURL(studyUrl); } catch (_) {} studyUrl = null; } }
-  async function openStudy(id, { push: doPush = true, scroll = 0 } = {}) {
+  let studyAnchor = null; // a heading to open the study at (from a match in the results), once
+  async function openStudy(id, { push: doPush = true, scroll = 0, anchor = null } = {}) {
     if (!id || !window.Studies) return;
+    const frameNow = currentStudy && currentStudy.id === id ? readerPane.querySelector(".study-frame") : null;
+    if (anchor && frameNow) frameNow.contentWindow?.postMessage({ type: "gospel:anchor", id: anchor }, "*");
+    studyAnchor = frameNow ? null : anchor;
     state.docId = null; state.pid = null; state.studyId = id;
     currentDoc = null;
     if (doPush) { push(); paneView = "page"; }
@@ -1292,7 +1298,10 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     releaseStudyUrl();
     studyUrl = URL.createObjectURL(new Blob([window.Studies.frameHtml(rec)], { type: "text/html;charset=utf-8" }));
     frame.src = studyUrl;
-    frame.addEventListener("load", () => { if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*"); });
+    frame.addEventListener("load", () => {
+      if (studyAnchor) { frame.contentWindow?.postMessage({ type: "gospel:anchor", id: studyAnchor }, "*"); studyAnchor = null; }
+      else if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*");
+    });
     readerPane.replaceChildren(bar, frame);
     readerPane.classList.add("has-study");
     refreshSwitches();
@@ -1353,6 +1362,96 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     }
     body.append(rows);
     await renderMarks(body);
+  }
+
+  // ---- My studies in the library's flow ---------------------------------------
+  // The studies are read once (their words, headings and links, studies.js index) and kept in
+  // memory until one is added or removed: a search looks in their words, and a chapter one of
+  // them links to says so under its title.
+  let studyIndexP = null, studyLinksP = null;
+  window.addEventListener("studies:change", () => { studyIndexP = null; studyLinksP = null; });
+  function studiesIndex() {
+    if (!studyIndexP) studyIndexP = (async () => {
+      const out = [];
+      for (const m of (window.Studies ? await window.Studies.list() : [])) {
+        try { const rec = await window.Studies.get(m.id); if (rec) { const x = window.Studies.index(rec); x.lower = x.text.toLowerCase(); out.push(x); } } catch (_) {}
+      }
+      return out;
+    })();
+    return studyIndexP;
+  }
+  const nearestAnchor = (s, at) => { let a = null; for (const x of s.anchors) { if (x.at <= at) a = x; else break; } return a; };
+  // Results: up to three studies that have every word typed, each with the words around the first
+  // match, opening at the heading nearest it.
+  async function studiesInResults(data) {
+    if (!window.Studies || data.typeahead && state.q.trim().length < 3) return;
+    const terms = [...new Set((state.terms.length ? state.terms : termsFrom(data.query || "")).map((t) => t.toLowerCase().replace(/^["'(]+|["')]+$/g, "")).filter((t) => t.length >= 2))];
+    if (!terms.length) return;
+    let idx;
+    try { idx = await studiesIndex(); } catch (_) { return; }
+    if (!idx.length || state.lastSearch !== data || state.view === "all") return;
+    const wordAt = (lower, t, from = 0) => { const re = new RegExp(`(^|[^\\p{L}\\p{N}])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "giu"); re.lastIndex = from; const m = re.exec(lower); return m ? m.index + m[1].length : -1; };
+    const found = [];
+    for (const s of idx) {
+      const first = terms.map((t) => wordAt(s.lower, t));
+      if (first.some((i) => i < 0)) continue;
+      let n = 0;
+      for (const t of terms) { let i = -1, k = 0; while (k < 50 && (i = wordAt(s.lower, t, i + 1)) >= 0) { n++; k++; } }
+      found.push({ s, at: Math.min(...first), n });
+    }
+    if (!found.length) return;
+    found.sort((a, b) => b.n - a.n);
+    const mark = (text) => { let h = esc(text); for (const t of terms) h = h.replace(new RegExp(`(^|[^\\p{L}\\p{N}])(${esc(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\p{L}\\p{N}]*)`, "giu"), "$1<b>$2</b>"); return h; };
+    const group = el("div", { class: "studies-hits" }, [el("div", { class: "group-title", text: "In your studies" })]);
+    for (const { s, at } of found.slice(0, 3)) {
+      const a = nearestAnchor(s, at);
+      const from = Math.max(0, s.text.lastIndexOf(" ", Math.max(0, at - 70)) + 1), to = Math.min(s.text.length, at + 130);
+      const snip = (from > 0 ? "…" : "") + s.text.slice(from, to).replace(/\s+\S*$/, "") + (to < s.text.length ? "…" : "");
+      group.append(el("button", { type: "button", class: "hit study-hit", onclick: () => openStudy(s.id, { anchor: a ? a.id : null }) }, [
+        el("div", { class: "cite" }, [el("span", { text: s.title }), el("span", { class: "where", text: a ? `My studies · ${a.label}` : "My studies" })]),
+        el("div", { class: "snip", html: mark(snip) }),
+      ]));
+    }
+    if (state.lastSearch !== data || !listPane.isConnected) return;
+    listPane.querySelector(".studies-hits")?.remove();
+    // after the title matches, before the passages
+    const before = [...listPane.querySelectorAll(".group-title, .empty, .best, .hit-row, .more")].find((n) => n.textContent !== "By title" && !n.closest(".studies-hits"));
+    if (before) before.before(group); else listPane.append(group);
+  }
+  // Chapters the studies link to: each study's links resolved once, as the library resolves a link
+  // pressed in the study, to the page that would open.
+  function studyLinks() {
+    if (!studyLinksP) studyLinksP = (async () => {
+      const map = new Map(), seen = new Map();
+      for (const s of await studiesIndex()) {
+        const mine = new Set();
+        for (const l of s.links.slice(0, 800)) {
+          const url = l.href.startsWith("/") ? "https://www.churchofjesuschrist.org" + l.href : l.href;
+          if (!CHURCH.test(url)) continue;
+          const key = url.replace(/[?#].*$/, "").replace(/\.\d+(-\d+)?$/, "");
+          let r = seen.get(key);
+          if (r === undefined) { try { r = await api("resolve", { href: url }); } catch (_) { r = null; } seen.set(key, r); }
+          if (!r || !r.found || !r.doc_id || mine.has(r.doc_id)) continue;
+          mine.add(r.doc_id);
+          const a = nearestAnchor(s, l.at);
+          (map.get(r.doc_id) || map.set(r.doc_id, []).get(r.doc_id)).push({ id: s.id, title: s.title, anchor: a ? a.id : null });
+        }
+      }
+      return map;
+    })();
+    return studyLinksP;
+  }
+  // "In your studies: The Second Coming" under the title of a chapter a study links to
+  async function showInStudies(doc, body) {
+    if (!window.Studies || !doc) return;
+    let list;
+    try { list = (await studyLinks()).get(doc.id); } catch (_) { return; }
+    if (!list || !body.isConnected || currentDoc?.id !== doc.id || body.querySelector(".in-studies")) return;
+    const line = el("p", { class: "subtitle in-studies" }, [el("span", { text: "In your studies: " })]);
+    list.slice(0, 4).forEach((s, i) => line.append(i ? ", " : "", el("button", { type: "button", class: "text-btn small inline", text: s.title, onclick: () => openStudy(s.id, { anchor: s.anchor }) })));
+    if (list.length > 4) line.append(` and ${list.length - 4} more`);
+    const head = body.querySelector("header");
+    if (head) head.append(line); else body.prepend(line);
   }
 
   // Highlights and notes across the library, newest first (the latest few, or all of them on request),

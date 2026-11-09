@@ -48,7 +48,7 @@ test("the quotation check on its own", () => {
 });
 
 test("page: headings at their own level, and only three of them", () => {
-  assert.equal(page("# Title\n## Sub\n### Third\n#### Fourth"), "<h1>Title</h1>\n<h2>Sub</h2>\n<h3>Third</h3>\n<p>#### Fourth</p>");
+  assert.equal(page("# Title\n## Sub\n### Third\n#### Fourth"), '<h1 id="title">Title</h1>\n<h2 id="sub">Sub</h2>\n<h3 id="third">Third</h3>\n<p>#### Fourth</p>');
   assert.equal(page("Para one\n  continues here\n\nPara two"), "<p>Para one continues here</p>\n<p>Para two</p>");
 });
 
@@ -67,4 +67,18 @@ test("page: Windows line ends, no citations, no quotation check, nothing unescap
   assert.equal(page("line\r\nnext\r\n\r\nnew"), "<p>line next</p>\n<p>new</p>");
   assert.equal(page("Quote “like this one here” stays plain [3]."), "<p>Quote “like this one here” stays plain [3].</p>");
   assert.equal(page("<script>alert(1)</script>"), "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>");
+});
+
+test("page: headings get ids from their words, and [x](#id) links to them", () => {
+  assert.equal(page("## Faith & Hope, 1830\n## The *Second* Coming\n## Faith & Hope, 1830\nSee [the coming](#the-second-coming)."),
+    '<h2 id="faith--hope-1830">Faith &amp; Hope, 1830</h2>\n<h2 id="the-second-coming">The <i>Second</i> Coming</h2>\n<h2 id="faith--hope-1830-1">Faith &amp; Hope, 1830</h2>\n<p>See <a href="#the-second-coming">the coming</a>.</p>');
+  assert.equal(page("# Alma’s [sermon](https://example.com/x)"), '<h1 id="almas-sermon">Alma’s <a href="https://example.com/x">sermon</a></h1>');
+  assert.equal(page("# !!!"), '<h1 id="section">!!!</h1>');
+  // an answer's headings keep no ids, and an answer reads no links
+  assert.equal(answer("# Faith\n[x](#faith)"), "<h2>Faith</h2>\n<p>[x](#faith)</p>");
+});
+
+test("page: a fenced code block is kept as written, escaped, and not read as Markdown", () => {
+  assert.equal(page("Before\n```\n# not a heading\n<b>Alma 32:21</b> **x**\n```\nAfter"), "<p>Before</p>\n<pre><code># not a heading\n&lt;b&gt;Alma 32:21&lt;/b&gt; **x**</code></pre>\n<p>After</p>");
+  assert.equal(page("```js\nunclosed"), "<pre><code>unclosed</code></pre>");
 });
