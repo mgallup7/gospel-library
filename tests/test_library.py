@@ -288,6 +288,62 @@ def _edited(payload, *changes):
         text = text.replace(old, new)
     return json.loads(text)
 
+def _engine_version(conn) -> str:
+    """engine.js libraryVersion, statement for statement, run through Python's sqlite3: the device
+    must reach the same string the build publishes (delta.py library_version)."""
+    import hashlib
+
+    def meta(key):
+        r = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return json.loads(r[0]) if r and r[0] else None
+
+    lines = "".join(f"{uri}:{'None' if h is None else h}\n" for uri, h in conn.execute("SELECT uri, content_hash AS h FROM documents ORDER BY uri"))
+    content = hashlib.sha256(lines.encode("utf-8")).hexdigest()[:16]
+    table = next((t for t in ("vecbits", "vectors") if conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name=?", (t,)).fetchone()[0]), None)
+    c, m = conn.execute(f"SELECT COUNT(*) AS c, COALESCE(MAX(paragraph_id), 0) AS m FROM {table}").fetchone() if table else (0, 0)
+    model = (meta("embeddings") or {}).get("model") or ""
+    originals = (meta("originals") or {}).get("format") or ""
+    return hashlib.sha256(f"{content}|vectors:{c}:{m}|model:{model}|originals:{originals}".encode("utf-8")).hexdigest()[:16]
+
+
+def _assert_cheap_verification(conn) -> None:
+    """The version and the launch stats read covering indexes, and the paragraph count from the
+    FTS size table is the count of the FTS table itself."""
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='documents'")}
+    assert {"documents_version", "documents_stats"} <= names
+    plan = " ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN SELECT uri, content_hash AS h FROM documents ORDER BY uri"))
+    assert "COVERING INDEX documents_version" in plan
+    plan = " ".join(r[3] for r in conn.execute("""EXPLAIN QUERY PLAN SELECT c.slug, c.title, c.kind, COUNT(d.id) AS docs, COALESCE(SUM(d.word_count), 0) AS words, MAX(d.fetched_at) AS last_fetched
+                                                  FROM collections c LEFT JOIN documents d ON d.collection_id=c.id GROUP BY c.id ORDER BY c.sort"""))
+    assert "COVERING INDEX documents_stats" in plan
+    assert conn.execute("SELECT COUNT(*) FROM paragraphs_docsize").fetchone()[0] == conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0] > 0
+
+
+def test_version_indexes_on_an_older_library(tmp_path):
+    """A library from before the covering indexes, with planner statistics or without, gets them
+    and uses them; its version does not move."""
+    import sqlite3
+    from gospel_library import delta
+    from gospel_library.sync import context_for
+
+    for analyzed in (True, False):
+        path = tmp_path / f"old-{analyzed}.sqlite"
+        store = Store(path)
+        cid = store.collection_id("scriptures", "Scriptures", "books", 0)
+        bid = store.book_id(cid, "/scriptures/bofm", "Book of Mormon")
+        for n in range(32, 36):
+            doc = parse_content(_edited(CHAPTER_PAYLOAD, ("Alma 32", f"Alma {n}")), f"/scriptures/bofm/alma/{n}")
+            store.save_document(collection_id=cid, book_id=bid, doc=doc, node=None, extra=context_for(doc.uri, node=None))
+        store.close()
+        conn = sqlite3.connect(path)
+        conn.executescript("DROP INDEX documents_version; DROP INDEX documents_stats;" + ("ANALYZE;" if analyzed else "DROP TABLE IF EXISTS sqlite_stat1;"))
+        before = delta.library_version(conn)
+        delta.ensure_version_indexes(conn)
+        _assert_cheap_verification(conn)
+        assert delta.library_version(conn) == _engine_version(conn) == before
+        conn.close()
+
+
 def test_delta_between_builds(tmp_path, monkeypatch):
     """A device at build 1 gets build 2 from a small delta that reproduces the library exactly."""
     import sqlite3
@@ -344,14 +400,25 @@ def test_delta_between_builds(tmp_path, monkeypatch):
     full = tmp_path / "full2.sqlite"
     bundle.decrypt_file(site2 / "library.bin", full, "pw")
     assert not sqlite3.connect(full).execute("SELECT 1 FROM sqlite_master WHERE name='snapshots'").fetchone()
+    # the bundle ships the covering indexes, and the device's version is the published one
+    fc = sqlite3.connect(full)
+    _assert_cheap_verification(fc)
+    assert _engine_version(fc) == delta.library_version(fc) == m2["version"]
+    fc.close()
 
-    # applied to the device, the delta reproduces build 2 exactly
+    # applied to the device, the delta reproduces build 2 exactly; a device library from before
+    # the covering indexes gets them on the way
     plain = tmp_path / "delta.sqlite"
     bundle.decrypt_file(site2 / d["file"], plain, "pw")
     dev = sqlite3.connect(device)
+    assert _engine_version(dev) == m1["version"]
+    dev.executescript("DROP INDEX documents_version; DROP INDEX documents_stats;")
+    assert _engine_version(dev) == m1["version"]
     info = delta.apply_delta(dev, plain)
     assert info["to"] == m2["version"]
-    assert delta.library_version(dev) == m2["version"]
+    assert delta.library_version(dev) == _engine_version(dev) == m2["version"]
+    assert info["paragraphs_total"] == dev.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+    _assert_cheap_verification(dev)
     assert dev.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 9
     assert dev.execute("SELECT rowid FROM paragraphs WHERE paragraphs MATCH 'eternal'").fetchall()
     assert dev.execute("SELECT title FROM documents_fts WHERE documents_fts MATCH 'Alma'").fetchall()
@@ -381,6 +448,7 @@ def test_delta_between_builds(tmp_path, monkeypatch):
     dev = sqlite3.connect(device)
     assert delta.apply_delta(dev, plain)["vecbits"] == n_vectors
     assert dev.execute("SELECT COUNT(*) FROM vecbits").fetchone()[0] == n_vectors
+    assert _engine_version(dev) == m3["version"]  # the vectors part of the version agrees too
     dev.close()
     # one chapter changes and is embedded again: the next delta ships that chapter's vectors, not all of them
     store = Store(config.DB_PATH)

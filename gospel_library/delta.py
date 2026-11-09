@@ -96,6 +96,34 @@ def library_version(conn: sqlite3.Connection) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
+def paragraph_count(conn: sqlite3.Connection, schema: str = "main") -> int:
+    """The number of paragraphs, read from the FTS index's size table (one row per paragraph)
+    rather than COUNT(*) on the index, which reads every paragraph's text. engine.js counts the
+    same way when it checks a delta, so both sides see the same number."""
+    return conn.execute(f"SELECT COUNT(*) FROM {schema}.paragraphs_docsize").fetchone()[0]
+
+
+# The covering indexes a device needs for library_version and its launch stats (db.py SCHEMA).
+# A library built before they existed gets them when a delta is applied, as on the device
+# (engine.js versionIndexes).
+VERSION_INDEXES = [("documents_version", "documents(uri, content_hash)"), ("documents_stats", "documents(collection_id, word_count, fetched_at)")]
+
+
+def ensure_version_indexes(conn: sqlite3.Connection) -> None:
+    """Create the covering indexes where missing. When the library carries planner statistics a
+    new index needs its own, or the planner takes it for a huge one and keeps the old plan; one
+    with none yet (created by db.SCHEMA after the last PRAGMA optimize) is analysed too."""
+    analyzed = conn.execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone() is not None
+    for name, on in VERSION_INDEXES:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (name,)).fetchone():
+            conn.execute(f"CREATE INDEX {name} ON {on}")
+        elif not analyzed or conn.execute("SELECT 1 FROM sqlite_stat1 WHERE idx=?", (name,)).fetchone():
+            continue
+        if analyzed:
+            conn.execute(f"ANALYZE {name}")
+    conn.commit()
+
+
 def _meta(conn: sqlite3.Connection, key: str):
     row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     return json.loads(row[0]) if row and row[0] else None
@@ -125,7 +153,7 @@ def take_snapshot(conn: sqlite3.Connection, version: str) -> dict:
         "version": version, "schema": SCHEMA_VERSION, "built_at": _now(),
         "docs": docs, "vec_max": vec_max, "vec_bitmap": base64.b64encode(bytes(bitmap)).decode("ascii"),
         "originals_format": originals.get("format"), "model": embeddings.get("model"), "dims": embeddings.get("dims"),
-        "paragraphs": conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0],
+        "paragraphs": paragraph_count(conn),
     }
 
 
@@ -220,7 +248,7 @@ def build_delta(now: sqlite3.Connection, compact_path: Path, snap: dict, version
         bcols = [c for c in _table_cols(d, "books") if c in set(_table_cols(d, "src.books"))]
         d.execute(f"INSERT INTO books({','.join(bcols)}) SELECT {','.join(bcols)} FROM src.books")
         d.execute("INSERT INTO meta(key, value) SELECT key, value FROM src.meta WHERE key IN ('counts', 'bundle', 'embeddings', 'originals')")
-        total_pars = d.execute("SELECT COUNT(*) FROM src.paragraphs").fetchone()[0]
+        total_pars = paragraph_count(d, "src")
         total_docs = d.execute("SELECT COUNT(*) FROM src.documents").fetchone()[0]
         info = {"from": snap["version"], "to": version_to, "built_at": _now(), "schema": SCHEMA_VERSION,
                 "documents_changed": len(p["changed"]), "documents_removed": len(p["removed"]), "paragraphs": paragraphs, "footnotes": footnotes, "vecbits": vec,
@@ -264,6 +292,7 @@ def apply_delta(conn: sqlite3.Connection, delta_path: Path) -> dict:
     conn.execute("ATTACH DATABASE ? AS d", (str(delta_path),))
     try:
         info = {k: json.loads(v) for k, v in conn.execute("SELECT key, value FROM d.delta_meta")}
+        ensure_version_indexes(conn)
         have = library_version(conn)
         if have != info["from"]:
             raise ValueError(f"this delta is for a library at {info['from']}; this one is at {have}")
@@ -295,7 +324,7 @@ def apply_delta(conn: sqlite3.Connection, delta_path: Path) -> dict:
         conn.execute(f"INSERT INTO books({','.join(bcols)}) SELECT {','.join(bcols)} FROM d.books")
         conn.execute("INSERT OR REPLACE INTO meta(key, value) SELECT key, value FROM d.meta")
         got = library_version(conn)
-        pars = conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+        pars = paragraph_count(conn)
         if got != info["to"] or pars != info["paragraphs_total"]:
             conn.execute("ROLLBACK")
             raise ValueError(f"the delta did not reproduce the library (version {got} vs {info['to']}, {pars} vs {info['paragraphs_total']} paragraphs)")

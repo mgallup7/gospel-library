@@ -80,6 +80,12 @@ CREATE INDEX IF NOT EXISTS documents_author ON documents(author);
 CREATE INDEX IF NOT EXISTS documents_coll_year ON documents(collection_id, year, month);
 CREATE INDEX IF NOT EXISTS documents_next_check ON documents(next_check);
 CREATE INDEX IF NOT EXISTS documents_scripture ON documents(book_slug, chapter);
+-- Covering indexes for the two whole-table reads a device makes: the library's version
+-- (uri, content_hash, delta.py library_version) and the launch stats (per collection: count,
+-- words, last fetched). content_hash and fetched_at sit after body_html, so without these
+-- every row's overflow pages are walked to reach them.
+CREATE INDEX IF NOT EXISTS documents_version ON documents(uri, content_hash);
+CREATE INDEX IF NOT EXISTS documents_stats ON documents(collection_id, word_count, fetched_at);
 
 -- One copy of every paragraph's text, inside the full-text index itself.
 -- A document's paragraphs occupy a contiguous rowid range (documents.par_first
@@ -166,8 +172,10 @@ def decompress_html(blob) -> str:
 
 
 def counts(conn: sqlite3.Connection) -> dict:
-    """Paragraph and verse counts; a scan, so the result is cached in meta after each sync."""
-    paragraphs = conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+    """Paragraph and verse counts; the verses are a scan, so the result is cached in meta after each sync."""
+    # one row per paragraph in the FTS index's size table: the same number as COUNT(*) on the
+    # index itself, without reading every paragraph's text
+    paragraphs = conn.execute("SELECT COUNT(*) FROM paragraphs_docsize").fetchone()[0]
     verses = conn.execute("SELECT COUNT(*) FROM paragraphs WHERE kind='verse'").fetchone()[0]
     return {"paragraphs": paragraphs, "verses": verses}
 
