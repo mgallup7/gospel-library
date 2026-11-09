@@ -146,19 +146,30 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   // browser Back, and still know its way after a reload. Each entry also remembers how far you
   // had scrolled, so coming back lands where you were.
   function here() { return history.state && Number.isInteger(history.state.n) ? history.state.n : 0; }
+  // The label is the place Back returns to, so it names what that entry shows: Ask or the Deck when
+  // one of them was up (on a wide screen the page beside it is not what Back brings back first), the
+  // page when one covers the list, and inside a shelf the book or year you were at ("Alma", "2024").
   function labelNow() {
+    const tab = state.browse?.tab;
+    const paged = !!(state.docId || state.studyId);
+    if ((tab === "ask" || tab === "deck") && !state.q.trim() && (wide() || !paged)) return tab === "ask" ? "Ask" : "Deck";
     if (state.docId) return currentDoc && currentDoc.id === state.docId ? shortTitleOf(currentDoc) : "Back";
     if (state.studyId) return currentStudy && currentStudy.id === state.studyId ? shortTitleOf(currentStudy) : "Back";
     if (state.q.trim().length >= 2) return state.view === "all" ? "Every match" : "Results";
-    const tab = state.browse?.tab;
     if (tab === "ask") return "Ask";
     if (tab === "deck") return "Deck";
-    if (tab) return TAB_TITLE[tab] || "Shelf";
+    if (tab) return (shelfDepth(state.browse) && shelfNamed?.key === browseKey(state.browse) && shelfNamed.name) || TAB_TITLE[tab] || "Shelf";
     return "Library";
   }
+  // A depth inside a shelf names itself once its data has come (a book's name, a year), since only
+  // then is it known; until then the entry carries the shelf's name.
+  let shelfNamed = null;
+  const browseKey = (b) => JSON.stringify([b?.tab || null, ...BROWSE_KEYS.map((k) => b?.[k] ?? null)]);
+  const shelfDepth = (b) => !!(b && (b.year || b.bookUri || b.book || b.series));
+  function nameShelf(name) { shelfNamed = { key: browseKey(state.browse), name }; nameEntry(); }
   function setEntry(patch) {
     const cur = history.state || {};
-    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, scroll: cur.scroll || null, place: cur.place || null, ...patch }, "", location.href);
+    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, ...patch }, "", location.href);
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
   function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
@@ -176,10 +187,11 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (!fromOverlay && (!leavingScroll || Date.now() - leavingScroll.at > 2000)) rememberScroll(); // a reading older than the move it was taken for is stale
     leavingScroll = null;
     const prev = history.state?.label || "Library";
+    const prevUrl = location.hash || "#"; // so a step up can tell when Back would get there (a marker has its place's address)
     // leaving from inside a sheet or the stage: its marker entry becomes the new place, so Back
     // from there returns to the page under it, not to a sheet that is no longer open
-    if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url); }
-    else history.pushState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url);
+    if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, prevUrl, scroll: null, place: null }, "", url); }
+    else history.pushState({ n: here() + 1, label: null, prev, prevUrl, scroll: null, place: null }, "", url);
     nameEntry();
     refreshTrailButtons();
   }
@@ -212,6 +224,15 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   // A step within the shelves (a book, a year, a volume): a place of its own, so Back retraces it
   function go(browse) { rememberScroll(); state.browse = browse; renderHome(); push(); }
+  // Up a level within the shelves (the crumbs): no new entry. When the entry before is that level,
+  // it is Back; otherwise this entry becomes the level, so Back still leads where it led.
+  function goUp(browse) {
+    const was = state.browse;
+    state.browse = browse;
+    const url = urlFor();
+    if (here() > 0 && history.state?.prevUrl === url) { state.browse = was; history.back(); return; }
+    renderHome(); push(true);
+  }
   // Edge swipes in the home-screen app, where iOS keeps its own gesture for itself: in from the
   // left edge goes back, in from the right edge goes forward. In Safari the system gesture does
   // this already, so the app stays out of its way there.
@@ -249,7 +270,15 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     return el("button", { type: "button", class: "trail-back", "aria-label": label ? `Back to ${label}` : "Library", title: label ? `Back to ${label}` : "Library", onclick: goBack }, [
       el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: label || "Library" })]);
   }
-  function refreshTrailButtons() { for (const b of document.querySelectorAll(".trail-back")) b.replaceWith(trailButton()); }
+  function refreshTrailButtons() {
+    for (const b of document.querySelectorAll(".trail-back")) if (!b.closest(".head-back")) b.replaceWith(trailButton());
+    for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
+  }
+  // A shelf's own heading: Back, except beside an open page on a wide screen, where the reader bar
+  // has Back and the heading would name the shelf twice ("‹ My studies  My studies"); there it goes home.
+  function headBack() {
+    return backLabel() && !(wide() && (state.docId || state.studyId)) ? trailButton() : el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => goHome() });
+  }
   // On a phone every list view carries Back at the top; on a wide screen the reader bar has it
   function listTrail() { return backLabel() ? el("div", { class: "list-trail" }, [trailButton()]) : null; }
   window.addEventListener("popstate", () => {
@@ -670,7 +699,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     } else if (!data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty" }, [
         el("div", { text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, a different spelling, or ask the question instead:` }),
-        el("button", { type: "button", class: "text-btn", text: "Ask Claude", onclick: () => { state.browse = { tab: "ask" }; state.q = ""; syncControls(); renderHome(); setTimeout(() => { const ta = $(".ask-input"); if (ta) { ta.value = data.query; ta.focus(); } }, 50); } }),
+        el("button", { type: "button", class: "text-btn", text: "Ask Claude", onclick: () => { rememberScroll(); leaveSearch(); state.browse = { tab: "ask" }; state.q = ""; syncControls(); renderHome(); showList(); push(); setTimeout(() => { const ta = $(".ask-input"); if (ta) { ta.value = data.query; ta.focus(); } }, 50); } }),
       ]));
     }
     if (state.group === "documents") for (const d of data.documents) frag.append(docRow(d, d.hits));
@@ -878,7 +907,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); updateThinkFab(); return; }
       if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
-        backLabel() ? trailButton() : el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => goHome() }),
+        el("span", { class: "head-back" }, [headBack()]),
         el("h2", { text: TAB_TITLE[tab] || tab }),
       ]));
       if (tab === "conference") await browseConference(body);
@@ -961,7 +990,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
 
   async function browseConference(body) {
     const b = state.browse || {};
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: "conference", year: b.year, all: true }));
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: "conference", year: b.year, all: true }), b.year ? String(b.year) : "General Conference");
     const data = await api("browse", { collection: "general-conference" });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks in this library yet. They arrive with the nightly build, newest conference first." })); return; }
@@ -982,6 +1011,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     for (const y of years) shelf.append(el("button", { class: "chip" + (b.year === y ? " on" : ""), text: String(y), onclick: () => go({ tab: "conference", year: y, all: true }) }));
     body.append(shelf);
     if (b.year) {
+      nameShelf(String(b.year));
       for (const bk of books.filter((x) => x.year === b.year)) {
         body.append(el("button", { class: "toc-row", onclick: () => go({ tab: "conference", year: b.year, bookUri: bk.uri }) }, [
           el("div", { class: "t", text: `${monthName(bk.month)} ${bk.year}` }), el("div", { class: "s", text: `${bk.docs} talks` })]));
@@ -1002,7 +1032,8 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       return;
     }
     const bk = shelf.volumes.flatMap((v) => v.books).find((x) => x.slug === b.book);
-    body.append(el("div", { class: "crumbs" }, [el("button", { text: "Scriptures", onclick: () => go({ tab: "scriptures" }) }), el("span", { text: bk.name })]));
+    nameShelf(bk.name.replace("JST, ", ""));
+    body.append(el("div", { class: "crumbs" }, [el("button", { text: "Scriptures", onclick: () => goUp({ tab: "scriptures" }) }), el("span", { text: bk.name })]));
     const grid = el("div", { class: "chapters" });
     for (const c of bk.chapters) grid.append(el("button", { text: String(c.n), disabled: !c.doc_id, onclick: () => openDoc(c.doc_id, null) }));
     body.append(grid);
@@ -1011,7 +1042,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
 
   async function browseCollection(body, slug) {
     const b = state.browse || {};
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: slug }));
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: slug }), TAB_TITLE[slug] || "Back");
     const data = await api("browse", { collection: slug });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with a later nightly build." })); return; }
@@ -1026,9 +1057,12 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (!all.length) { body.append(el("div", { class: "empty", text: "The Joseph Smith Papers arrive with the nightly builds, a series at a time: journals first, then revelations and translations, histories, and the documents." })); return; }
     const chips = el("div", { class: "shelf" });
     const series = b.series || all[0].slug;
-    for (const c of all) chips.append(el("button", { class: "chip" + (series === c.slug ? " on" : ""), text: c.title.replace(/^Joseph Smith Papers: /, "") + (c.docs ? "" : " (soon)"), onclick: () => go({ tab: "jsp", series: c.slug }) }));
+    const seriesName = (c) => c.title.replace(/^Joseph Smith Papers: /, "");
+    for (const c of all) chips.append(el("button", { class: "chip" + (series === c.slug ? " on" : ""), text: seriesName(c) + (c.docs ? "" : " (soon)"), onclick: () => go({ tab: "jsp", series: c.slug }) }));
     body.append(chips);
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: "jsp", series }));
+    const cur = all.find((c) => c.slug === series);
+    if (b.series && cur && !b.bookUri) nameShelf(seriesName(cur));
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: "jsp", series }), cur ? seriesName(cur) : "Back");
     const data = await api("browse", { collection: series });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing from this series yet. It arrives with a later nightly build." })); return; }
@@ -1036,9 +1070,11 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     body.append(el("p", { class: "deck-hint", text: "Transcriptions, source notes and historical introductions from josephsmithpapers.org (The Church Historian’s Press, © Intellectual Reserve, Inc.), for personal study. Tap a name in a paper for who or where it is." }));
   }
 
-  async function renderBookToc(body, uri, back) {
+  // up: the crumb that goes a level up, and the name of that level
+  async function renderBookToc(body, uri, up, upName = "Back") {
     const book = await api("book", { uri });
-    if (back) body.append(el("div", { class: "crumbs" }, [el("button", { text: "Back", onclick: back }), el("span", { text: book.title })]));
+    if (up) nameShelf(book.title);
+    if (up) body.append(el("div", { class: "crumbs" }, [el("button", { text: upName, onclick: up }), el("span", { text: book.title })]));
     else body.append(el("h2", { text: book.title }));
     for (const n of book.nodes || []) {
       if (n.kind === "section") body.append(el("div", { class: "toc-row section" }, [el("div", { class: "t", text: n.title })]));
@@ -1063,7 +1099,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       if (state.docId !== id) return; // another page was opened while this one loaded
       renderDoc(currentDoc);
     }
-    nameEntry(shortTitleOf(currentDoc));
+    nameEntry(); // the page's title, or Ask or the Deck when the page rides beside one
     refreshTrailButtons();
     focusParagraph(state.pid, { scroll });
     updateThinkFab();
@@ -1274,7 +1310,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       currentStudy = rec;
       renderStudy(rec, scroll);
     }
-    nameEntry(shortTitleOf(currentStudy));
+    nameEntry();
     refreshTrailButtons();
     updateThinkFab();
   }

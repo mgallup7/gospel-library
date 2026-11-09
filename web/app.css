@@ -217,6 +217,7 @@ main {
 .home { padding: 6px 0 24px; }
 .home h2 { font: 600 13px var(--sans); color: var(--ink-2); margin: 18px 16px 6px; }
 .home-head { display: flex; align-items: center; gap: 2px; padding: 8px 12px 0; }
+.home-head .head-back { display: contents; }
 .home-head .home-back { display: inline-flex; align-items: center; height: 36px; padding: 0 8px 0 2px; font-size: 15px; }
 .home-head .home-back::before { content: "‹"; font-size: 24px; line-height: 1; margin-right: 3px; }
 .home-head h2 { margin: 0 0 0 4px; font: 600 20px var(--serif); color: var(--ink); }
