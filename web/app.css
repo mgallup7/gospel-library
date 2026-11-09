@@ -585,6 +585,12 @@ body.first-run .bar, body.first-run #filters { display: none; }
 .stage-controls .stage-timer { width: auto; min-width: 56px; padding: 0 10px; font-size: 15px; font-variant-numeric: tabular-nums; opacity: .7; }
 .stage-upnext { flex-basis: 100%; text-align: right; padding: 4px 4px 0; font: 14px/1.35 var(--sans); opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stage-upnext:empty { display: none; }
+/* Close sits at the far end of the row, away from the timer, so a tap meant for one never lands on the other */
+.stage-controls .stage-close { order: 2; margin-left: 10px; }
+.stage-controls .stage-upnext { order: 3; }
+.stage-speaker .slash { display: none; }
+.stage.no-speaker .stage-speaker .slash { display: inline; }
+.stage.no-speaker .stage-timer, .stage.no-speaker .stage-upnext { display: none; }
 body.presenting { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .stage-controls { transition: none; } }
 
@@ -673,8 +679,9 @@ body.presenting { overflow: hidden; }
 .deck-item .cite-edit { padding: 4px 6px; color: var(--accent); font: 600 14px var(--sans); }
 .deck-item .where { font-size: 12px; color: var(--ink-3); padding: 0 6px; }
 .deck-item .preview { display: block; width: 100%; text-align: left; padding: 2px 6px; font: 15px/1.4 var(--serif); color: var(--ink-2); }
-.deck-item .tools { display: flex; flex-direction: column; gap: 2px; }
-.deck-item .tools button { width: 32px; height: 28px; border-radius: 6px; color: var(--ink-2); background: var(--chrome); font-size: 15px; }
+.deck-item .tools { display: flex; gap: 4px; align-items: center; }
+.deck-item .tools button { min-width: 44px; height: 44px; padding: 0 10px; border-radius: 8px; color: var(--ink-2); background: var(--chrome); font: 14px var(--sans); }
+.deck-item .tools .delete { font-size: 20px; }
 .deck-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 10px 0 2px; }
 .deck-actions.secondary { margin-top: 2px; }
 .deck-status { font-size: 13px; color: var(--ink-2); min-height: 1.3em; margin-top: 8px; }
@@ -746,10 +753,10 @@ body.presenting { overflow: hidden; }
 .bcard .bc-tools button:disabled { opacity: .3; }
 .bcard .bc-text { font: var(--reading-size)/1.95 var(--serif); margin-top: 6px; }
 .bcard .w { padding: 1px 1px; border-radius: 3px; cursor: pointer; }
-.bcard .w.hl { background: var(--mark); color: var(--mark-ink); }
-.bcard .w.hl-s { border-radius: 4px 0 0 4px; padding-left: 3px; }
-.bcard .w.hl-e { border-radius: 0 4px 4px 0; padding-right: 3px; }
-.bcard .w.hl.active { box-shadow: 0 0 0 2px var(--accent); }
+/* A highlighted phrase is one run, spaces included; a line break gives each line its own rounded piece */
+.bcard .hl-run { background: var(--mark); color: var(--mark-ink); border-radius: 4px; padding: 1px 2px; cursor: pointer; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.bcard .hl-run .w { padding: 1px 0; }
+.bcard .hl-run.active { box-shadow: 0 0 0 2px var(--accent); }
 .bcard .w.first { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bcard .w.drop { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--target); }
 .bcard .vn { font: 600 .6em var(--sans); color: var(--ink-3); vertical-align: super; margin: 0 2px 0 6px; }
@@ -767,6 +774,10 @@ body.presenting { overflow: hidden; }
 .bcard.section input:focus { border-color: var(--rule); background: var(--paper); }
 /* question and note cards: the teacher's own words as slides; speaker notes under any card */
 .bcard.question { border-left: 4px solid var(--accent); }
+.bcard.selected { border-color: color-mix(in srgb, var(--accent) 55%, var(--rule)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.board-foot { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.board-foot .foot-add { min-height: 44px; padding: 0 16px; border: 1px dashed var(--rule); border-radius: 12px; color: var(--accent); background: transparent; font: 600 15px var(--sans); }
+.board-foot .foot-add:active { background: var(--chrome); }
 .bcard.note { background: var(--chrome); }
 .bcard .bc-card-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); font: 17px/1.45 var(--serif); user-select: text; -webkit-user-select: text; }
 .bcard.question .bc-card-text { font-weight: 600; }
@@ -776,6 +787,17 @@ body.presenting { overflow: hidden; }
 .bc-notes.has .notes-toggle { color: var(--accent); }
 .bc-notes-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); font: 14px/1.45 var(--sans); user-select: text; -webkit-user-select: text; }
 .stage-body.is-question .stage-text { text-align: center; font-weight: 600; }
+/* A question as the PowerPoint draws it: a small kicker with a short rule at the top left, and a rule under the words */
+.stage { --stage-rule-c: #8a5a00; }
+.stage.dark { --stage-rule-c: #e3c27a; }
+.stage.themed { --stage-rule-c: var(--stage-accent); }
+.stage-kicker { position: absolute; top: calc(var(--safe-top) + 6vmin); left: 6vmin; font: 600 max(11px, 2.3vmin) var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--stage-rule-c); pointer-events: none; }
+.stage-kicker::after { content: ""; display: block; width: max(28px, 5.5vmin); height: max(2px, .45vmin); margin-top: max(6px, 1.3vmin); background: var(--stage-rule-c); }
+/* on a phone the woken controls fill the top row, so the kicker steps aside while they show */
+@media (max-width: 759px) { .stage.show-controls .stage-kicker, .stage:has(.stage-controls:focus-within) .stage-kicker { visibility: hidden; } }
+.stage-kicker[hidden] { display: none; }
+.stage.blank .stage-kicker { visibility: hidden; }
+.stage-body.is-question .stage-text::after { content: ""; display: block; width: 9vmin; height: .45vmin; margin: .7em auto 0; background: var(--stage-rule-c); }
 .stage-body.is-note .stage-text { font-family: var(--sans); font-weight: 500; }
 .board-empty { padding: 20px 4px 26px; font: 16px/1.5 var(--serif); color: var(--ink-2); }
 .board-empty p { margin: 0; max-width: 34em; }

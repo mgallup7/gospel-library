@@ -26,9 +26,18 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   const mb = (n) => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(n > 50 * 1048576 ? 0 : 1)} MB`;
   const BASE = new URL(".", document.baseURI);
   const MANIFEST_URL = new URL("data/manifest.json", BASE).href;
+  // Small preferences in localStorage. set returns false when the write did not take (the store
+  // is full, or the browser refuses it) and says so once in a while, so nothing is lost unheard.
+  let storeWarned = 0;
   const store = {
     get(k, d = null) { try { const v = localStorage.getItem("gospel." + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
-    set(k, v) { try { localStorage.setItem("gospel." + k, JSON.stringify(v)); } catch (_) {} },
+    set(k, v) {
+      try { localStorage.setItem("gospel." + k, JSON.stringify(v)); return true; }
+      catch (_) {
+        if (Date.now() - storeWarned > 10000) { storeWarned = Date.now(); try { toast(/^deck/.test(k) ? "Storage is full. The deck could not be saved." : "Storage is full. The setting could not be saved."); } catch (__) {} }
+        return false;
+      }
+    },
     del(k) { try { localStorage.removeItem("gospel." + k); } catch (_) {} },
   };
 
@@ -1854,9 +1863,11 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   // projector, a TV over AirPlay, or a tablet turned toward the room.
   const stage = $("#stage");
   let show = null; // { units: [{pid, kind, html, verse}], i, doc }
+  const stageKicker = el("div", { class: "stage-kicker", hidden: true, text: "Question" });
+  stage.append(stageKicker);
 
   function presentUnits(doc) {
-    const scratch = el("div", { html: doc.body_html || "" });
+    const scratch = sanitize(el("div", { html: doc.body_html || "" })); // the same cleaning renderDoc gives the page
     const units = [];
     const jsp = !!(doc.collection && doc.collection.startsWith("jsp-"));
     let page = jsp ? pageOf(doc) : null; // the manuscript page a paragraph is on, kept with it on the stage
@@ -1927,6 +1938,18 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     stageClock = setInterval(tickStage, 1000);
   }
   stageTimer.addEventListener("click", () => { resetStageClock(); wakeControls(); });
+  // An iPad mirrored to a projector shows the room whatever the controls show: this hides the
+  // timer and the "Next:" line until it is pressed again, and the choice is remembered.
+  const speakerBtn = el("button", { type: "button", class: "stage-speaker", "aria-label": "Show the timer and the Next line", "aria-pressed": "true", title: "Timer and Next line: shown (hide them when the screen is mirrored)" });
+  speakerBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 2M10 3h4"/><path class="slash" d="M4 4l16 16"/></svg>`;
+  function setSpeakerLines(on) {
+    stage.classList.toggle("no-speaker", !on);
+    speakerBtn.setAttribute("aria-pressed", String(on));
+    speakerBtn.title = on ? "Timer and Next line: shown (hide them when the screen is mirrored)" : "Timer and Next line: hidden (tap to show them)";
+  }
+  speakerBtn.addEventListener("click", () => { const on = stage.classList.contains("no-speaker"); setSpeakerLines(on); store.set("stageSpeaker", on); wakeControls(); });
+  stageTimer.after(speakerBtn);
+  setSpeakerLines(store.get("stageSpeaker", true));
   // The first words of a passage, for the "Next:" line: plain text, without a verse's number.
   function firstWords(u, n = 6) {
     let t = u.text || new DOMParser().parseFromString(u.html || "", "text/html").body.textContent || "";
@@ -1990,7 +2013,11 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     body.classList.toggle("is-question", u.kind === "question");
     body.classList.toggle("is-note", u.kind === "note");
     body.classList.toggle("is-wide", u.kind === "link" || u.kind === "map");
-    $(".stage-text", stage).innerHTML = u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html;
+    // What goes on the stage is cleaned as renderDoc cleans the page: a deck card or an Ask passage is HTML too.
+    const clean = sanitize(el("div", { html: u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html }));
+    $(".stage-text", stage).replaceChildren(...clean.childNodes);
+    // A question wears a small kicker and a rule, as its PowerPoint slide does, so it never reads as a title.
+    stageKicker.hidden = u.kind !== "question";
     $(".stage-ref", stage).textContent = where;
     $(".stage-count", stage).textContent = `${show.i + 1} / ${show.units.length}`;
     $(".stage-prev", stage).disabled = show.i === 0;

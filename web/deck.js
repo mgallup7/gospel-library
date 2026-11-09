@@ -37,7 +37,9 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   // slide follows the later of its two passages.
   const uid = () => Math.random().toString(36).slice(2, 10);
   const blank = () => ({ id: uid(), title: "", subtitle: "", theme: DEFAULT_THEME, themeSet: true, items: [], links: [], chain: null, updated: Date.now() });
-  let deck = migrate(store.get("deck")) || blank();
+  // The deck starts blank and the one kept on the device arrives a moment later (see storage below);
+  // the board draws from memory and never waits on the database.
+  let deck = blank();
 
   function migrate(d) {
     if (!d || typeof d !== "object") return null;
@@ -68,9 +70,134 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     return d;
   }
 
+  // ------------------------------------------------------------ storage --
+  // The current deck and the saved decks, with their full text and speaker notes, outgrow
+  // localStorage (about 5 MB, and a full store refuses the write), so they live in the browser's
+  // database, like the marks: "current" holds the deck in progress under the key "deck", "saved"
+  // one record per saved deck. What is in memory is the truth; writes follow a moment behind.
+  const DB = "gospel-decks";
+  let dbOpen = null;
+  function openDb() {
+    if (dbOpen) return dbOpen;
+    dbOpen = new Promise((resolve, reject) => {
+      const r = indexedDB.open(DB, 1);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains("current")) r.result.createObjectStore("current");
+        if (!r.result.objectStoreNames.contains("saved")) r.result.createObjectStore("saved", { keyPath: "id" });
+      };
+      r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); dbOpen = null; }; resolve(db); };
+      r.onerror = () => { dbOpen = null; reject(r.error || new Error("the decks database did not open")); };
+    });
+    return dbOpen;
+  }
+  async function tx(name, mode, work) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction(name, mode);
+      const req = work(t.objectStore(name));
+      t.oncomplete = () => resolve(req ? req.result : undefined);
+      t.onerror = () => reject(t.error || new Error("the decks database failed"));
+      t.onabort = () => reject(t.error || new Error("the decks database failed"));
+    });
+  }
+  const isFull = (err) => !!err && (err.name === "QuotaExceededError" || /quota|full/i.test(err.message || ""));
+  let warnedAt = 0;
+  function warn(err) {
+    if (Date.now() - warnedAt < 10000) return;
+    warnedAt = Date.now();
+    GL()?.toast(isFull(err) ? "Storage is full. The deck could not be saved." : `The deck could not be saved: ${err?.message || "the browser refused"}.`);
+  }
+  // A browser without the database (or one that will not open it) keeps the decks in localStorage, as before.
+  let noDb = typeof indexedDB === "undefined";
+  let loaded = false, writeTimer = null, writeWanted = false;
+  let savedDecks = []; // [{id, title, updated, deck}], newest first
+  const bc = typeof BroadcastChannel === "function" ? new BroadcastChannel(DB) : null;
+
+  async function writeCurrent() {
+    clearTimeout(writeTimer); writeTimer = null;
+    if (!loaded) { writeWanted = true; return; }
+    writeWanted = false;
+    if (noDb) { store.set("deck", deck); return; }
+    try { await tx("current", "readwrite", (s) => s.put(deck, "deck")); bc?.postMessage({ what: "current", updated: deck.updated }); }
+    catch (err) { warn(err); }
+  }
+  function scheduleWrite() { clearTimeout(writeTimer); writeTimer = setTimeout(writeCurrent, 400); }
+  // A deck being typed into when the page goes away is written at once.
+  const flushNow = () => { if (writeTimer) writeCurrent(); };
+  window.addEventListener("pagehide", flushNow);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushNow(); });
+
+  async function putSaved(entry) {
+    if (noDb) return store.set("decks", savedDecks);
+    try { await tx("saved", "readwrite", (s) => s.put(entry)); bc?.postMessage({ what: "saved" }); return true; }
+    catch (err) { warn(err); return false; }
+  }
+  async function dropSaved(id) {
+    if (noDb) return store.set("decks", savedDecks);
+    try { await tx("saved", "readwrite", (s) => s.delete(id)); bc?.postMessage({ what: "saved" }); return true; }
+    catch (err) { warn(err); return false; }
+  }
+  const sortSaved = () => savedDecks.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+
+  // First run after the move: what localStorage holds goes into the database, and leaves
+  // localStorage only once it is safely written. A newer copy wins where both have one.
+  const ready = (async () => {
+    await null; // after this file has run to the end, so the board's variables exist
+    let current = null, saved = [];
+    if (!noDb) {
+      try { [current, saved] = await Promise.all([tx("current", "readonly", (s) => s.get("deck")), tx("saved", "readonly", (s) => s.getAll())]); }
+      catch (err) { console.warn("decks stay in localStorage:", err?.message); noDb = true; }
+    }
+    const oldDeck = store.get("deck"), oldSaved = store.get("decks", null);
+    if (noDb) { current = oldDeck; saved = Array.isArray(oldSaved) ? oldSaved : []; }
+    else {
+      if (oldDeck && typeof oldDeck === "object" && (!current || (oldDeck.updated || 0) >= (current.updated || 0))) {
+        try { await tx("current", "readwrite", (s) => s.put(oldDeck, "deck")); current = oldDeck; store.del("deck"); } catch (err) { current = oldDeck; console.warn("the deck stays in localStorage for now:", err?.message); }
+      } else if (oldDeck) store.del("deck");
+      if (Array.isArray(oldSaved)) {
+        const byKey = new Map((saved || []).map((d) => [d.id, d]));
+        const take = oldSaved.filter((d) => d && d.id && d.deck && (!byKey.has(d.id) || (d.updated || 0) > (byKey.get(d.id).updated || 0)));
+        try {
+          if (take.length) await tx("saved", "readwrite", (s) => { for (const d of take) s.put(d); });
+          for (const d of take) byKey.set(d.id, d);
+          saved = [...byKey.values()];
+          store.del("decks");
+        } catch (err) { saved = [...byKey.values(), ...take]; console.warn("saved decks stay in localStorage for now:", err?.message); }
+      }
+    }
+    savedDecks = (saved || []).filter((d) => d && d.id && d.deck);
+    sortSaved();
+    // Anything added in the moment before the stored deck arrived joins it rather than replacing it.
+    const early = deck;
+    deck = migrate(current) || deck;
+    if (early !== deck && early.items.length) {
+      for (const it of early.items) if (!(it.type === "passage" && has(it.doc_id, it.pid))) deck.items.push(it);
+      deck.links.push(...early.links);
+      deck.updated = Date.now();
+      writeWanted = true;
+    }
+    loaded = true;
+    if (writeWanted) writeCurrent();
+    draw(); updateBadge();
+    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+  })();
+
+  // Another tab saved: take its newer deck rather than writing over it later.
+  if (bc) bc.onmessage = async (e) => {
+    try {
+      if (e.data?.what === "current") {
+        const other = await tx("current", "readonly", (s) => s.get("deck"));
+        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
+      } else if (e.data?.what === "saved") {
+        savedDecks = (await tx("saved", "readonly", (s) => s.getAll())) || [];
+        sortSaved();
+      }
+    } catch (_) { /* the next save writes ours */ }
+  };
+
   function save({ redraw = true } = {}) {
     deck.updated = Date.now();
-    store.set("deck", deck);
+    scheduleWrite();
     updateBadge();
     if (redraw) draw();
     else if (ui) { syncDownloadButton(); schedulePrepare(); }
@@ -154,15 +281,6 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     save();
     return added;
   }
-
-  // Another tab saved the deck: take its newer state rather than writing over it later.
-  window.addEventListener("storage", (e) => {
-    if (e.key !== "gospel.deck" || !e.newValue) return;
-    try {
-      const other = JSON.parse(e.newValue);
-      if (other && other.updated > deck.updated) { deck = migrate(other); draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
-    } catch (_) { /* not ours */ }
-  });
 
   /** A section heading at the end of the deck (what "Think it through" builds under). */
   function addSection(title) {
@@ -306,6 +424,8 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   let drag = null;      // a port being dragged
   let editing = null;   // the link whose label editor is open
   let hintShown = false;
+  let selectedId = null; // the card last tapped or typed in: where a new question or slide text goes
+  let naming = false;     // "Name this deck" was tapped on an empty deck: its title fields show
 
   // The card tools, drawn as strokes in the app's icon style rather than text arrows,
   // which sit at different heights in different fonts.
@@ -360,13 +480,11 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       think, md,
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
-      el("button", { type: "button", class: "text-btn", text: "Add question", title: "A question for the room, as a slide of its own", onclick: () => addCard("question") }),
-      el("button", { type: "button", class: "text-btn", text: "Add note", title: "A thought or teaching point, as a slide of its own", onclick: () => addCard("note") }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
       el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => {
         if (deck.items.length && !confirm("Start a new, empty deck? The current one is kept only if you saved it.")) return;
-        deck = blank(); pending = active = linking = null; save();
+        deck = blank(); pending = active = linking = null; naming = false; save();
       } }),
     ]);
     const banner = el("div", { class: "board-banner", hidden: true });
@@ -387,6 +505,9 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
+    const touch = (e) => { const card = e.target.closest && e.target.closest(".bcard"); if (card) select(card.dataset.id); };
+    cards.addEventListener("pointerdown", touch);
+    cards.addEventListener("focusin", touch);
     window.addEventListener("resize", () => { if (board.isConnected) drawLines(); });
     if (window.ResizeObserver) new ResizeObserver(() => drawLines()).observe(cards);
   }
@@ -410,6 +531,9 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     const empty = !deck.items.length;
     // An empty deck has nothing to theme, download or present: the board shows only how to add a passage.
     ui.themes.hidden = empty; ui.actions.hidden = empty;
+    // nor anything to name: the title and subtitle wait for the first card, or for "Name this deck"
+    const named = !empty || naming || !!(deck.title || deck.subtitle);
+    ui.title.hidden = !named; ui.subtitle.hidden = !named;
     ui.moreRow.hidden = empty || ui.more.getAttribute("aria-expanded") !== "true";
     ui.download.disabled = empty; ui.present.disabled = empty;
     ui.think.disabled = count() < 2;
@@ -430,11 +554,18 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       : "To highlight: tap the first and last word of a phrase. To link: drag the dot at the end of a highlight onto a phrase in another passage. To name a link: tap its number.";
   }
 
+  // The selected card wears a quiet outline, so it is plain where the next question will land.
+  function select(id) {
+    if (selectedId === id || !ui) return;
+    selectedId = id;
+    for (const c of ui.cards.querySelectorAll(".bcard")) c.classList.toggle("selected", c.dataset.id === id);
+  }
   function drawCards() {
     const cards = ui.cards;
     cards.replaceChildren();
+    if (selectedId && !byId(selectedId)) selectedId = null;
     deck.items.forEach((it, idx) => {
-      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : ""), "data-id": it.id, "data-type": it.type });
+      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : ""), "data-id": it.id, "data-type": it.type });
       const tools = el("div", { class: "bc-tools" }, [
         el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
         el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
@@ -450,12 +581,12 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       }
       if (it.type === "question" || it.type === "note") {
         card.classList.add(it.type);
-        const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "A thought, a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Note" });
+        const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "Words for the room to read: a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Slide text" });
         ta.value = it.text || "";
         const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
         ta.addEventListener("input", () => { it.text = ta.value; grow(); save({ redraw: false }); });
         requestAnimationFrame(grow);
-        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Note" })]), tools]));
+        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
         card.append(ta);
         card.append(notesEl(it));
         cards.append(card);
@@ -496,19 +627,28 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       }
       cards.append(card);
     });
+    // A question or slide text is added from the foot of the list, after the selected card.
+    if (deck.items.length) cards.append(el("div", { class: "board-foot" }, [
+      el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => addCard("question") }),
+      el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => addCard("note") }),
+    ]));
     if (!deck.items.length) {
-      const savedAny = store.get("decks", []).length > 0;
+      const savedAny = savedDecks.length > 0;
       cards.append(el("div", { class: "board-empty" }, [
         el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
+        naming || deck.title || deck.subtitle ? null : el("button", { type: "button", class: "text-btn", text: "Name this deck", onclick: () => { naming = true; draw(); ui.title.focus(); } }),
         savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
       ].filter(Boolean)));
     }
   }
   function speakerNotes(s, it) { const text = (it.notes || "").trim(); if (text) { try { s.addNotes(text); } catch (_) {} } }
-  // A question or a note: a slide of its own, with words the teacher writes
+  // A question or slide text (kind "note" in the data, so saved decks still load): a slide of its
+  // own, with words the teacher writes. It goes in after the card last touched, or at the end.
   function addCard(type) {
     const item = { id: uid(), type, text: "", notes: "" };
-    deck.items.push(item);
+    const at = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+    if (at >= 0) deck.items.splice(at + 1, 0, item); else deck.items.push(item);
+    selectedId = item.id;
     save();
     requestAnimationFrame(() => { const ta = ui && ui.cards.querySelector(`.bcard[data-id="${item.id}"] textarea`); if (ta) ta.focus(); });
     return item;
@@ -526,19 +666,29 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     return wrap;
   }
   // A passage as tappable words, with verse numbers, highlights and a port after each highlight.
+  // A highlighted phrase is one run (its words and the spaces between them in one span), so it
+  // reads as a phrase, not a row of boxes, and its active outline goes round the whole of it.
   function textEl(it) {
     const text = el("div", { class: "bc-text" });
     const words = wordsOf(it);
+    let host = text;
     words.forEach((x, i) => {
-      if (x.first && x.para > 0) text.append(el("br"), el("br"));
-      if (x.n !== null && x.n !== undefined) text.append(el("span", { class: "vn", text: String(x.n) }));
+      if (x.first && x.para > 0) host.append(el("br"), el("br"));
+      if (x.n !== null && x.n !== undefined) host.append(el("span", { class: "vn", text: String(x.n) }));
       const h = hlAt(it, i);
+      if (h && host === text) {
+        host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : ""), "data-hl": h.id });
+        text.append(host);
+      }
       const cls = ["w"];
-      if (h) { cls.push("hl"); if (h.s === i) cls.push("hl-s"); if (h.e === i) cls.push("hl-e"); if (active && active.id === it.id && active.hl === h.id) cls.push("active"); }
+      if (h) { cls.push("hl"); if (h.s === i) cls.push("hl-s"); if (h.e === i) cls.push("hl-e"); }
       if (pending && pending.id === it.id && pending.i === i) cls.push("first");
-      text.append(el("span", { class: cls.join(" "), "data-i": String(i), text: x.w }));
-      if (h && h.e === i) text.append(el("button", { type: "button", class: "port", "data-item": it.id, "data-hl": h.id, "aria-label": `Link “${phraseOf(it, h)}” to another passage`, title: "Drag onto a phrase in another passage to link them" }));
-      text.append(" ");
+      host.append(el("span", { class: cls.join(" "), "data-i": String(i), text: x.w }));
+      if (h && h.e === i) {
+        host = text;
+        text.append(el("button", { type: "button", class: "port", "data-item": it.id, "data-hl": h.id, "aria-label": `Link “${phraseOf(it, h)}” to another passage`, title: "Drag onto a phrase in another passage to link them" }));
+      }
+      host.append(" ");
     });
     return text;
   }
@@ -558,10 +708,11 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     const item = byId(card.dataset.id);
     if (!item) return;
     const w = e.target.closest(".w");
+    const run = !w && e.target.closest(".hl-run"); // the space between two words of a phrase
     if (linking) {
       if (item.id === linking.id) return;
       const i = w ? Number(w.dataset.i) : null;
-      const h = port ? hlById(item, port.dataset.hl) : i !== null ? hlAt(item, i) : null;
+      const h = port ? hlById(item, port.dataset.hl) : i !== null ? hlAt(item, i) : run ? hlById(item, run.dataset.hl) : null;
       const from = linking; linking = null;
       finishLink(from, { item, hl: h ? h.id : null, word: !h && i !== null ? i : null });
       return;
@@ -570,6 +721,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       if (!hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
       return;
     }
+    if (run) { const h = hlById(item, run.dataset.hl); if (h) { active = active && active.hl === h.id ? null : { id: item.id, hl: h.id }; pending = null; draw(); } return; }
     if (!w) { if (pending || active) { pending = null; active = null; draw(); } return; }
     const i = Number(w.dataset.i);
     if (pending && pending.id === item.id) {
@@ -800,7 +952,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
           const v = name.value.trim();
           if (!deck.title && v) deck.title = v;
           saveNamed(v);
-          deck = blank(); pending = active = linking = null; save();
+          deck = blank(); pending = active = linking = null; naming = false; save();
           GL().toast(`Saved “${v || deck.title}”. The deck is empty.`);
           finish("new");
         } }),
@@ -811,7 +963,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
         el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { store.set("deckKept", deck.id); finish("keep"); } }),
         el("button", { type: "button", class: "text-btn", text: "No, save it as it is, then start a new deck", onclick: (e) => { nameRow.hidden = false; e.currentTarget.hidden = true; name.focus(); name.select(); } }),
         nameRow,
-        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; save(); GL().toast("The deck is empty."); finish("new"); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; naming = false; save(); GL().toast("The deck is empty."); finish("new"); } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => finish("cancel") }),
       );
       scrim.addEventListener("click", () => finish("cancel"));
@@ -857,7 +1009,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       const notes = it.notes && it.notes.trim() ? [`*Speaker notes: ${it.notes.trim().replace(/\n+/g, " ")}*`, ""] : [];
       if (it.type === "section") { out.push(`## ${it.title || "—"}`, "", ...notes); continue; }
       if (it.type === "question") { out.push(`### Question`, "", it.text || "", "", ...notes); continue; }
-      if (it.type === "note") { out.push(`### Note`, "", it.text || "", "", ...notes); continue; }
+      if (it.type === "note") { out.push(`### Slide text`, "", it.text || "", "", ...notes); continue; }
       if (it.type === "link") {
         const a = endOf(it.from), b = endOf(it.to);
         if (!a || !b) continue;
@@ -939,7 +1091,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       lines.push(`[${i + 1}] ${p.citation}${p.where ? `, ${p.where}` : ""}${p.label ? `, ${p.label}` : ""}\n${p.verses ? p.verses.map((v) => `${v.n} ${v.text}`).join(" ") : p.text}\nHighlighted: ${hl.length ? hl.join("; ") : "nothing yet"}${around ? `\nAround it on the page (for its setting, not for the slide): ${around}` : ""}${p.notes ? `\nHis speaker notes: ${p.notes}` : ""}`);
     });
     const cards = deck.items.filter((i) => i.type === "question" || i.type === "note").filter((i) => (i.text || "").trim());
-    if (cards.length) lines.push("Question and note slides he has written, in order:\n" + cards.map((c) => `- ${c.type === "question" ? "Question" : "Note"}: ${c.text.trim()}`).join("\n"));
+    if (cards.length) lines.push("Question and slide-text slides he has written, in order:\n" + cards.map((c) => `- ${c.type === "question" ? "Question" : "Slide text"}: ${c.text.trim()}`).join("\n"));
     lines.push(deck.links.length ? "Arrows drawn so far:" : "No arrows drawn yet.");
     deck.links.forEach((l, i) => {
       const a = endOf(l.from), b = endOf(l.to);
@@ -1038,17 +1190,24 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   }
 
   // Saved decks
+  // Saved decks: kept in memory, each written to the database on its own. No cap: the database
+  // has room, and dropping the oldest without a word is what this storage is here to stop.
   function saveNamed(nameGiven) {
-    const all = store.get("decks", []);
     const name = (nameGiven || "").trim() || deck.title || `Deck ${new Date().toLocaleDateString()}`;
-    const i = all.findIndex((d) => d.id === deck.id);
     const entry = { id: deck.id, title: name, updated: Date.now(), deck: JSON.parse(JSON.stringify(deck)) };
-    if (i >= 0) all[i] = entry; else all.unshift(entry);
-    store.set("decks", all.slice(0, 50));
-    flash(`Saved “${name}”.`);
+    savedDecks = [entry, ...savedDecks.filter((d) => d.id !== deck.id)];
+    putSaved(entry).then((ok) => { if (ok !== false) flash(`Saved “${name}”.`); });
+  }
+  function renameSaved(d) {
+    const name = (prompt("A new name for this deck", d.title) || "").trim();
+    if (!name || name === d.title) return false;
+    d.title = name;
+    if (d.deck) d.deck.title = d.deck.title || name;
+    putSaved(d);
+    return true;
   }
   function savedList(onBack, onPick) {
-    const all = store.get("decks", []);
+    const all = savedDecks;
     const box = el("div", { class: "deck saved" }, [
       el("div", { class: "crumbs" }, [el("button", { type: "button", text: "Back", onclick: onBack }), el("span", { text: "My decks" })]),
     ]);
@@ -1056,11 +1215,14 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     for (const d of all) {
       const n = (d.deck.items || []).filter((i) => i.type === "passage").length;
       box.append(el("div", { class: "deck-item" }, [
-        el("button", { type: "button", class: "body preview", onclick: () => { deck = migrate(JSON.parse(JSON.stringify(d.deck))) || blank(); pending = active = linking = null; save(); onPick(); } }, [
+        el("button", { type: "button", class: "body preview", onclick: () => { deck = migrate(JSON.parse(JSON.stringify(d.deck))) || blank(); pending = active = linking = null; naming = false; save(); onPick(); } }, [
           el("div", { class: "cite-edit", text: d.title }),
           el("div", { class: "where", text: `${n} ${n === 1 ? "passage" : "passages"}, ${new Date(d.updated).toLocaleDateString()}` }),
         ]),
-        el("div", { class: "tools" }, [el("button", { type: "button", "aria-label": "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; store.set("decks", all.filter((x) => x.id !== d.id)); box.replaceWith(savedList(onBack, onPick)); } })]),
+        el("div", { class: "tools" }, [
+          el("button", { type: "button", class: "rename", "aria-label": `Rename “${d.title}”`, text: "Rename", onclick: () => { if (renameSaved(d)) box.replaceWith(savedList(onBack, onPick)); } }),
+          el("button", { type: "button", class: "delete", "aria-label": `Delete “${d.title}”`, title: "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; savedDecks = savedDecks.filter((x) => x.id !== d.id); dropSaved(d.id); box.replaceWith(savedList(onBack, onPick)); } }),
+        ]),
       ]));
     }
     return box;
@@ -1472,7 +1634,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         n++;
         const s = slide();
         report.slides++; report.boxes++;
-        kicker(s, it.type === "question" ? "Question" : "Note");
+        // A question says so over a rule; slide text is the teacher's own words and needs no label in front of the room.
+        if (it.type === "question") kicker(s, "Question");
         const question = it.type === "question";
         const f = fitSize({ text, font: question ? SERIF : SANS, boxW: inner - (question ? 0.6 : 0), boxH: 3.3, max: question ? 36 : 26, min: 16, lineSpacing: 1.15, paraSpace: 6 });
         if (!f.fits) report.tight.push(n);
@@ -1751,6 +1914,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   window.Deck = {
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
+    ready, flush: () => writeCurrent(), // ready: the stored deck has arrived; flush: write now rather than a moment later
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
     // a question card with its words written (Ask's Think it through): addCard, then the text
