@@ -292,8 +292,11 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href); // a marker reached from elsewhere is its place
     overlay = null;
     hideNote(); if (!stage.hidden) stopPresenting();
-    readUrl(); syncControls(); render({ restore: history.state?.scroll || null });
+    readUrl(); syncControls();
+    if (keepTyped !== null) { input.value = keepTyped; keepTyped = null; } // a letter still in the box after a search too short to run
+    render({ restore: history.state?.scroll || null });
   });
+  let keepTyped = null;
 
   // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
   const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", jsp: "jsp" };
@@ -571,8 +574,18 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     return !words.every((w) => COMMON.has(w));
   }
   async function runSearch({ typeahead = false, silent = false, more = false, restore = null } = {}) {
-    const q = state.q.trim();
-    if (q.length < 2) { leaveSearch(); renderHome(); if (!silent) push(true); return; }
+    let q = state.q.trim();
+    // too short to search: back where the search began, and the address with it (no #search?q=a left behind)
+    if (q.length < 2) {
+      leaveSearch(); state.q = ""; state.view = null;
+      // the search was a step from that place: step back to it rather than leave it in history twice
+      if (!silent && here() > 0 && history.state?.place === "search" && history.state?.prevUrl === urlFor()) { keepTyped = input.value; history.back(); return; }
+      renderHome(); if (!silent) { push(true); setEntry({ place: placeNow(), label: labelNow() }); }
+      return;
+    }
+    // a reference half typed ("Alma 32:21-", "Alma 32:21,", "Alma 32:") keeps its card: the separator
+    // waiting for its second half is left off until it has one
+    if (/\d\s*[-–—,:;]\s*$/.test(q)) q = q.replace(/\s*[-–—,:;]\s*$/, "");
     if (typeahead) {
       if (!worthTyping(q)) return;
       if (typeBusy) { typeAgain = true; return; }
@@ -662,7 +675,9 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         el("span", { text: j.doc_id ? "›" : "" }),
       ]));
     }
-    if (data.smart) {
+    // how the search was read is said only over something found; over nothing, the empty line speaks alone
+    const found = !!(data.jump || data.hits.length || data.documents.length || (data.titles || []).length);
+    if (data.smart && found) {
       const sm = data.smart;
       const bits = [];
       if (sm.terms?.length) bits.push(sm.terms.join(", "));
