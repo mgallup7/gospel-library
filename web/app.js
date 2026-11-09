@@ -2,6 +2,7 @@
    The library lives on this device; engine.js (a Web Worker) holds it and
    answers searches. This file is the interface. */
 import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
+import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks.js";
 
 (() => {
   "use strict";
@@ -339,29 +340,37 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   // ------------------------------------------------------------- setup ----
   // The library is downloaded once per device and unlocked with the passphrase.
   // The engine keeps the library in OPFS through sync access handles in a worker, which iOS has
-  // from 16.4. Returns [major, minor] on an iPhone or iPad, else null. iPadOS asks for desktop
-  // pages and reports itself as a Mac, so a Mac with a touch screen is read by its Safari version.
-  function iosVersion(ua, touch) {
-    let m = /(?:iPhone|iPad|iPod)[^)]*? OS (\d+)(?:_(\d+))?/.exec(ua);
-    if (!m && touch && /Macintosh/.test(ua)) m = /Version\/(\d+)(?:\.(\d+))?.*Safari\//.exec(ua);
-    return m ? [Number(m[1]), Number(m[2] || 0)] : null;
-  }
-  const iosTooOld = (v) => !!v && (v[0] < 16 || (v[0] === 16 && v[1] < 4));
+  // from 16.4. The engine says whether this browser has them (lib/checks.js needsNewerIos); the
+  // user agent only words the message, since the iPad's home-screen app may not name its version.
   const IOS_UPDATE = "To update, open Settings, then General, then Software Update. Meanwhile it works in Safari on a Mac.";
+  let engineCapable = null; // the engine's report: true when it can keep the library here
   function showTooOld(v) {
     readerPane.hidden = true;
     listPane.hidden = false;
     document.body.classList.add("first-run");
     listPane.replaceChildren(el("div", { class: "setup" }, [
       el("h1", { text: "Update this iPhone or iPad first" }),
-      el("p", { class: "lede", text: `This app needs iOS 16.4 or later to keep the library on the device; this one has iOS ${v[0]}.${v[1]}.` }),
+      el("p", { class: "lede", text: v
+        ? `This app needs iOS 16.4 or later to keep the library on the device; this one has iOS ${v[0]}.${v[1]}.`
+        : "This app needs iOS 16.4 or later to keep the library on the device, and this one has an earlier version." }),
       el("p", { class: "lede", text: IOS_UPDATE }),
     ]));
   }
 
   async function ensureLibrary() {
-    const ios = iosVersion(navigator.userAgent, "ontouchend" in document);
-    if (iosTooOld(ios)) { showTooOld(ios); return false; }
+    // Asked before the engine opens its storage; no answer in 15 s and the engine simply tries
+    const ua = navigator.userAgent, touch = "ontouchend" in document;
+    let features = null;
+    try { features = await Promise.race([call("features"), new Promise((r) => setTimeout(() => r(null), 15000))]); }
+    catch (err) {
+      // the engine's worker could not even start: on an iPhone or iPad, an iOS too old to run it,
+      // unless the user agent names one new enough (then it is some other fault)
+      const v = iosVersion(ua, touch);
+      if (looksLikeIos(ua, touch) && !(v && (v[0] > 16 || (v[0] === 16 && v[1] >= 4)))) { showTooOld(v); return false; }
+      showFatal(`The library engine could not start: ${err.message}`); return false;
+    }
+    if (features) engineCapable = !!features.syncAccess && features.syncMethods !== false;
+    if (needsNewerIos(features, ua, touch)) { showTooOld(iosVersion(ua, touch)); return false; }
     const active = store.get("active");
     let status;
     try { status = await call("open", { slot: active?.slot }); }
@@ -451,7 +460,8 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
 
   function showFatal(text) {
     // on an iPhone or iPad the likeliest cause is an iOS without what the engine needs
-    const ios = iosVersion(navigator.userAgent, "ontouchend" in document);
+    // (never on a browser whose engine said it can keep the library)
+    const ios = engineCapable !== true && looksLikeIos(navigator.userAgent, "ontouchend" in document);
     const hint = ios ? el("p", { class: "fine", text: `This app needs iOS 16.4 or later. ${IOS_UPDATE}` }) : null;
     listPane.replaceChildren(el("div", { class: "setup" }, [el("h1", { text: "Something is wrong" }), el("p", { class: "lede", text }), hint].filter(Boolean)));
   }
@@ -465,7 +475,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     let manifest;
     try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { return; }
     if (!active || manifest.version === active.version) return;
-    const delta = (manifest.deltas || []).find((d) => d.from === active.version && d.size < manifest.bundle_size * 0.6) || null;
+    const delta = pickDelta(manifest, active.version);
     const when = new Date(manifest.built_at).toLocaleDateString([], { month: "short", day: "numeric" });
     const banner = el("div", { class: "banner" }, [
       el("span", { text: delta
@@ -2027,7 +2037,47 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   const ICON_PRESENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
   const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
+  // The app's own files come from the service worker's cache, as one set (sw.js). A newer set
+  // installs behind the page; once all of it is in, a quiet notice offers it, and Reload hands
+  // over to it. Left alone it waits, and takes over when the app next starts from cold.
+  // HTTPS only; a test turns it on over http on this machine with gospel.sw in localStorage.
+  function watchShell() {
+    if (!("serviceWorker" in navigator)) return;
+    if (location.protocol !== "https:" && !(window.isSecureContext && store.get("sw") === true)) return;
+    const sw = navigator.serviceWorker;
+    const hadController = !!sw.controller;
+    let reloading = false;
+    sw.addEventListener("controllerchange", () => {
+      if (reloading) { location.reload(); return; }
+      // another tab took the new version: this one is still running the old files
+      if (hadController) shellNotice(null);
+    });
+    sw.register(new URL("sw.js", BASE)).then((reg) => {
+      const offer = (w) => { if (w && sw.controller) shellNotice(w); }; // a first install has nothing to replace
+      if (reg.waiting) offer(reg.waiting);
+      reg.addEventListener("updatefound", () => {
+        const w = reg.installing;
+        if (w) w.addEventListener("statechange", () => { if (w.state === "installed") offer(w); });
+      });
+      // a home-screen app can stay open for days: look for a new version when it comes back
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(() => {});
+    function shellNotice(waiting) {
+      if ($(".banner.shell-update")) return;
+      const banner = el("div", { class: "banner shell-update", role: "status" }, [
+        el("span", { text: "A new version is ready." }),
+        el("button", { class: "text-btn", type: "button", text: "Reload", onclick: () => {
+          if (!waiting || waiting.state !== "installed") { location.reload(); return; }
+          reloading = true;
+          waiting.postMessage({ type: "take-over" });
+          setTimeout(() => location.reload(), 4000); // in case the hand-over is never announced
+        } }),
+        el("button", { class: "icon-btn", type: "button", "aria-label": "Later", text: "×", onclick: () => banner.remove() }),
+      ]);
+      $("header.bar").after(banner);
+    }
+  }
+  watchShell();
 
   // Search by meaning: the model (35 MB, once) and the paragraphs' vectors load
   // quietly after the library is open; until then search goes by words alone.

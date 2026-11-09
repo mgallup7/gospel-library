@@ -127,6 +127,26 @@ async function bootOnce() {
     mode = "memory";
   }
 }
+// A file of its own name, so another tab's probe or the library's pool is never in the way
+async function probeSyncHandle() {
+  const name = `.probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  let root = null;
+  try {
+    root = await navigator.storage.getDirectory();
+    const handle = await (await root.getFileHandle(name, { create: true })).createSyncAccessHandle();
+    try {
+      const size = handle.getSize();
+      if (size && typeof size.then === "function") { await size.catch(() => {}); return false; }
+      return typeof size === "number";
+    } finally {
+      try { const closed = handle.close(); if (closed && typeof closed.then === "function") await closed; } catch (_) {}
+    }
+  } catch (_) {
+    return null;
+  } finally {
+    if (root) root.removeEntry(name).catch(() => {});
+  }
+}
 let locked = false;
 let exclusive = null; // a promise while a delta is being applied: other calls wait for it
 
@@ -145,6 +165,15 @@ function forgetDerived() {
 }
 
 const methods = {
+  // What this browser can do, reported before the storage is opened. The library needs sync
+  // access handles, which exist only inside a worker, so the page cannot look for itself. An
+  // earlier WebKit had the class with methods that returned promises, which sqlite cannot use:
+  // one throwaway handle tells the two apart (null when that cannot be tried).
+  async features() {
+    const syncAccess = typeof FileSystemSyncAccessHandle === "function";
+    const syncMethods = syncAccess ? await Promise.race([probeSyncHandle(), new Promise((r) => setTimeout(() => r(null), 2000))]) : false;
+    return { syncAccess, syncMethods };
+  },
   async open({ slot }) {
     await boot();
     closeDb();
@@ -227,13 +256,15 @@ const methods = {
       if (!entry) throw new Error("no delta from this build");
       const url = new URL(entry.file + "?v=" + encodeURIComponent(manifest.version), manifestUrl).href;
       const sealed = await openSealed(url, passphrase, entry.size, progress, { kind: "delta", from: have, version: manifest.version });
-      const bytes = await sealed.all();
+      let bytes = await sealed.all();
+      const size = bytes.length;
       progress({ phase: "install", loaded: 0, total: 1 });
       db.exec("ATTACH DATABASE ':memory:' AS d");
       let attached = true;
       try {
         const p = sqlite3.wasm.allocFromTypedArray(bytes);
-        const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, "d", p, bytes.length, bytes.length,
+        bytes = null; // the copy in the wasm heap is the one used: one copy of the delta, not two, through the transaction
+        const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, "d", p, size, size,
           sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_RESIZEABLE);
         if (rc) throw new Error("the update could not be read");
         const info = Object.fromEntries(rows("SELECT key, value FROM d.delta_meta").map((r) => [r.key, JSON.parse(r.value)]));
@@ -284,7 +315,7 @@ const methods = {
         progress({ phase: "install", loaded: 1, total: 1 });
         current = { ...(current || {}), version: info.to, builtAt: manifest.built_at };
         setTimeout(buildVocabulary, 1500);
-        return { hasLibrary: true, mode, ...current, manifest, applied: { changed: info.documents_changed, removed: info.documents_removed, vectors: info.vecbits, bytes: bytes.length } };
+        return { hasLibrary: true, mode, ...current, manifest, applied: { changed: info.documents_changed, removed: info.documents_removed, vectors: info.vecbits, bytes: size } };
       } finally {
         if (attached) { try { db.exec("DETACH DATABASE d"); } catch (_) {} }
       }
@@ -599,8 +630,11 @@ async function search(params) {
   // (a "light" search, the kind Claude's widening pass runs, goes by words alone and is not kept)
   const key = JSON.stringify([q, scope, speaker, from, to, book, edition, exclude_edition, asTyped, semReady()]);
   if (!typeahead && !light && lastRanked && lastRanked.key === key) return page(lastRanked.out, offset, limit, t0);
+  // Kept only if the library is the one the search began on: a search that waited on the model
+  // while an update was applied may have read rows the update then rolled back.
+  const gen = libraryGen;
   const out = await rankedSearch(q, { ...filters, typeahead, light, asTyped });
-  if (!typeahead && !light) lastRanked = { key, out };
+  if (!typeahead && !light && gen === libraryGen) lastRanked = { key, out };
   return page(out, offset, limit, t0);
 }
 let lastRanked = null;
