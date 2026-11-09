@@ -28,7 +28,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
 - Every match, when you want them all: the "800 with these words" count
   above the results opens a concordance, each passage in the order of the
   books under its chapter or talk with the count, the words marked, a tap
-  from its place; Back returns to the ranked results.
+  from its place; Back returns to the ranked results. Chips at the head
+  count each book ("Alma 83 · Ether 32") and narrow the list to one; an
+  "Exact words | Word family" switch keeps faith apart from faithful; a "+"
+  on each passage puts it on the deck.
 - Results with their context. The best match is shown in its place, with
   the verse or paragraph before and after it, and Open, + Deck and Present
   right there. The other hits from the same chapter or talk are folded

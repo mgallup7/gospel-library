@@ -444,6 +444,23 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .conc-doc .t { font: 600 14px var(--sans); color: var(--ink); }
 .conc-doc .m { font-size: 12px; color: var(--ink-3); text-align: right; }
 .conc-doc.on .t { color: var(--accent); }
+.conc-tools { display: flex; margin: 10px 0 2px; }
+.conc-seg { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--chrome-2); font-family: var(--sans); }
+.conc-seg button { height: 30px; padding: 0 12px; border-radius: 7px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.conc-seg button.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
+/* the books with their counts: a few rows of chips on the iPad, one row that scrolls sideways on a phone */
+.conc-books { position: relative; display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; max-height: 122px; overflow-y: auto; font-family: var(--sans); }
+.conc-books .chip { flex: none; height: 30px; padding: 0 10px; white-space: nowrap; }
+.conc-books .chip b { font-weight: 600; color: var(--ink-3); }
+.conc-books .chip.on b { color: var(--accent); }
+@media (max-width: 759px) {
+  .conc-books { flex-wrap: nowrap; max-height: none; overflow-x: auto; overflow-y: hidden; margin-left: -16px; margin-right: -16px; padding: 0 16px 4px; scrollbar-width: none; }
+  .conc-books::-webkit-scrollbar { display: none; }
+}
+.conc-line { display: flex; align-items: stretch; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
+.conc-line .conc-row { flex: 1; min-width: 0; border-bottom: 0; }
+.conc-line .add { width: 44px; flex: none; color: var(--accent); font-size: 20px; }
+.conc-line .add:active { background: var(--chrome); }
 .conc-row { display: flex; gap: 8px; align-items: baseline; width: 100%; padding: 6px 16px 6px 20px; text-align: left; font: calc(var(--reading-size) - 2px)/1.45 var(--serif); color: var(--ink); border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
 .conc-row .vn { flex: none; font: 600 11px var(--sans); color: var(--ink-3); min-width: 18px; }
 .conc-row .snip mark { background: transparent; color: var(--accent); font-weight: 600; }
