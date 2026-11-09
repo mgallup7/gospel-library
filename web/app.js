@@ -1587,24 +1587,36 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   // toast(text, { action: "Undo", onAction }) adds a button and stays about five seconds, long
   // enough to reach it; the plain toast still goes after two. A newer toast replaces an older one.
+  // There is one toast element, a live region made once and kept: VoiceOver reads a change to its
+  // words, where a status element created already filled is often missed. Cmd+Z or Ctrl+Z presses
+  // its Undo while it shows (VoiceOver cannot reach the button in five seconds).
+  let toastEl = null, toastTimer = null, toastAct = null;
+  function toastClose() { clearTimeout(toastTimer); toastAct = null; toastEl?.classList.remove("show"); }
+  function toastArm(ms) { clearTimeout(toastTimer); toastTimer = setTimeout(toastClose, ms); }
   function toast(text, { action, onAction } = {}) {
-    for (const old of document.querySelectorAll(".toast")) old.remove();
-    const t = el("div", { class: "toast" + (action ? " has-action" : ""), role: "status" }, [el("span", { text })]);
-    let timer = null;
-    const close = () => { clearTimeout(timer); t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
-    const arm = (ms) => { clearTimeout(timer); timer = setTimeout(close, ms); };
-    if (action) {
-      t.append(el("button", { type: "button", class: "toast-action", text: action, onclick: () => { close(); try { onAction?.(); } catch (_) {} } }));
-      // a finger or the focus on the button keeps it from going away under them
-      t.addEventListener("pointerenter", () => clearTimeout(timer));
-      t.addEventListener("pointerleave", () => arm(2500));
-      t.addEventListener("focusin", () => clearTimeout(timer));
-      t.addEventListener("focusout", () => arm(2500));
+    if (!toastEl) {
+      toastEl = el("div", { id: "toast", class: "toast", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+      // a finger or the focus on its button keeps it from going away under them
+      toastEl.addEventListener("pointerenter", () => { if (toastAct) clearTimeout(toastTimer); });
+      toastEl.addEventListener("pointerleave", () => { if (toastAct) toastArm(2500); });
+      toastEl.addEventListener("focusin", () => { if (toastAct) clearTimeout(toastTimer); });
+      toastEl.addEventListener("focusout", () => { if (toastAct) toastArm(2500); });
+      document.body.append(toastEl);
+      void toastEl.offsetWidth; // laid out hidden first, so the first toast slides in like the rest
     }
-    document.body.append(t);
-    setTimeout(() => t.classList.add("show"), 10);
-    arm(action ? 5000 : 1800);
+    const t = toastEl;
+    toastAct = action ? () => { toastClose(); try { onAction?.(); } catch (_) {} } : null;
+    t.className = "toast show" + (action ? " has-action" : "");
+    t.replaceChildren(...[el("span", { text }), action ? el("button", { type: "button", class: "toast-action", text: action, onclick: () => toastAct?.() }) : null].filter(Boolean));
+    toastArm(action ? 5000 : 1800);
   }
+  document.addEventListener("keydown", (e) => {
+    if (!toastAct || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return; // a field's own undo comes first
+    e.preventDefault();
+    toastAct();
+  });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
   function deckToast(added, text) {
     const ids = added ? window.Deck?.lastAdded?.() || [] : [];
@@ -2023,6 +2035,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       const vv = window.visualViewport;
       if (vv) { vv.addEventListener("resize", liftSheet); vv.addEventListener("scroll", liftSheet); }
       liftSheet();
+      inertBehind(sheet, true);
     }
     if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: () => { if (!keepTyped()) closeSheet(); } }); scrim.id = "scrim"; document.body.append(scrim); }
     $(".sheet-body", sheet).onclick = (e) => {
@@ -2039,6 +2052,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   function hideNote() {
     const wasOpen = !sheet.hidden;
     sheet.hidden = true; $("#scrim")?.remove();
+    inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
     const vv = window.visualViewport;
     if (vv) { vv.removeEventListener("resize", liftSheet); vv.removeEventListener("scroll", liftSheet); }
@@ -2047,6 +2061,26 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     sheetOpener = null;
   }
   function closeSheet() { const had = overlay === "sheet"; hideNote(); if (had) dropOverlay("sheet"); }
+  // A dialog over the page (the sheet, the stage) is modal: aria-modal on it, and everything else
+  // in the body inert while it is open, so VoiceOver and Tab stay inside it. The toast stays live
+  // (its Undo must stay reachable). inertBehind(node, false) undoes exactly what it did; the stage
+  // calls it from openStage and stopPresenting.
+  const inertSets = new Map(); // dialog -> the elements it made inert
+  function inertBehind(node, on) {
+    if (!node) return;
+    if (on) {
+      if (inertSets.has(node)) return;
+      node.setAttribute("aria-modal", "true");
+      const list = [...document.body.children].filter((n) => n !== node && !n.contains(node) && !n.inert && n.id !== "scrim" && n.id !== "toast" && n.tagName !== "SCRIPT");
+      for (const n of list) n.inert = true;
+      inertSets.set(node, list);
+    } else {
+      const list = inertSets.get(node);
+      if (!list) return;
+      for (const n of list) n.inert = false;
+      inertSets.delete(node);
+    }
+  }
   // The iPhone keyboard covers the bottom of the layout viewport, and the sheet with it: while it
   // is up the sheet sits on top of it (the visual viewport's bottom), so Save stays in reach.
   function liftSheet() {

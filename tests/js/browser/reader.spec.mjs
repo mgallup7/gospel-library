@@ -48,6 +48,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.keyboard.press("Enter");
     await page.waitForTimeout(400);
     check((await active()) === moved, `focus returns to the verse after Add to deck (${await active()})`);
+    // one toast element, a live region; Ctrl+Z presses its Undo
+    check(await page.evaluate(() => document.querySelectorAll(".toast").length === 1 && document.querySelector("#toast").getAttribute("role") === "status"), "one persistent toast live region");
+    check(await page.evaluate(() => window.Deck.count()) === 1, "one passage on the deck");
+    await page.keyboard.press("Control+z");
+    await page.waitForTimeout(300);
+    check(await page.evaluate(() => window.Deck.count()) === 0, "Ctrl+Z undoes the add while the toast shows");
+    check(await page.evaluate(() => document.querySelectorAll(".toast").length === 1 && /Taken off/.test(document.querySelector("#toast").textContent)), "the same toast says what Undo did");
     // Esc with words typed in a note keeps them; Cancel lets them go
     await page.click(`#reader .doc #${moved}`);
     await page.click("#reader .select-bar button:has-text('Note')");
@@ -57,9 +64,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(300);
     check(await page.evaluate(() => !document.querySelector("#sheet").hidden && document.querySelector("#sheet .note-text").value === "Half a thought"), "Esc keeps a note with words in it");
     check((await page.evaluate(() => getComputedStyle(document.querySelector("#sheet .note-text")).fontSize)) === "16px", "the note field is 16px, so Safari does not zoom");
+    check(await page.evaluate(() => document.querySelector("#sheet").getAttribute("aria-modal") === "true" && document.querySelector("main").inert && document.querySelector("header.bar").inert && !document.querySelector("#toast").inert), "the sheet is modal: the page behind is inert, the toast is not");
+    await shot("02-note-sheet");
     await page.click("#sheet .peek-row button:has-text('Cancel')");
     await page.waitForTimeout(300);
     check(await page.evaluate(() => document.querySelector("#sheet").hidden), "Cancel closes it");
+    check(await page.evaluate(() => !document.querySelector("main").inert && !document.querySelector("header.bar").inert), "the page is live again when the sheet closes");
     await page.click("#reader .select-bar .clear-sel");
     // Back on the phone lands on the row of the page just left
     if (viewport.width < 760) {

@@ -644,6 +644,8 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
   body:has(.toast.show) .fab-think { opacity: 0; pointer-events: none; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* the one toast stays in the page between messages: hidden from touch and VoiceOver once it fades */
+.toast:not(.show) { visibility: hidden; pointer-events: none; transition: opacity .2s, transform .2s, visibility 0s .2s; }
 .toast.has-action { display: flex; align-items: center; gap: 12px; padding: 4px 4px 4px 16px; pointer-events: auto; width: max-content; max-width: calc(100vw - 32px); }
 .toast-action { height: 40px; padding: 0 14px; border-radius: 8px; color: var(--paper); font: 600 14px var(--sans); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .toast-action:active { background: rgba(127,127,127,.25); }
