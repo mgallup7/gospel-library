@@ -1085,26 +1085,116 @@ function allMatches({ words, phrase, mode = "any", scope = "all", limit = 400, e
 }
 
 // The concordance behind "N with these words": the same match and filters the search counted
-// with, so the number on the button is the number of rows here. Ids are sorted first (the joins
-// carry the reading order), then the text is fetched for the rows shown.
-function concordance({ match, filters = {}, limit = 600 }) {
-  if (!match) return { total: 0, passages: [], by_document: [], query: "" };
+// with, so the number on the button is the number of rows here. One pass over the matches
+// groups them by chapter or talk, in reading order, with their rowids and no text; the counts,
+// the book chips and the rows to show all come from it, and the text is fetched afterwards for
+// the rows shown. `book` narrows to one chip (the chips themselves stay counted without it);
+// `exact` keeps the words as typed: the index stems (faith and faithful are one entry), so the
+// words are checked again in the text, by gl_exact, for the matches the index found.
+const CONC_BOOK = "COALESCE(d.book_slug, 'b' || d.book_id, c.slug)";
+function concordance({ match, filters = {}, limit = 600, book = null, exact = false }) {
+  if (!match) return { total: 0, passages: [], by_document: [], by_book: [], query: "" };
   const cq = { collections: filters.collections || [], speaker: filters.speaker || null, yearFrom: filters.yearFrom || null, yearTo: filters.yearTo || null,
     bookSlug: filters.bookSlug || null, volume: filters.volume || null, edition: filters.edition || null, excludeEdition: filters.excludeEdition || null };
   const { where, params } = whereParts(cq);
+  const words = exactWords(match);
+  const exactOn = !!exact && !!exactTest(match);
+  if (exactOn) { ensureExactFn(); where.push("gl_exact(p.text, ?)"); params.push(match); }
   const cond = ["paragraphs MATCH ?", ...where].join(" AND ");
-  let total = 0, ids = [], byDoc = [];
+  let groups;
   try {
-    total = countRows(match, cq);
-    ids = rows(`SELECT p.rowid AS id${PASSAGE_FROM} WHERE ${cond} ORDER BY d.sort_key, p.seq LIMIT ?`, [match, ...params, Math.min(limit, 1000)]).map((r) => r.id);
-    byDoc = rows(`SELECT d.id AS doc_id, COUNT(*) AS n${PASSAGE_FROM} WHERE ${cond} GROUP BY d.id ORDER BY d.sort_key`, [match, ...params]);
+    groups = rows(`SELECT d.id AS doc_id, ${CONC_BOOK} AS bk, COALESCE(d.book_name, b.title, c.title) AS bname, COUNT(*) AS n, group_concat(p.rowid) AS ids${PASSAGE_FROM}
+                    WHERE ${cond} GROUP BY d.id ORDER BY d.sort_key, d.id`, [match, ...params]);
   } catch (err) {
-    return { total: 0, passages: [], by_document: [], query: match, error: err.message };
+    return { total: 0, passages: [], by_document: [], by_book: [], query: match, error: err.message };
   }
-  if (!ids.length) return { total, passages: [], by_document: byDoc, query: match };
-  const details = new Map(rows(`SELECT ${PASSAGE_COLS}${PASSAGE_FROM} WHERE p.rowid IN (${ids.map(() => "?").join(",")})`, ids).map((r) => [r.paragraph_id, r]));
-  const passages = ids.map((id) => details.get(id)).filter(Boolean).map((r) => ({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, citation: citation(r, r.verse) }));
-  return { total, query: match, by_document: byDoc, passages };
+  const books = new Map();
+  for (const g of groups) {
+    const b = books.get(g.bk);
+    if (b) b.n += g.n; else books.set(g.bk, { key: g.bk, name: g.bname, n: g.n });
+  }
+  const shown = book && books.has(book) ? groups.filter((g) => g.bk === book) : groups;
+  const total = shown.reduce((a, g) => a + g.n, 0);
+  const cap = Math.min(limit, 1000);
+  // a document's paragraphs hold a contiguous run of rowids in reading order, so the first rows are
+  // the first documents' smallest rowids; the text then comes for those alone
+  const ids = [];
+  for (const g of shown) {
+    if (ids.length >= cap) break;
+    const mine = String(g.ids).split(",").map(Number).sort((a, b) => a - b);
+    ids.push(...mine.slice(0, cap - ids.length));
+  }
+  const by_document = shown.map((g) => ({ doc_id: g.doc_id, n: g.n }));
+  const out = { total, query: match, by_document, by_book: [...books.values()], book: book && books.has(book) ? book : null, exact: exactOn, words };
+  if (!ids.length) return { ...out, passages: [] };
+  const order = new Map(ids.map((id, i) => [id, i]));
+  const details = rows(`SELECT ${PASSAGE_COLS}${PASSAGE_FROM} WHERE p.rowid IN (${ids.map(() => "?").join(",")})`, ids)
+    .sort((a, b) => (a.document_id === b.document_id ? a.seq - b.seq : order.get(a.paragraph_id) - order.get(b.paragraph_id)));
+  out.passages = details.map((r) => ({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, citation: citation(r, r.verse) }));
+  return out;
+}
+// The words of an FTS match as a test on plain text, the words whole: `"faith"` finds faith and
+// not faithful, `"plan of salvation"` those words in that order, `"redeem"*` (a prefix asked for)
+// any word that starts so. AND, OR, NOT and brackets keep their sense; what a NOT excludes the
+// index has excluded already. A match this cannot read (NEAR, a column) gives null: no exact mode.
+const exactCache = new Map();
+const foldText = (s) => String(s || "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+function parseExact(match) {
+  const toks = [];
+  const re = /\s*(?:"((?:[^"]|"")*)"(\*?)|(\()|(\))|([\p{L}\p{N}'’]+)(\*?))/uy;
+  let m, at = 0;
+  const src = String(match);
+  while (at < src.length) {
+    re.lastIndex = at;
+    if (!(m = re.exec(src))) { if (/^\s*$/.test(src.slice(at))) break; return null; }
+    at = re.lastIndex;
+    if (m[3]) toks.push({ t: "(" });
+    else if (m[4]) toks.push({ t: ")" });
+    else if (m[5] && !m[6] && /^(AND|OR|NOT)$/.test(m[5])) toks.push({ t: m[5] });
+    else if (m[5] && /^NEAR$/.test(m[5])) return null;
+    else {
+      const ws = foldText(m[1] !== undefined ? m[1].replace(/""/g, '"') : m[5]).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      if (!ws.length) return null;
+      toks.push({ t: "w", ws, prefix: !!(m[2] || m[6]) });
+    }
+  }
+  let i = 0;
+  const peek = () => toks[i]?.t;
+  const prim = () => {
+    if (peek() === "(") { i++; const e = orE(); if (peek() !== ")") throw new Error("bracket"); i++; return e; }
+    if (peek() === "w") {
+      const { ws, prefix } = toks[i++];
+      const body = ws.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\p{L}\\p{N}]+");
+      const rx = new RegExp(`(?<![\\p{L}\\p{N}])${body}${prefix ? "" : "(?![\\p{L}\\p{N}])"}`, "u");
+      return { test: (s) => rx.test(s), words: ws };
+    }
+    throw new Error("term");
+  };
+  const notE = () => { let e = prim(); while (peek() === "NOT") { i++; prim(); } return e; };
+  const andE = () => {
+    const parts = [notE()];
+    while (peek() === "AND" || peek() === "w" || peek() === "(") { if (peek() === "AND") i++; parts.push(notE()); }
+    return parts.length === 1 ? parts[0] : { test: (s) => parts.every((p) => p.test(s)), words: parts.flatMap((p) => p.words) };
+  };
+  const orE = () => {
+    const parts = [andE()];
+    while (peek() === "OR") { i++; parts.push(andE()); }
+    return parts.length === 1 ? parts[0] : { test: (s) => parts.some((p) => p.test(s)), words: parts.flatMap((p) => p.words) };
+  };
+  try { const e = orE(); return i === toks.length ? e : null; } catch (_) { return null; }
+}
+function exactOf(match) {
+  if (!exactCache.has(match)) { if (exactCache.size > 200) exactCache.clear(); exactCache.set(match, parseExact(match)); }
+  return exactCache.get(match);
+}
+function exactTest(match) { return exactOf(match)?.test || null; }
+function exactWords(match) { return [...new Set(exactOf(match)?.words || [])]; }
+// gl_exact(text, match) for SQL; registered on whichever database is open, once.
+let exactFnDb = null;
+function ensureExactFn() {
+  if (exactFnDb === db) return;
+  db.createFunction("gl_exact", (_ctx, text, match) => { const t = exactTest(String(match)); return !t || t(foldText(text)) ? 1 : 0; }, { arity: 2, deterministic: true });
+  exactFnDb = db;
 }
 
 function allVerses(words, volume, limit) {

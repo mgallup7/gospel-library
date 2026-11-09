@@ -76,7 +76,10 @@ Five to eight passages from across the library, strongest first, one line each: 
 Only for a Bible chapter: one or two words worth knowing, each with the Hebrew or Greek word, its transliteration, what it means here, and where else it appears. Leave this heading out for any other page.
 
 ## Questions
-Three or four questions a teacher could ask a zone or a class, each one the page itself answers.
+Three questions a teacher could ask a zone or a class, one of each kind, the way Preach My Gospel teaches: one the page answers in its own words, one that asks what it means or what principle it teaches, and one that invites a commitment to act on it. Each on its own line, beginning with its label exactly as written here, then a colon:
+What it says: (a question the passage itself answers; cite the verse or paragraph with its [n] when a tool returned it)
+What it means: (a question about meaning or principle, one that takes pondering, not recall)
+What you will do: (a question that invites a commitment, asked to the person, specific enough to act on this week)
 
 ## For the deck
 One line: a title for a deck section built from this page (six words at most, in quotation marks), then the [n] numbers of the connections to put on it, in teaching order.
@@ -324,16 +327,42 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     }
   }
 
-  // "For the deck" names a section and the passages for it; one tap builds it.
+  // The Questions of a Think it through, by kind: [{ kind: "says" | "means" | "do" | null, label, text }].
+  // Each line carries its label ("What it means: …"); an unlabelled question still counts.
+  const QUESTION_KINDS = [["says", "What it says"], ["means", "What it means"], ["do", "What you will do"]];
+  function thinkQuestions(reply) {
+    const m = String(reply || "").match(/##\s*Questions\s*\n([\s\S]*?)(?:\n##|$)/i);
+    if (!m) return [];
+    const out = [];
+    for (const raw of m[1].split("\n")) {
+      const line = raw.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim();
+      if (!line) continue;
+      const lm = line.match(/^\**\s*(What it says|What it means|What (?:you will|will you) do)\s*\**\s*[:.\u2013\u2014-]?\s*\**\s*(.+)$/i);
+      const kind = lm ? QUESTION_KINDS[/says/i.test(lm[1]) ? 0 : /means/i.test(lm[1]) ? 1 : 2] : null;
+      const text = (lm ? lm[2] : line).replace(/\s*\[\d+\](?:\s*\[\d+\])*/g, "").replace(/\*+/g, "").trim();
+      if (!lm && !/\?\s*$/.test(text)) continue; // a line of prose, not a question
+      if (text.length < 8) continue;
+      out.push({ kind: kind ? kind[0] : null, label: kind ? kind[1] : "Question", text });
+    }
+    return out.slice(0, 6);
+  }
+
+  // "For the deck" names a section and the passages for it; one tap builds it. The questions
+  // come under it as question cards, each a tap of its own.
   function offerSection(toolsEl, reply, passages, findings) {
     const m = String(reply).match(/##\s*For the deck\s*\n([\s\S]*?)(?:\n##|$)/i);
-    if (!m) return;
-    const line = m[1].trim();
+    const questions = thinkQuestions(reply);
+    if ((!m && !questions.length) || !window.Deck) return;
+    const line = m ? m[1].trim() : "";
     const title = (line.match(/[“"]([^”"]{2,80})[”"]/) || [])[1] || "";
     const nums = [...new Set([...line.matchAll(/\[(\d+)\]/g)].map((x) => Number(x[1])))].filter((n) => passages[n - 1]);
-    if (!nums.length || !window.Deck) return;
+    // the section heading goes on once, by whichever tap comes first, so the questions sit under it
+    let section = null;
+    const ensureSection = () => { if (title && !section) section = window.Deck.addSection(title); };
+    if (questions.length) toolsEl.before(questionOffers(questions, ensureSection));
+    if (!nums.length) return;
     const btn = el("button", { type: "button", class: "primary small", text: `Put ${nums.length === 1 ? "it" : `these ${nums.length}`} on the deck${title ? ` as “${title}”` : ""}`, onclick: () => {
-      if (title) window.Deck.addSection(title);
+      ensureSection();
       let added = 0;
       for (const n of nums) { const p = passages[n - 1]; if (p && !window.Deck.has(p.doc_id, p.pid)) { window.Deck.addPassage(findings.forDeck(p)); added++; } }
       findings.sync();
@@ -343,6 +372,29 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       if (GL().wide) window.Deck.showBoard();
     } });
     toolsEl.prepend(btn);
+  }
+  // The three questions, each with its kind and a one-tap add: a question card on the deck, with Undo.
+  function questionOffers(questions, ensureSection) {
+    return el("div", { class: "think-questions", role: "group", "aria-label": "Questions for the deck" }, [
+      el("div", { class: "tq-head", text: "Questions for the deck" }),
+      ...questions.map((q) => {
+        const btn = el("button", { type: "button", class: "primary small", text: "+ Deck", "aria-label": `Add the question “${q.text}” to the deck`, onclick: () => {
+          ensureSection();
+          const card = window.Deck.addQuestion(q.text);
+          btn.textContent = "On the deck"; btn.disabled = true;
+          GL().toast("Question on the deck.", { action: "Undo", onAction: () => {
+            window.Deck.removeIds([card.id]);
+            btn.textContent = "+ Deck"; btn.disabled = false;
+            GL().toast("Taken off the deck.");
+          } });
+          if (GL().wide) window.Deck.showBoard();
+        } });
+        return el("div", { class: "tq", "data-kind": q.kind || "" }, [
+          el("div", { class: "tq-body" }, [el("div", { class: "tq-kind", text: q.label }), el("div", { class: "tq-text", text: q.text })]),
+          btn,
+        ]);
+      }),
+    ]);
   }
 
   function friendlyError(err) {
@@ -916,5 +968,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   }
 
   function modelName() { return MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model; }
-  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key, complete, modelName, subjectFor };
+  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key, complete, modelName, subjectFor,
+    // for tests: the Think it through prompt and how its questions are read back
+    thinkPrompt: SYSTEM_THINK, thinkQuestions };
 })();

@@ -118,3 +118,30 @@ test("an API error still comes through as itself, not as a timeout", async () =>
   const { Ask } = load(() => Promise.resolve(new Response(JSON.stringify({ error: { message: "invalid x-api-key" } }), { status: 401 })));
   await assert.rejects(Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: false }), /401 invalid x-api-key/);
 });
+
+test("Think it through asks for three kinds of question, labelled, the way Preach My Gospel teaches", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const p = Ask.thinkPrompt;
+  const q = p.slice(p.indexOf("## Questions"), p.indexOf("## For the deck"));
+  assert.match(q, /Preach My Gospel/);
+  for (const label of ["What it says:", "What it means:", "What you will do:"]) assert.ok(q.includes(label), `the prompt names ${label}`);
+  assert.match(q, /commitment/);
+  assert.doesNotMatch(p, /each one the page itself answers/, "the old recall-only wording is gone");
+  // the headings still come in their order, For the deck last
+  const order = ["## What this page teaches", "## Connections", "## In the original", "## Questions", "## For the deck"].map((h) => p.indexOf(h));
+  assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), "headings in order");
+});
+
+test("the questions of a Think it through are read back by kind, without their citations", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const reply = `## What this page teaches\nFaith is a seed.\n\n## Questions\n- **What it says:** What does Alma compare the word to? [2]\n2. What it means: Why does Alma call faith an experiment rather than a certainty?\n* What will you do: What will you plant this week, and how will you nourish it?\n\n## For the deck\n"Faith as a seed" [1] [2]`;
+  const qs = JSON.parse(JSON.stringify(Ask.thinkQuestions(reply)));
+  assert.deepEqual(qs.map((x) => x.kind), ["says", "means", "do"]);
+  assert.deepEqual(qs.map((x) => x.label), ["What it says", "What it means", "What you will do"]);
+  assert.equal(qs[0].text, "What does Alma compare the word to?");
+  assert.equal(qs[2].text, "What will you plant this week, and how will you nourish it?");
+  // an older answer, unlabelled, still gives its questions; prose lines are left out
+  const old = Ask.thinkQuestions("## Questions\nA few to ask.\n- Who planted the seed?\n- What grew there?\n\n## For the deck\nx");
+  assert.deepEqual(JSON.parse(JSON.stringify(old)).map((x) => [x.kind, x.text]), [[null, "Who planted the seed?"], [null, "What grew there?"]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(Ask.thinkQuestions("No headings at all."))), []);
+});

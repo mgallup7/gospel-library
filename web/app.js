@@ -71,6 +71,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   const state = {
     q: "", scope: "all", speaker: "", from: "", to: "", book: "", group: "passages",
     docId: null, pid: null, studyId: null, terms: [], offset: 0, lastSearch: null, browse: null, ready: false, asTyped: false, view: null,
+    cbook: "", exact: false, // the concordance's book chip and its Exact words switch
   };
   let searchSeq = 0;
   let typeTimer = null;
@@ -106,6 +107,8 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       for (const k of ["speaker", "from", "to", "book"]) if (state[k]) p.set(k, state[k]);
       if (state.group !== "passages") p.set("group", state.group);
       if (state.view) p.set("view", state.view);
+      if (state.view === "all" && state.cbook) p.set("cbook", state.cbook);
+      if (state.view === "all" && state.exact) p.set("words", "exact");
     } else if (state.browse?.tab) {
       base = state.browse.tab;
       for (const k of BROWSE_KEYS) if (state.browse[k]) p.set(`b.${k}`, String(state.browse[k]));
@@ -131,6 +134,8 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     state.book = searching ? p.get("book") || "" : "";
     state.group = p.get("group") || "passages";
     state.view = searching && p.get("view") === "all" ? "all" : null;
+    state.cbook = state.view ? p.get("cbook") || "" : "";
+    state.exact = !!state.view && p.get("words") === "exact";
     if (!searching && /^[a-z][\w-]*$/.test(base)) {
       state.browse = { tab: base };
       for (const k of BROWSE_KEYS) { const v = p.get(`b.${k}`); if (v !== null) state.browse[k] = k === "year" ? Number(v) : k === "all" ? v === "true" : v; }
@@ -673,7 +678,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (data.hits.length || data.documents.length) {
       const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents" && !data.typeahead;
       const line = el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}` });
-      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline", text: `${data.lexical_total.toLocaleString()} with these words`, title: "Every match, in reading order", onclick: () => { state.view = "all"; runSearch({ typeahead: false }); } }));
+      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline", text: `${data.lexical_total.toLocaleString()} with these words`, title: "Every match, in reading order", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
       frag.append(line);
     } else if (data.typeahead && !data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty" }, [el("div", { text: "Keep typing, or press return to search more widely." })]));
@@ -774,18 +779,37 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     try {
       // the same match and filters the count above the results used, so the two agree
       all = data.lexical_match
-        ? await api("concordance", { match: data.lexical_match, filters: data.filters || {}, limit: 600 })
+        ? await api("concordance", { match: data.lexical_match, filters: data.filters || {}, limit: 600, book: state.cbook || null, exact: state.exact })
         : await api("matches", phrase ? { phrase, scope: state.scope, limit: 600 } : { words: terms.join(" "), mode: "all", scope: state.scope, limit: 600 });
     } catch (e) { listPane.replaceChildren(el("div", { class: "status error", text: `Could not gather the matches (${e.message}).` })); return; }
     if (state.view !== "all") return;
+    // a chip the library no longer has (a rebuilt book) falls away rather than showing nothing
+    if (state.cbook && data.lexical_match && all.book !== state.cbook) { state.cbook = ""; push(true); }
+    const redo = () => { push(true); renderConcordance(data); };
+    const books = all.by_book || [];
+    const chipBook = books.find((b) => b.key === state.cbook);
     const frag = document.createDocumentFragment();
     const t = listTrail(); if (t) frag.append(t);
     frag.append(el("div", { class: "conc-head" }, [
       el("h2", { text: phrase ? `“${phrase}”` : terms.join(", ") }),
-      el("div", { class: "conc-sub", text: `${all.total.toLocaleString()} ${all.total === 1 ? "passage" : "passages"} in ${(all.by_document || []).length.toLocaleString()} ${(all.by_document || []).length === 1 ? "chapter or talk" : "chapters and talks"}${scopeLabel()}, in reading order${all.passages.length < all.total ? ` · the first ${all.passages.length.toLocaleString()} shown` : ""}` }),
-    ]));
-    const terms2 = phrase ? phrase.split(/\s+/) : terms;
-    const re = terms2.length ? new RegExp("\\b(" + terms2.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi") : null;
+      el("div", { class: "conc-sub", text: `${all.total.toLocaleString()} ${all.total === 1 ? "passage" : "passages"} in ${(all.by_document || []).length.toLocaleString()} ${(all.by_document || []).length === 1 ? "chapter or talk" : "chapters and talks"}${chipBook ? ` in ${bookChipName(chipBook.name)}` : scopeLabel()}, in reading order${all.passages.length < all.total ? ` · the first ${all.passages.length.toLocaleString()} shown` : ""}` }),
+      // the words as typed, or each with its family (faith, faithful, faithfulness: the index keeps them as one)
+      data.lexical_match && !all.error ? el("div", { class: "conc-tools" }, [
+        el("div", { class: "conc-seg", role: "group", "aria-label": "Which words" }, [
+          ["exact", "Exact words"], ["family", "Word family"],
+        ].map(([k, label]) => el("button", { type: "button", class: (k === "exact") === state.exact ? "on" : "", "aria-pressed": String((k === "exact") === state.exact), text: label,
+          onclick: () => { if ((k === "exact") === state.exact) return; state.exact = k === "exact"; redo(); } }))),
+      ]) : null,
+      // how many in each book, as filters on the list: tap one to see that book, again to see them all
+      books.length > 1 || chipBook ? el("div", { class: "conc-books", role: "group", "aria-label": "Matches by book" }, books.map((b) =>
+        el("button", { type: "button", class: "chip small" + (b.key === state.cbook ? " on" : ""), "data-book": b.key, "aria-pressed": String(b.key === state.cbook),
+          onclick: () => { state.cbook = b.key === state.cbook ? "" : b.key; redo(); } }, [bookChipName(b.name), el("b", { text: ` ${b.n.toLocaleString()}` })]))) : null,
+    ].filter(Boolean)));
+    if (all.exact === false && state.exact && data.lexical_match) frag.append(el("div", { class: "status", text: "This search cannot be narrowed to the exact words; showing each word with its family." }));
+    // the words the match holds (a natural question brings its synonyms), marked whole or with their endings
+    const terms2 = all.words?.length ? all.words : phrase ? phrase.split(/\s+/) : terms;
+    const tail = all.exact ? "(?![\\p{L}\\p{N}])" : "[\\p{L}\\p{N}]*";
+    const re = terms2.length ? new RegExp("(?<![\\p{L}\\p{N}])(" + [...terms2].sort((a, b) => b.length - a.length).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + tail).join("|") + ")", "giu") : null;
     let lastDoc = null;
     for (const p of all.passages) {
       if (p.doc_id !== lastDoc) {
@@ -797,18 +821,30 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
         ]));
       }
       const snip = re ? esc(p.text).replace(re, "<mark>$1</mark>") : esc(p.text);
-      frag.append(el("button", { type: "button", class: "conc-row", "data-doc": p.doc_id, "data-pid": p.pid, onclick: () => openDoc(p.doc_id, p.pid) }, [
-        p.verse ? el("span", { class: "vn", text: String(p.verse) }) : null,
-        el("span", { class: "snip", html: snip }),
-      ].filter(Boolean)));
+      const on = !!window.Deck?.has(p.doc_id, p.pid);
+      // the + is the results' own: the same add, the same Undo toast, the same count on Deck
+      frag.append(el("div", { class: "conc-line" }, [
+        el("button", { type: "button", class: "conc-row", "data-doc": p.doc_id, "data-pid": p.pid, onclick: () => openDoc(p.doc_id, p.pid) }, [
+          p.verse ? el("span", { class: "vn", text: String(p.verse) }) : null,
+          el("span", { class: "snip", html: snip }),
+        ].filter(Boolean)),
+        el("button", { type: "button", class: "add", "data-deck-doc": String(p.doc_id), "data-deck-pid": p.pid, "aria-label": `Add ${p.citation} to the deck`, "aria-pressed": String(on), title: "Add to deck", text: on ? "✓" : "+",
+          onclick: (e) => { e.stopPropagation(); addHit(p, e.currentTarget); } }),
+      ]));
     }
-    if (!all.passages.length) frag.append(el("div", { class: "empty", text: "No passage has these words." }));
+    if (!all.passages.length) frag.append(el("div", { class: "empty", text: state.exact ? "No passage has these exact words." : "No passage has these words." }));
     listPane.replaceChildren(frag);
+    // the chip that is on stays in sight in its own row (sideways on a phone, down on the iPad)
+    const onChip = $(".conc-books .chip.on", listPane);
+    if (onChip) { const row = onChip.parentElement; row.scrollLeft = onChip.offsetLeft - 16; row.scrollTop = onChip.offsetTop - 4; }
     listPane.scrollTop = restore ? restore.list || 0 : 0;
     if (restore) window.scrollTo(0, restore.win || 0);
     markActive();
     updateThinkFab();
   }
+
+  // A book's name on a concordance chip: the Doctrine and Covenants keeps its sections under "Sections".
+  function bookChipName(name) { return name === "Sections" ? "D&C" : name || "Other"; }
 
   function hitRow(h, { nested = false } = {}) {
     const row = el("div", { class: "hit-row" + (nested ? " nested" : "") }, [

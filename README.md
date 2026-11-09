@@ -28,7 +28,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
 - Every match, when you want them all: the "800 with these words" count
   above the results opens a concordance, each passage in the order of the
   books under its chapter or talk with the count, the words marked, a tap
-  from its place; Back returns to the ranked results.
+  from its place; Back returns to the ranked results. Chips at the head
+  count each book ("Alma 83 · Ether 32") and narrow the list to one; an
+  "Exact words | Word family" switch keeps faith apart from faithful; a "+"
+  on each passage puts it on the deck.
 - Results with their context. The best match is shown in its place, with
   the verse or paragraph before and after it, and Open, + Deck and Present
   right there. The other hits from the same chapter or talk are folded
@@ -40,8 +43,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   reading (or over a set of results) hands it to Claude on the Ask tab, with
   anything you have selected: Claude studies the chapter, lesson or talk,
   searches the library itself, and comes back with what connects to it
-  across the shelves, the Hebrew or Greek behind a key word, questions to
-  ask, and a deck section to build from it, in one tap. The deck's own
+  across the shelves, the Hebrew or Greek behind a key word, three questions
+  to ask (what it says, what it means, what you will do, as Preach My
+  Gospel teaches), each a question card on the deck in a tap, and a deck
+  section to build from it, in one tap. The deck's own
   "Think it through" still studies a chain of passages already on the deck.
 - A Back that says where it leads. Every place has an address (a shelf and
   how far into it you are, a search, a page, Ask, Deck), so "‹ Alma 32" or
