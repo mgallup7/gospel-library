@@ -161,19 +161,30 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   // browser Back, and still know its way after a reload. Each entry also remembers how far you
   // had scrolled, so coming back lands where you were.
   function here() { return history.state && Number.isInteger(history.state.n) ? history.state.n : 0; }
+  // The label is the place Back returns to, so it names what that entry shows: Ask or the Deck when
+  // one of them was up (on a wide screen the page beside it is not what Back brings back first), the
+  // page when one covers the list, and inside a shelf the book or year you were at ("Alma", "2024").
   function labelNow() {
+    const tab = state.browse?.tab;
+    const paged = !!(state.docId || state.studyId);
+    if ((tab === "ask" || tab === "deck") && !state.q.trim() && (wide() || !paged)) return tab === "ask" ? "Ask" : "Deck";
     if (state.docId) return currentDoc && currentDoc.id === state.docId ? shortTitleOf(currentDoc) : "Back";
     if (state.studyId) return currentStudy && currentStudy.id === state.studyId ? shortTitleOf(currentStudy) : "Back";
     if (state.q.trim().length >= 2) return state.view === "all" ? "Every match" : "Results";
-    const tab = state.browse?.tab;
     if (tab === "ask") return "Ask";
     if (tab === "deck") return "Deck";
-    if (tab) return TAB_TITLE[tab] || "Shelf";
+    if (tab) return (shelfDepth(state.browse) && shelfNamed?.key === browseKey(state.browse) && shelfNamed.name) || TAB_TITLE[tab] || "Shelf";
     return "Library";
   }
+  // A depth inside a shelf names itself once its data has come (a book's name, a year), since only
+  // then is it known; until then the entry carries the shelf's name.
+  let shelfNamed = null;
+  const browseKey = (b) => JSON.stringify([b?.tab || null, ...BROWSE_KEYS.map((k) => b?.[k] ?? null)]);
+  const shelfDepth = (b) => !!(b && (b.year || b.bookUri || b.book || b.series));
+  function nameShelf(name) { shelfNamed = { key: browseKey(state.browse), name }; nameEntry(); }
   function setEntry(patch) {
     const cur = history.state || {};
-    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, scroll: cur.scroll || null, place: cur.place || null, ...patch }, "", location.href);
+    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, ...patch }, "", location.href);
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
   function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
@@ -191,10 +202,11 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (!fromOverlay && (!leavingScroll || Date.now() - leavingScroll.at > 2000)) rememberScroll(); // a reading older than the move it was taken for is stale
     leavingScroll = null;
     const prev = history.state?.label || "Library";
+    const prevUrl = location.hash || "#"; // so a step up can tell when Back would get there (a marker has its place's address)
     // leaving from inside a sheet or the stage: its marker entry becomes the new place, so Back
     // from there returns to the page under it, not to a sheet that is no longer open
-    if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url); }
-    else history.pushState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url);
+    if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, prevUrl, scroll: null, place: null }, "", url); }
+    else history.pushState({ n: here() + 1, label: null, prev, prevUrl, scroll: null, place: null }, "", url);
     nameEntry();
     refreshTrailButtons();
   }
@@ -227,6 +239,15 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   }
   // A step within the shelves (a book, a year, a volume): a place of its own, so Back retraces it
   function go(browse) { rememberScroll(); state.browse = browse; renderHome(); push(); }
+  // Up a level within the shelves (the crumbs): no new entry. When the entry before is that level,
+  // it is Back; otherwise this entry becomes the level, so Back still leads where it led.
+  function goUp(browse) {
+    const was = state.browse;
+    state.browse = browse;
+    const url = urlFor();
+    if (here() > 0 && history.state?.prevUrl === url) { state.browse = was; history.back(); return; }
+    renderHome(); push(true);
+  }
   // Edge swipes in the home-screen app, where iOS keeps its own gesture for itself: in from the
   // left edge goes back, in from the right edge goes forward. In Safari the system gesture does
   // this already, so the app stays out of its way there.
@@ -264,7 +285,17 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     return el("button", { type: "button", class: "trail-back", "aria-label": label ? `Back to ${label}` : "Library", title: label ? `Back to ${label}` : "Library", onclick: goBack }, [
       el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: label || "Library" })]);
   }
-  function refreshTrailButtons() { for (const b of document.querySelectorAll(".trail-back")) b.replaceWith(trailButton()); }
+  function refreshTrailButtons() {
+    for (const b of document.querySelectorAll(".trail-back")) if (!b.closest(".head-back")) b.replaceWith(trailButton());
+    for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
+  }
+  // A shelf's own heading: Back, except beside an open page or the board on a wide screen, where that
+  // pane's bar has Back and the heading would say it twice ("‹ My studies  My studies"); there the
+  // heading is the shelf's name alone (the header's home button is still there).
+  function headBack() {
+    if (wide() && (state.docId || state.studyId || !panelPane.hidden)) return "";
+    return backLabel() ? trailButton() : el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => goHome() });
+  }
   // On a phone every list view carries Back at the top; on a wide screen the reader bar has it
   function listTrail() { return backLabel() ? el("div", { class: "list-trail" }, [trailButton()]) : null; }
   window.addEventListener("popstate", () => {
@@ -278,8 +309,11 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href); // a marker reached from elsewhere is its place
     overlay = null;
     hideNote(); if (!stage.hidden) stopPresenting();
-    readUrl(); syncControls(); render({ restore: history.state?.scroll || null });
+    readUrl(); syncControls();
+    if (keepTyped !== null) { input.value = keepTyped; keepTyped = null; } // a letter still in the box after a search too short to run
+    render({ restore: history.state?.scroll || null });
   });
+  let keepTyped = null;
 
   // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
   const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", jsp: "jsp" };
@@ -305,6 +339,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     $("#askBtn").setAttribute("aria-pressed", String(tab === "ask"));
     $("#deckBtn").setAttribute("aria-pressed", String(tab === "deck"));
     document.body.classList.toggle("tab-open", tab === "ask" || tab === "deck");
+    document.body.classList.toggle("shelf-studies", tab === "studies" && !state.q.trim());
   }
 
   // ------------------------------------------------------------ render ----
@@ -566,8 +601,18 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     return !words.every((w) => COMMON.has(w));
   }
   async function runSearch({ typeahead = false, silent = false, more = false, restore = null } = {}) {
-    const q = state.q.trim();
-    if (q.length < 2) { leaveSearch(); renderHome(); if (!silent) push(true); return; }
+    let q = state.q.trim();
+    // too short to search: back where the search began, and the address with it (no #search?q=a left behind)
+    if (q.length < 2) {
+      leaveSearch(); state.q = ""; state.view = null;
+      // the search was a step from that place: step back to it rather than leave it in history twice
+      if (!silent && here() > 0 && history.state?.place === "search" && history.state?.prevUrl === urlFor()) { keepTyped = input.value; history.back(); return; }
+      renderHome(); if (!silent) { push(true); setEntry({ place: placeNow(), label: labelNow() }); }
+      return;
+    }
+    // a reference half typed ("Alma 32:21-", "Alma 32:21,", "Alma 32:") keeps its card: the separator
+    // waiting for its second half is left off until it has one
+    if (/\d\s*[-\u2013\u2014,:;]\s*$/.test(q)) q = q.replace(/\s*[-\u2013\u2014,:;]\s*$/, "");
     if (typeahead) {
       if (!worthTyping(q)) return;
       if (typeBusy) { typeAgain = true; return; }
@@ -584,9 +629,9 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
         speaker: state.speaker, from: state.from, to: state.to, book: state.book, group: state.group,
       });
       if (mySeq !== searchSeq) return;
-      // a reference typed and entered opens the chapter itself on a wide screen; the list keeps the card
-      // a reference pressed opens its chapter on a wide screen; a re-render (Back, a reload) never navigates
-      if (!typeahead && !more && !silent && data.jump?.doc_id && wide() && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
+      // a reference typed and entered opens the chapter at the verse, on the phone as on the iPad; the
+      // list keeps the card, so Back comes to it; a re-render (Back, a reload) never navigates
+      if (!typeahead && !more && !silent && data.jump?.doc_id && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
       data.typeahead = typeahead;
       if (more && state.lastSearch) {
         const prev = state.lastSearch;
@@ -598,6 +643,8 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       state.lastSearch = data;
       state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
       if (state.view === "all" && !typeahead) await renderConcordance(data, { restore }); else renderResults(data);
+      // an empty board has nothing to offer fresh results: the right pane goes back to the page (or rests empty)
+      if (wide() && paneView === "board" && !window.Deck?.count?.()) panel.page();
       if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow() }); } // a new search from elsewhere is a move; refining one is not
       if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
@@ -657,7 +704,9 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
         el("span", { text: j.doc_id ? "›" : "" }),
       ]));
     }
-    if (data.smart) {
+    // how the search was read is said only over something found; over nothing, the empty line speaks alone
+    const found = !!(data.jump || data.hits.length || data.documents.length || (data.titles || []).length);
+    if (data.smart && found) {
       const sm = data.smart;
       const bits = [];
       if (sm.terms?.length) bits.push(sm.terms.join(", "));
@@ -694,7 +743,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     } else if (!data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty" }, [
         el("div", { text: `Nothing matches “${data.query}”${scopeLabel()}. Try fewer words, a different spelling, or ask the question instead:` }),
-        el("button", { type: "button", class: "text-btn", text: "Ask Claude", onclick: () => { state.browse = { tab: "ask" }; state.q = ""; syncControls(); renderHome(); setTimeout(() => { const ta = $(".ask-input"); if (ta) { ta.value = data.query; ta.focus(); } }, 50); } }),
+        el("button", { type: "button", class: "text-btn", text: "Ask Claude", onclick: () => { rememberScroll(); leaveSearch(); state.browse = { tab: "ask" }; state.q = ""; syncControls(); renderHome(); showList(); push(); setTimeout(() => { const ta = $(".ask-input"); if (ta) { ta.value = data.query; ta.focus(); } }, 50); } }),
       ]));
     }
     if (state.group === "documents") for (const d of data.documents) frag.append(docRow(d, d.hits));
@@ -773,11 +822,12 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
         if (vs.length) verses = vs.map((x) => ({ n: x.verse, text: x.text }));
       }
     } catch (_) { /* the text will do */ }
-    // on a wide screen the board opens beside the results; on a phone a toast says so and the results stay
-    window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: wide() });
+    // as Add to deck does in the reader: the pane stays where it is, and the toast (with Undo) and
+    // the count on the Deck button say it went on
+    window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: false });
     btn.textContent = btn.classList.contains("add") ? "\u2713" : "On the deck";
     btn.setAttribute("aria-pressed", "true");
-    if (!wide()) deckToast(1, "On the deck.");
+    deckToast(1, "On the deck.");
   }
   // Every passage with the words, in the order of the books, each chapter or talk with its count:
   // a concordance, for the teacher who wants to see them all rather than the best.
@@ -934,7 +984,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); updateThinkFab(); return; }
       if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
-        backLabel() ? trailButton() : el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => goHome() }),
+        el("span", { class: "head-back" }, [headBack()]),
         el("h2", { text: TAB_TITLE[tab] || tab }),
       ]));
       if (tab === "conference") await browseConference(body);
@@ -950,9 +1000,10 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   function openShelf(key) {
     rememberScroll();
     leaveSearch();
-    state.q = ""; syncControls();
+    state.q = "";
     state.browse = { tab: key };
-    if (TAB_SCOPE[key]) { state.scope = TAB_SCOPE[key]; syncControls(); }
+    if (TAB_SCOPE[key]) state.scope = TAB_SCOPE[key];
+    syncControls();
     renderHome();
     push();
   }
@@ -1017,7 +1068,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
 
   async function browseConference(body) {
     const b = state.browse || {};
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: "conference", year: b.year, all: true }));
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: "conference", year: b.year, all: true }), b.year ? String(b.year) : "General Conference");
     const data = await api("browse", { collection: "general-conference" });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks in this library yet. They arrive with the nightly build, newest conference first." })); return; }
@@ -1038,6 +1089,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     for (const y of years) shelf.append(el("button", { class: "chip" + (b.year === y ? " on" : ""), text: String(y), onclick: () => go({ tab: "conference", year: y, all: true }) }));
     body.append(shelf);
     if (b.year) {
+      nameShelf(String(b.year));
       for (const bk of books.filter((x) => x.year === b.year)) {
         body.append(el("button", { class: "toc-row", onclick: () => go({ tab: "conference", year: b.year, bookUri: bk.uri }) }, [
           el("div", { class: "t", text: `${monthName(bk.month)} ${bk.year}` }), el("div", { class: "s", text: `${bk.docs} talks` })]));
@@ -1058,7 +1110,8 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       return;
     }
     const bk = shelf.volumes.flatMap((v) => v.books).find((x) => x.slug === b.book);
-    body.append(el("div", { class: "crumbs" }, [el("button", { text: "Scriptures", onclick: () => go({ tab: "scriptures" }) }), el("span", { text: bk.name })]));
+    nameShelf(bk.name.replace("JST, ", ""));
+    body.append(el("div", { class: "crumbs" }, [el("button", { text: "Scriptures", onclick: () => goUp({ tab: "scriptures" }) }), el("span", { text: bk.name })]));
     const grid = el("div", { class: "chapters" });
     for (const c of bk.chapters) grid.append(el("button", { text: String(c.n), disabled: !c.doc_id, onclick: () => openDoc(c.doc_id, null) }));
     body.append(grid);
@@ -1067,7 +1120,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
 
   async function browseCollection(body, slug) {
     const b = state.browse || {};
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: slug }));
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: slug }), TAB_TITLE[slug] || "Back");
     const data = await api("browse", { collection: slug });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with a later nightly build." })); return; }
@@ -1082,9 +1135,12 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (!all.length) { body.append(el("div", { class: "empty", text: "The Joseph Smith Papers arrive with the nightly builds, a series at a time: journals first, then revelations and translations, histories, and the documents." })); return; }
     const chips = el("div", { class: "shelf" });
     const series = b.series || all[0].slug;
-    for (const c of all) chips.append(el("button", { class: "chip" + (series === c.slug ? " on" : ""), text: c.title.replace(/^Joseph Smith Papers: /, "") + (c.docs ? "" : " (soon)"), onclick: () => go({ tab: "jsp", series: c.slug }) }));
+    const seriesName = (c) => c.title.replace(/^Joseph Smith Papers: /, "");
+    for (const c of all) chips.append(el("button", { class: "chip" + (series === c.slug ? " on" : ""), text: seriesName(c) + (c.docs ? "" : " (soon)"), onclick: () => go({ tab: "jsp", series: c.slug }) }));
     body.append(chips);
-    if (b.bookUri) return renderBookToc(body, b.bookUri, () => go({ tab: "jsp", series }));
+    const cur = all.find((c) => c.slug === series);
+    if (b.series && cur && !b.bookUri) nameShelf(seriesName(cur));
+    if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: "jsp", series }), cur ? seriesName(cur) : "Back");
     const data = await api("browse", { collection: series });
     const books = data.books.filter((x) => x.docs > 0);
     if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing from this series yet. It arrives with a later nightly build." })); return; }
@@ -1092,9 +1148,11 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     body.append(el("p", { class: "deck-hint", text: "Transcriptions, source notes and historical introductions from josephsmithpapers.org (The Church Historian’s Press, © Intellectual Reserve, Inc.), for personal study. Tap a name in a paper for who or where it is." }));
   }
 
-  async function renderBookToc(body, uri, back) {
+  // up: the crumb that goes a level up, and the name of that level
+  async function renderBookToc(body, uri, up, upName = "Back") {
     const book = await api("book", { uri });
-    if (back) body.append(el("div", { class: "crumbs" }, [el("button", { text: "Back", onclick: back }), el("span", { text: book.title })]));
+    if (up) nameShelf(book.title);
+    if (up) body.append(el("div", { class: "crumbs" }, [el("button", { text: upName, onclick: up }), el("span", { text: book.title })]));
     else body.append(el("h2", { text: book.title }));
     for (const n of book.nodes || []) {
       if (n.kind === "section") body.append(el("div", { class: "toc-row section" }, [el("div", { class: "t", text: n.title })]));
@@ -1119,7 +1177,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       if (state.docId !== id) return; // another page was opened while this one loaded
       renderDoc(currentDoc);
     }
-    nameEntry(shortTitleOf(currentDoc));
+    nameEntry(); // the page's title, or Ask or the Deck when the page rides beside one
     refreshTrailButtons();
     focusParagraph(state.pid, { scroll });
     updateThinkFab();
@@ -1134,11 +1192,10 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       trailButton(),
       el("div", { class: "crumb", text: crumbFor(doc) }),
       el("div", { class: "spacer" }),
-      el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
-      el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
-      el("button", { class: "icon-btn", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
+      ...sizeTools(doc),
+      el("button", { class: "icon-btn bar-extra", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
-      el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
+      el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
       el("span", { class: "pane-switch-slot" }),
     ].filter(Boolean));
     const body = sanitize(el("article", { class: "doc", html: doc.body_html || "" }));
@@ -1353,7 +1410,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       currentStudy = rec;
       renderStudy(rec, scroll);
     }
-    nameEntry(shortTitleOf(currentStudy));
+    nameEntry();
     refreshTrailButtons();
     updateThinkFab();
   }
@@ -1529,31 +1586,57 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
 
   // Highlights and notes across the library, newest first (the latest few, or all of them on request),
   // with a way to keep them safe
+  // The list can be searched (words, citation, note) and narrowed to one color; it shows the latest
+  // ten of what matches, or all of it, under a heading per book when more than one book is in it.
   let allMarksShown = false;
+  const marksFilter = { q: "", color: null };
+  // a verse's book ("Alma 32:21" is Alma, "D&C 4:2" is D&C); any other mark goes under its page
+  function markBook(m) { const v = /^(.+?)\s+\d+:\d+/.exec(m.citation || ""); return v ? v[1] : m.title || m.citation || "Other"; }
   async function renderMarks(body) {
     if (!window.Marks) return;
     let marks = [];
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
-    const head = el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" }),
-      marks.length > 10 ? el("button", { type: "button", class: "text-btn small", text: allMarksShown ? "Latest only" : `All ${marks.length}`, onclick: () => { allMarksShown = !allMarksShown; sec.replaceWith(el("div")); renderMarks(body); } }) : null].filter(Boolean));
-    sec.append(head);
+    const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
+    sec.append(el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" }), allBtn]));
+    const list = el("div", { class: "mark-list" });
+    const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
+      let id = m.doc_id;
+      try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
+      if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
+    } }, [
+      el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
+      el("span", { class: "mk-text", text: (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "") }),
+      m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
+    ].filter(Boolean));
+    function draw() {
+      const words = marksFilter.q.toLowerCase().split(/\s+/).filter(Boolean);
+      const hits = marks.filter((m) => (!marksFilter.color || m.color === marksFilter.color)
+        && words.every((w) => [m.text, m.citation, m.title, m.note].some((f) => (f || "").toLowerCase().includes(w))));
+      const shown = hits.slice(0, allMarksShown ? hits.length : 10);
+      allBtn.hidden = hits.length <= 10;
+      allBtn.textContent = allMarksShown ? "Latest only" : `All ${hits.length}`;
+      if (!shown.length) { list.replaceChildren(el("p", { class: "studies-lede mk-none", text: "No highlight or note matches." })); return; }
+      const books = new Map();
+      for (const m of shown) { const b = markBook(m); if (!books.has(b)) books.set(b, []); books.get(b).push(m); }
+      if (books.size < 2) { list.replaceChildren(...shown.map(row)); return; }
+      list.replaceChildren(...[...books].flatMap(([b, ms]) => [el("h3", { class: "mk-book", text: b }), ...ms.map(row)]));
+    }
     if (!marks.length) {
       sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note: your marks come back whenever the page opens, and are listed here." }));
     } else {
-      const list = el("div", { class: "mark-list" });
-      for (const m of marks.slice(0, allMarksShown ? 1000 : 10)) {
-        list.append(el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
-          let id = m.doc_id;
-          try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
-          if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
-        } }, [
-          el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
-          el("span", { class: "mk-text", text: (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "") }),
-          m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
-        ].filter(Boolean)));
+      if (marks.length > 3) {
+        const find = el("input", { type: "search", class: "mk-find", placeholder: "Find in your marks", "aria-label": "Find in your highlights and notes", value: marksFilter.q });
+        find.addEventListener("input", () => { marksFilter.q = find.value; draw(); });
+        const dot = (c, name) => el("button", { type: "button", class: `mk-dot${c ? ` hl-${c}` : " all"}`, "aria-pressed": String(marksFilter.color === c), "aria-label": c ? `Only ${name}` : "All colors", title: c ? `Only ${name}` : "All colors", text: c ? "" : "All", onclick: (e) => {
+          marksFilter.color = c;
+          for (const d of e.currentTarget.parentElement.children) d.setAttribute("aria-pressed", String(d === e.currentTarget));
+          draw();
+        } });
+        sec.append(el("div", { class: "mk-filter" }, [find, el("div", { class: "mk-colors", role: "group", "aria-label": "Color" }, [dot(null, "All"), ...(window.Marks.COLORS || []).map((c) => dot(c, window.Marks.COLOR_NAME?.[c] || c))])]));
       }
       sec.append(list);
+      draw();
     }
     const pick = el("input", { type: "file", accept: ".json,application/json", hidden: true, "aria-hidden": "true" });
     pick.addEventListener("change", async () => {
@@ -1846,6 +1929,53 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     document.documentElement.style.setProperty("--reading-size", sizes[i] + "px");
     store.set("readingSize", sizes[i]);
   }
+  // The reader bar's text sizes: two buttons where there is room, one "Aa" that opens Smaller and
+  // Larger where there is not (an iPad in portrait with the Hebrew and the Page | Deck switch). In
+  // the narrowest case the menu also takes Present and the Church's site, so Back and the crumb keep theirs.
+  function sizeTools(doc) {
+    const glyph = (px) => `<span style='font-size:${px}px;font-weight:600'>A</span>`;
+    const jsp = doc.collection && doc.collection.startsWith("jsp-");
+    const menu = el("div", { class: "size-menu", role: "menu", hidden: true }, [
+      el("button", { type: "button", role: "menuitem", onclick: () => resize(-1) }, [el("span", { class: "g", html: glyph(14) }), "Smaller text"]),
+      el("button", { type: "button", role: "menuitem", onclick: () => resize(1) }, [el("span", { class: "g", html: glyph(20) }), "Larger text"]),
+      el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]),
+      el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: () => shut() }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
+    ]);
+    const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size", title: "Text size", "aria-haspopup": "menu", "aria-expanded": "false", text: "Aa", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } });
+    const away = (e) => { if (!wrap.contains(e.target)) shut(); };
+    const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
+    function openMenu() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.addEventListener("keydown", key); menu.querySelector("button")?.focus({ preventScroll: true }); }
+    function shut() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); }
+    const wrap = el("span", { class: "size-pop" }, [btn, menu]);
+    return [
+      el("span", { class: "size-btns" }, [
+        el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: glyph(14) }),
+        el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: glyph(20) }),
+      ]),
+      wrap,
+    ];
+  }
+  // How much of the bar folds away: none, the sizes into Aa, then the match count's words and a
+  // tighter switch, then Present and the site into the menu. Measured with nothing allowed to shrink
+  // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
+  const BAR_LEVELS = ["compact", "tight", "tighter"];
+  function fitReaderBar(bar) {
+    if (!bar.querySelector(".size-pop")) return;
+    bar.classList.remove(...BAR_LEVELS);
+    if (!wide() || bar.offsetParent === null) return;
+    for (const level of BAR_LEVELS) {
+      bar.classList.add("measuring");
+      const over = bar.scrollWidth > bar.clientWidth + 1;
+      bar.classList.remove("measuring");
+      if (!over) return;
+      bar.classList.add(level);
+    }
+  }
+  function fitReaderBars() { for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar); }
+  window.addEventListener("resize", fitReaderBars);
+  // what joins the bar after it is drawn (the match count, the Hebrew button, the switch) refits it
+  const barWatch = new MutationObserver((records) => { for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
+  barWatch.observe(readerPane, { childList: true, subtree: true });
   // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
   { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(26, Math.round(sys))) + "px"); } }
   function systemTextSize() {
@@ -2338,6 +2468,9 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     const board = paneView === "board" && !!panel.lastEl;
     panelPane.hidden = !(board && panelPane.contains(panel.lastEl));
     readerPane.hidden = board || !(state.docId || state.studyId);
+    // one Back on the screen: with a pane up on the right its bar has it, so the list's own goes
+    document.body.classList.toggle("pane-up", !readerPane.hidden || !panelPane.hidden);
+    for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
     refreshSwitches();
     updateThinkFab();
   }
@@ -2355,6 +2488,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     }
     // a switch that had focus keeps it on the pane now showing
     if (hadFocus) { const visible = [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.classList.contains("on")); if (visible) { try { visible.focus({ preventScroll: true }); } catch (_) {} } }
+    fitReaderBars(); // a pane just shown, or a switch come or gone, changes what the bar needs
   }
 
   function searchFor(q) {

@@ -20,7 +20,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
     await page.waitForTimeout(800);
     const jump = await page.$("#list .jump");
-    if (jump && viewport.width < 760) await jump.click();
+    if (jump && viewport.width < 760 && await jump.isVisible()) await jump.click(); // Enter opens the page on the phone too
     await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
     await page.waitForTimeout(500);
     // select two verses, highlight yellow

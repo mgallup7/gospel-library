@@ -10,8 +10,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.press("div.setup input", "Enter");
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
   await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
-  await page.waitForTimeout(800);
-  await page.click("#list .jump");
+  // Enter on a reference opens the chapter at the verse on the phone too
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
   await page.waitForTimeout(300);
   const focused = await page.evaluate(() => document.activeElement?.className);
