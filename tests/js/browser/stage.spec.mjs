@@ -59,6 +59,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   // An iPhone on iOS 16.1 gets a plain message instead of the download form.
   const ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Mobile/15E148 Safari/604.1";
   const ctx = await browser.newContext({ userAgent: ua, viewport: { width: 393, height: 852 }, deviceScaleFactor: 1 });
+  // the message follows the engine's report, so the engine is served without the handles iOS 16.1 lacks
+  await ctx.route(/\/engine\.js(\?.*)?$/, async (route) => { const res = await route.fetch(); route.fulfill({ response: res, body: "delete self.FileSystemSyncAccessHandle;\n" + (await res.text()) }); });
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(`old ios pageerror: ${e}`));
   await page.goto(BASE);
