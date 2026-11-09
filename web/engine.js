@@ -585,8 +585,11 @@ async function search(params) {
   // (a "light" search, the kind Claude's widening pass runs, goes by words alone and is not kept)
   const key = JSON.stringify([q, scope, speaker, from, to, book, edition, exclude_edition, asTyped, semReady()]);
   if (!typeahead && !light && lastRanked && lastRanked.key === key) return page(lastRanked.out, offset, limit, t0);
+  // Kept only if the library is the one the search began on: a search that waited on the model
+  // while an update was applied may have read rows the update then rolled back.
+  const gen = libraryGen;
   const out = await rankedSearch(q, { ...filters, typeahead, light, asTyped });
-  if (!typeahead && !light) lastRanked = { key, out };
+  if (!typeahead && !light && gen === libraryGen) lastRanked = { key, out };
   return page(out, offset, limit, t0);
 }
 let lastRanked = null;
