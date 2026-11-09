@@ -1958,6 +1958,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
     ready, flush: () => writeCurrent(), // ready: the stored deck has arrived; flush: write now rather than a moment later
+    // an empty deck, as "Yes, delete it and start over" leaves it, written before the promise settles
+    reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); await writeCurrent(); },
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
     // a question card with its words written (Ask's Think it through): addCard, then the text

@@ -95,7 +95,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check(!(await page.$(".widening")), "and no 'asking Claude' note left behind");
 
   // Think it through on a chapter: the three kinds of question, each a question card in one tap
-  await page.evaluate(() => localStorage.removeItem("gospel.deck"));
+  await page.evaluate(() => window.Deck.reset());
   await page.evaluate(async () => { const s = await GL.api("search", { q: "Alma 32" }); GL.openDoc(s.jump.doc_id, "p21"); });
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
   await page.waitForSelector(".fab-think:not([hidden])", { timeout: 5000 });

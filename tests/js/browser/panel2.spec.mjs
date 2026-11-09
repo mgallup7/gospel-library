@@ -71,7 +71,7 @@ export default async function run(browser, { BASE, PASS }) {
   check(!/doc=/.test(await hash()), `Back after closing the sheet by hand leaves the page (${await hash()})`);
 
   // an overlapping range: 21 on the deck, then 21 to 23 adds 22 and 23
-  await page.evaluate(() => { localStorage.removeItem("gospel.deck"); for (const n of document.querySelectorAll("#reader .doc .sel")) n.classList.remove("sel"); });
+  await page.evaluate(async () => { await window.Deck.reset(); for (const n of document.querySelectorAll("#reader .doc .sel")) n.classList.remove("sel"); });
   await page.goto(BASE + "#scriptures?b.book=alma&doc=1316&p=p21");
   await page.reload();
   await page.waitForSelector("#reader .doc #p21", { timeout: 30000 });

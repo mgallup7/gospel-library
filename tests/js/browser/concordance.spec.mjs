@@ -87,7 +87,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#list .conc-seg button.on:has-text('Word family')", { timeout: 10000 });
 
     // "+" on a row puts the passage on the deck, with the results' Undo toast and Deck count
-    await page.evaluate(() => localStorage.removeItem("gospel.deck"));
+    await page.evaluate(() => window.Deck.reset());
     const before = await page.evaluate(() => window.Deck.count());
     await page.click("#list .conc-line >> nth=2 >> button.add");
     await page.waitForFunction((n) => window.Deck.count() === n + 1, before, { timeout: 10000 });

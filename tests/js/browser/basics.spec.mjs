@@ -56,7 +56,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
   // the deck at 0 and 1. A reload restores the page it was on, not the shelves, so wait
   // for the app to be ready rather than for the home screen; it must not offer Try again.
-  await page.evaluate(() => localStorage.removeItem("gospel.deck"));
+  await page.evaluate(() => window.Deck.reset());
   await page.reload();
   const ready = await page.waitForFunction(() => window.GL?.ready || document.querySelector(".setup"), null, { timeout: 30000 }).then(() => page.evaluate(() => !!window.GL?.ready)).catch(() => false);
   if (!ready) {
