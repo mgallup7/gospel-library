@@ -2,7 +2,7 @@
    verses, each with its transliteration, meaning, grammar and Strong's number,
    and the lexicon behind the numbers. Data: STEP Bible, Tyndale House,
    Cambridge (CC BY 4.0), www.STEPBible.org. */
-import { foldGlosses } from "./lib/step.js";
+import { foldGlosses, exampleOf } from "./lib/step.js";
 
 (() => {
   "use strict";
@@ -198,7 +198,7 @@ import { foldGlosses } from "./lib/step.js";
       const parts = morph.filter((m) => m.short || m.meaning);
       details.append(el("div", { class: "ow-section" }, [
         el("div", { class: "nm", text: `Grammar (${w.morph})` }),
-        ...parts.map((m) => el("p", {}, [el("b", { text: (m.short || m.code).replace(/^"|"$/g, "") }), m.meaning ? el("span", { text: `: ${m.meaning.toLowerCase()}` }) : null, exampleOf(m.example) ? el("i", { text: ` (${exampleOf(m.example)})` }) : null])),
+        ...parts.map((m) => el("p", {}, [el("b", { text: (m.short || m.code).replace(/^"|"$/g, "") }), m.meaning ? el("span", { text: `: ${m.meaning.toLowerCase()}` }) : null, exampleOf(m.example) ? el("span", { class: "ow-eg" }, [", as in “", el("i", { text: exampleOf(m.example) }), "”"]) : null])),
       ]));
     }
     if (lex && (lex.entry || lex.count)) {
@@ -276,14 +276,6 @@ import { foldGlosses } from "./lib/step.js";
     for (const g of (lex && lex.glosses) || []) take(g.gloss);
     if (!words.length) return [];
     try { return await GL().api("studyHelps", { words: [...new Set(words)].slice(0, 12) }); } catch (_) { return []; }
-  }
-  // STEP's examples: "giving to‚ rich _and_ poor": "and" — the sentence, with the word in question marked.
-  function exampleOf(ex) {
-    let t = String(ex || "").replace(/\u201a/g, ",").trim();
-    const m = /^"(.*?)"\s*:\s*"(.*)"$/.exec(t);
-    if (m) t = m[1];
-    t = t.replace(/^"|"$/g, "").replace(/_([^_]*)_/g, "$1").replace(/\s+/g, " ").trim();
-    return /^(e\.g\.|example:?)\s*$/i.test(t) ? "" : t.replace(/^e\.g\.\s*/i, "");
   }
   function typeName(code) {
     const c = String(code || "").replace(/^[A-Z]:/, "");

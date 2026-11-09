@@ -1,5 +1,5 @@
-// The STEP Bible's strings, read for people: the glosses that come with the Hebrew and
-// Greek words (original.js). Pure functions, no DOM, so node tests them.
+// The STEP Bible's strings, read for people: the glosses and the grammar examples that come
+// with the Hebrew and Greek words (original.js). Pure functions, no DOM, so node tests them.
 
 // A Hebrew word carries its little words with it: "and", "the", "in", "to", "like" at the
 // front, "my", "your", "his" at the end. STEP glosses each piece in the Hebrew order, so
@@ -28,4 +28,24 @@ export function foldGlosses(list) {
     if (have) have.n += g.n || 0; else by.set(stem, { gloss: stem, n: g.n || 0 });
   }
   return [...by.values()].sort((a, b) => b.n - a.n);
+}
+
+/**
+ * STEP's example for a grammar code, as a phrase to show. The data has several shapes:
+ *   "a _woman_ giving teachings"                  (Greek: the sentence, the word underlined)
+ *   giving to‚ rich _and_ poor": "and             (the sentence, then the word, quotes half kept)
+ *   _of‚ from‚ by‚ in_": "_of‚ to, from‚ in_      (two lists of renderings)
+ *   a (female) person (or thing)                  (parentheses that belong to the example)
+ *   ( )                                           (no English word at all)
+ *   Example: he/it did or does rise
+ * The low comma (U+201A) STEP uses inside lists is an ordinary comma here.
+ */
+export function exampleOf(ex) {
+  let t = String(ex ?? "").replace(/\u201a/g, ",").replace(/\s+/g, " ").trim();
+  t = t.replace(/^(?:example|e\.g\.)\s*:?\s*/i, "");
+  // the sentence and the word it illustrates: keep the sentence, the part before `": "`
+  const pair = /^"?(.*?)"\s*:\s*"(.*?)"?$/.exec(t);
+  if (pair) t = pair[1];
+  t = t.replace(/^"+|"+$/g, "").replace(/_([^_]*)_/g, "$1").replace(/_/g, "").replace(/\s+([,;])/g, "$1").replace(/\s+/g, " ").trim();
+  return /[A-Za-z]/.test(t) ? t : "";
 }
