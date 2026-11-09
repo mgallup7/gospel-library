@@ -76,7 +76,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // a pointer resting on the toast holds it, by design)
     await page.mouse.move(5, 5);
     await page.waitForTimeout(5600);
-    check(!(await page.$(".toast")), "the toast should go after about five seconds");
+    check(!(await page.$(".toast.show")), "the toast should go after about five seconds");
     await page.click("#deckBtn");
     await page.waitForSelector(".board .bcard", { timeout: 10000 });
     await page.waitForTimeout(300);

@@ -309,11 +309,24 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href); // a marker reached from elsewhere is its place
     overlay = null;
     hideNote(); if (!stage.hidden) stopPresenting();
+    const left = { doc: state.docId, pid: state.pid };
     readUrl(); syncControls();
     if (keepTyped !== null) { input.value = keepTyped; keepTyped = null; } // a letter still in the box after a search too short to run
-    render({ restore: history.state?.scroll || null });
+    render({ restore: history.state?.scroll || null }).then(() => focusAfterBack(left), () => {});
   });
   let keepTyped = null;
+  // On a phone Back swaps the whole screen and the focus went with it: it lands on the row of the
+  // page just left when the list has one, else on the list's own Back.
+  function focusAfterBack(left) {
+    if (wide() || !left.doc || state.docId === left.doc) return;
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && ae.isConnected && ae.offsetParent !== null) return; // something already has it
+    let target = null;
+    if (!state.docId && !listPane.hidden) {
+      target = (left.pid && listPane.querySelector(`[data-doc="${left.doc}"][data-pid="${CSS.escape(left.pid)}"]`)) || listPane.querySelector(`[data-doc="${left.doc}"]`) || listPane.querySelector(".trail-back");
+    } else if (!readerPane.hidden) target = readerPane.querySelector(".trail-back");
+    if (target) { try { target.focus({ preventScroll: true }); } catch (_) {} }
+  }
 
   // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
   const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", jsp: "jsp" };
@@ -565,10 +578,16 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       }
       store.set("active", { slot: result.slot, version: result.version, builtAt: result.builtAt, mode: result.mode });
       banner.remove();
+      // the page redraws from the new library where it was: the same scroll, and the verses that
+      // were selected still selected if the page still has them
+      const keep = { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY, study: studyScroll };
+      const selected = [...readerPane.querySelectorAll(".doc .sel")].map((n) => n.id).filter(Boolean);
       currentDoc = null;
       statsCache = null;
       try { window.dispatchEvent(new CustomEvent("library:change")); } catch (_) {}
-      render();
+      await render({ restore: keep }).catch(() => {}); // the library is updated either way
+      const body = $(".doc", readerPane);
+      if (body && selected.length) { for (const pid of selected) body.querySelector(`#${CSS.escape(pid)}`)?.classList.add("sel"); updateSelectBar(); }
       setTimeout(loadSemantic, 1500);
       if (result.applied) toast(`Library updated: ${result.applied.changed} ${result.applied.changed === 1 ? "page" : "pages"} changed.`);
     } catch (err) {
@@ -1225,8 +1244,10 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       footBtn("Add to deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
         const units = selectedUnits();
         if (!units.length) { toast("Tap a verse or paragraph to select it first."); return; }
+        const first = $(".doc .sel", readerPane);
         const added = window.Deck?.addFromDoc(currentDoc, units);
         clearSelection();
+        focusUnit(first);
         deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
       }),
       el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
@@ -1239,11 +1260,22 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     refreshSwitches();
     body.addEventListener("click", onBodyClick);
     body.addEventListener("click", onSelectClick);
-    for (const unit of body.querySelectorAll("p.verse, .body-block p[id], .body-block li[id]")) unit.tabIndex = 0;
+    // The verses are one Tab stop (the one last visited): ArrowUp and ArrowDown move between them,
+    // Enter or Space selects, instead of a Tab for every verse before the selection bar.
+    const units = [...body.querySelectorAll(UNIT_SEL)];
+    units.forEach((u, i) => { u.tabIndex = i === 0 ? 0 : -1; });
+    body.addEventListener("focusin", (e) => { if (e.target.matches?.(UNIT_SEL)) rove(e.target); });
     body.addEventListener("keydown", (e) => {
+      const unit = e.target.closest(UNIT_SEL);
+      if (!unit || e.target !== unit || e.altKey || e.metaKey || e.ctrlKey) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        const all = [...body.querySelectorAll(UNIT_SEL)];
+        const next = all[all.indexOf(unit) + (e.key === "ArrowDown" ? 1 : -1)];
+        e.preventDefault();
+        if (next) { focusUnit(next); next.scrollIntoView({ block: "nearest" }); }
+        return;
+      }
       if (e.key !== "Enter" && e.key !== " ") return;
-      const unit = e.target.closest("p.verse, .body-block p[id], .body-block li[id]");
-      if (!unit || e.target !== unit) return;
       e.preventDefault();
       unit.classList.toggle("sel");
       updateSelectBar();
@@ -1305,6 +1337,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     try { list = await window.Marks.forDoc(doc.uri); } catch (_) { return; }
     if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
     for (const m of list) { docMarks.set(m.pid, m); drawMark(body, m); }
+    drawRanges(body);
   }
   function drawMark(body, m) {
     const unit = body.querySelector(`#${CSS.escape(m.pid)}`);
@@ -1315,8 +1348,44 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     unit.querySelector(".note-mark")?.remove();
     if (m.note) {
       unit.classList.add("noted");
-      unit.append(el("button", { type: "button", class: "note-mark", title: m.note.length > 80 ? m.note.slice(0, 78) + "…" : m.note, "aria-label": `Note: ${m.note.slice(0, 80)}`, html: ICON_NOTE, onclick: (e) => { e.preventDefault(); e.stopPropagation(); editNote(unitInfo(unit)); } }));
+      // the marker sits on the first verse of the note's range; the label says how far it reaches
+      const over = m.pid_end && m.citation ? ` on ${m.citation}` : "";
+      unit.append(el("button", { type: "button", class: "note-mark", title: m.note.length > 80 ? m.note.slice(0, 78) + "…" : m.note, "aria-label": `Note${over}: ${m.note.slice(0, 80)}`, html: ICON_NOTE, onclick: (e) => { e.preventDefault(); e.stopPropagation(); editNote(unitInfo(unit)); } }));
     } else unit.classList.remove("noted");
+  }
+  // The passages from one paragraph to another, in reading order (a note's range, a selection's span)
+  const UNIT_SEL = "p.verse, .body-block p[id], .body-block li[id]";
+  // The one verse in the page that Tab reaches (a roving tabindex), and focus put back on the page
+  // after a control that held it goes away (the selection bar after Add to deck)
+  function rove(unit) {
+    const body = unit?.closest(".doc");
+    if (!body) return;
+    for (const n of body.querySelectorAll("[tabindex='0']")) if (n !== unit && n.matches(UNIT_SEL)) n.tabIndex = -1;
+    unit.tabIndex = 0;
+  }
+  function focusUnit(unit) {
+    if (!unit || !unit.isConnected) return;
+    rove(unit);
+    try { unit.focus({ preventScroll: true }); } catch (_) {}
+  }
+  function unitsBetween(body, fromPid, toPid) {
+    const all = [...body.querySelectorAll(UNIT_SEL)];
+    const a = all.findIndex((n) => n.id === fromPid), b = all.findIndex((n) => n.id === toPid);
+    if (a < 0) return [];
+    return b < a ? [all[a]] : all.slice(a, b + 1);
+  }
+  // A note over several verses: a light bracket in the margin from its first verse to its last
+  function drawRanges(body) {
+    if (!body) return;
+    for (const n of body.querySelectorAll(".note-range")) n.classList.remove("note-range", "note-range-start", "note-range-end");
+    for (const m of docMarks.values()) {
+      if (!m.note || !m.pid_end) continue;
+      const span = unitsBetween(body, m.pid, m.pid_end);
+      if (span.length < 2) continue;
+      for (const n of span) n.classList.add("note-range");
+      span[0].classList.add("note-range-start");
+      span[span.length - 1].classList.add("note-range-end");
+    }
   }
   function undrawMark(body, pid) {
     const unit = body.querySelector(`#${CSS.escape(pid)}`);
@@ -1342,36 +1411,51 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     const allSame = units.every((u) => docMarks.get(u.pid)?.color === color);
     for (const u of units) {
       try {
-        const rec = await window.Marks.set({ uri: page.uri, doc_id: page.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: u.text, citation: citeUnit(u), title: page.title });
+        const ranged = !!docMarks.get(u.pid)?.pid_end; // a verse that opens a note's range keeps the range's words and citation
+        const rec = await window.Marks.set({ uri: page.uri, doc_id: page.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: ranged ? undefined : u.text, citation: ranged ? undefined : citeUnit(u), title: page.title });
         if (currentDoc !== page) return;
         if (rec) { docMarks.set(u.pid, rec); drawMark(body, rec); } else { docMarks.delete(u.pid); undrawMark(body, u.pid); }
       } catch (_) { toast("Could not save that mark."); return; }
     }
-    clearSelection();
-    // focus stays on the page: the first verse marked, not the body
-    const first = body.querySelector(`#${CSS.escape(units[0].pid)}`);
-    if (first) { try { first.focus({ preventScroll: true }); } catch (_) {} }
+    // the verses stay selected and the bar stays up (focus with it), so a note or Add to deck can
+    // follow without selecting them again; the dot shows the color they now carry
+    updateSelectBar();
     toast(allSame ? "Highlight removed." : units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
   }
-  // A note on a paragraph, written in the sheet
-  function editNote(unit) {
+  // A note on a passage, written in the sheet: one verse or paragraph, or a run of them (end is the
+  // last; an existing note brings its own range back). The note is kept on the first.
+  function editNote(unit, end = null) {
     if (!currentDoc || !window.Marks || !unit) return;
-    const existing = docMarks.get(unit.pid)?.note || "";
+    const old = docMarks.get(unit.pid) || null;
+    const existing = old?.note || "";
+    const body = $(".doc", readerPane);
+    if (!end && old?.pid_end) { const n = body?.querySelector(`#${CSS.escape(old.pid_end)}`); if (n) end = unitInfo(n); }
+    const span = end && end.pid !== unit.pid && body ? unitsBetween(body, unit.pid, end.pid).map(unitInfo) : [unit];
+    const last = span[span.length - 1];
+    const ranged = span.length > 1;
+    const cite = ranged && unit.kind === "verse" && last.kind === "verse" && currentDoc.citation ? `${chapterOf(currentDoc.citation)}:${unit.verse}-${last.verse}` : citeUnit(unit);
+    const words = span.map((x) => x.text).join(" ");
+    const page = currentDoc;
     const bodyEl = $(".sheet-body", sheet);
-    const ta = el("textarea", { class: "note-text", rows: 5, placeholder: "Your note on this passage…", "aria-label": "Note" });
+    const ta = el("textarea", { class: "note-text", rows: 5, placeholder: ranged ? "Your note on these passages…" : "Your note on this passage…", "aria-label": `Note on ${cite}` });
     ta.value = existing;
     const save = async () => {
       try {
-        const rec = await window.Marks.set({ uri: currentDoc.uri, doc_id: currentDoc.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, note: ta.value, text: unit.text, citation: citeUnit(unit), title: currentDoc.title });
-        const body = $(".doc", readerPane);
-        if (rec) { docMarks.set(unit.pid, rec); if (body) drawMark(body, rec); } else { docMarks.delete(unit.pid); if (body) undrawMark(body, unit.pid); }
-        closeSheet(); clearSelection();
-        toast(ta.value.trim() ? "Note saved." : "Note removed.");
+        const keep = !!ta.value.trim();
+        const rec = await window.Marks.set({ uri: page.uri, doc_id: page.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, note: ta.value,
+          pid_end: keep && ranged ? last.pid : null, verse_end: keep && ranged ? last.verse : null,
+          text: keep ? words : unit.text, citation: keep ? cite : citeUnit(unit), title: page.title });
+        if (currentDoc !== page) { closeSheet(); return; }
+        const b = $(".doc", readerPane);
+        if (rec) { docMarks.set(unit.pid, rec); if (b) drawMark(b, rec); } else { docMarks.delete(unit.pid); if (b) undrawMark(b, unit.pid); }
+        drawRanges(b);
+        closeSheet(); updateSelectBar(); // the selection stays, for a color or Add to deck after the note
+        toast(keep ? "Note saved." : "Note removed.");
       } catch (_) { toast("Could not save the note."); }
     };
     bodyEl.replaceChildren(
-      el("div", { class: "nm", text: `Note on ${citeUnit(unit)}` }),
-      el("p", { class: "note-passage", text: unit.text.length > 180 ? unit.text.slice(0, 178) + "…" : unit.text }),
+      el("div", { class: "nm", text: `Note on ${cite}` }),
+      el("p", { class: "note-passage", text: words.length > 180 ? words.slice(0, 178) + "…" : words }),
       ta,
       el("div", { class: "peek-row" }, [
         el("button", { type: "button", class: "primary", text: "Save", onclick: save }),
@@ -1380,6 +1464,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
       ].filter(Boolean)),
     );
     openSheet("Note");
+    sheetKeep = () => ta.value.trim() !== existing.trim(); // Esc or a tap outside keeps words not yet saved
     ta.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); save(); } });
     setTimeout(() => ta.focus(), 50);
   }
@@ -1649,8 +1734,22 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     sec.append(el("div", { class: "marks-tools" }, [
       marks.length ? el("button", { type: "button", class: "text-btn", text: "Export", title: "Save your highlights and notes to a file", onclick: async () => {
         try {
-          const blob = new Blob([await window.Marks.exportJson()], { type: "application/json" });
-          const a = el("a", { href: URL.createObjectURL(blob), download: `gospel-marks-${new Date().toISOString().slice(0, 10)}.json` });
+          // built from the marks already listed, with no wait, so the share sheet opens inside the tap
+          const name = `gospel-marks-${new Date().toISOString().slice(0, 10)}.json`;
+          const text = window.Marks.exportJsonOf ? window.Marks.exportJsonOf(marks) : await window.Marks.exportJson();
+          // on an iPhone or iPad the share sheet (Save to Files, AirDrop) is the dependable way out of
+          // a home-screen app, as it is for the deck; a download link is the way elsewhere
+          if (navigator.maxTouchPoints > 0 && typeof File === "function") {
+            const file = new File([text], name, { type: "application/json" });
+            let can = false;
+            try { can = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
+            if (can) {
+              try { await navigator.share({ files: [file], title: "Highlights and notes" }); return; }
+              catch (err) { if (err && err.name === "AbortError") return; } // anything else: the download below
+            }
+          }
+          const blob = new Blob([text], { type: "application/json" });
+          const a = el("a", { href: URL.createObjectURL(blob), download: name });
           document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
         } catch (_) { toast("Could not export just now."); }
       } }) : null,
@@ -1729,11 +1828,13 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (!bar) {
       bar = el("div", { class: "select-bar" }, [
         el("span", { class: "n" }),
-        window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
-        window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the first selected passage", onclick: () => { const u = selectedUnits()[0]; if (u) editNote(u); } }) : null,
+        window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
+        window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the selected passages, first to last", onclick: () => { const u = selectedUnits(); if (u.length) editNote(u[0], u.length > 1 ? u[u.length - 1] : null); } }) : null,
         el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
+          const first = $(".doc .sel", readerPane);
           const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
-          clearSelection();
+          clearSelection(); // the bar goes, and focus with it: back to the first verse that was selected
+          focusUnit(first);
           deckToast(added, added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
         el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); } }),
@@ -1741,33 +1842,49 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
           const text = copyText(selectedUnits());
           navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
         } }),
-        el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: clearSelection }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),
+        el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: () => { const f = $(".doc .sel", readerPane); clearSelection(); focusUnit(f); } }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),
       ]);
-      const rf = $(".reader-foot", readerPane);
-      if (rf) rf.before(bar); else readerPane.append(bar);
+      // right after the reader bar in the order Tab and VoiceOver follow; app.css draws it at the bottom
+      const rb = $(".reader-bar", readerPane);
+      if (rb) rb.after(bar); else readerPane.prepend(bar);
     }
     $(".n", bar).textContent = `${n} selected`;
+    // a dot is pressed when every selected passage carries its color (pressing it again takes it off)
+    const pids = [...readerPane.querySelectorAll(".doc .sel")].map((u) => u.id);
+    for (const d of bar.querySelectorAll(".hl-dot")) d.setAttribute("aria-pressed", String(!!pids.length && pids.every((pid) => docMarks.get(pid)?.color === d.dataset.color)));
   }
   // toast(text, { action: "Undo", onAction }) adds a button and stays about five seconds, long
   // enough to reach it; the plain toast still goes after two. A newer toast replaces an older one.
+  // There is one toast element, a live region made once and kept: VoiceOver reads a change to its
+  // words, where a status element created already filled is often missed. Cmd+Z or Ctrl+Z presses
+  // its Undo while it shows (VoiceOver cannot reach the button in five seconds).
+  let toastEl = null, toastTimer = null, toastAct = null;
+  function toastClose() { clearTimeout(toastTimer); toastAct = null; toastEl?.classList.remove("show"); }
+  function toastArm(ms) { clearTimeout(toastTimer); toastTimer = setTimeout(toastClose, ms); }
   function toast(text, { action, onAction } = {}) {
-    for (const old of document.querySelectorAll(".toast")) old.remove();
-    const t = el("div", { class: "toast" + (action ? " has-action" : ""), role: "status" }, [el("span", { text })]);
-    let timer = null;
-    const close = () => { clearTimeout(timer); t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
-    const arm = (ms) => { clearTimeout(timer); timer = setTimeout(close, ms); };
-    if (action) {
-      t.append(el("button", { type: "button", class: "toast-action", text: action, onclick: () => { close(); try { onAction?.(); } catch (_) {} } }));
-      // a finger or the focus on the button keeps it from going away under them
-      t.addEventListener("pointerenter", () => clearTimeout(timer));
-      t.addEventListener("pointerleave", () => arm(2500));
-      t.addEventListener("focusin", () => clearTimeout(timer));
-      t.addEventListener("focusout", () => arm(2500));
+    if (!toastEl) {
+      toastEl = el("div", { id: "toast", class: "toast", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+      // a finger or the focus on its button keeps it from going away under them
+      toastEl.addEventListener("pointerenter", () => { if (toastAct) clearTimeout(toastTimer); });
+      toastEl.addEventListener("pointerleave", () => { if (toastAct) toastArm(2500); });
+      toastEl.addEventListener("focusin", () => { if (toastAct) clearTimeout(toastTimer); });
+      toastEl.addEventListener("focusout", () => { if (toastAct) toastArm(2500); });
+      document.body.append(toastEl);
+      void toastEl.offsetWidth; // laid out hidden first, so the first toast slides in like the rest
     }
-    document.body.append(t);
-    setTimeout(() => t.classList.add("show"), 10);
-    arm(action ? 5000 : 1800);
+    const t = toastEl;
+    toastAct = action ? () => { toastClose(); try { onAction?.(); } catch (_) {} } : null;
+    t.className = "toast show" + (action ? " has-action" : "");
+    t.replaceChildren(...[el("span", { text }), action ? el("button", { type: "button", class: "toast-action", text: action, onclick: () => toastAct?.() }) : null].filter(Boolean));
+    toastArm(action ? 5000 : 1800);
   }
+  document.addEventListener("keydown", (e) => {
+    if (!toastAct || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return; // a field's own undo comes first
+    e.preventDefault();
+    toastAct();
+  });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
   function deckToast(added, text) {
     const ids = added ? window.Deck?.lastAdded?.() || [] : [];
@@ -1885,6 +2002,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     if (!target && /^p\d+$/.test(pid)) target = body.querySelector(`.verse:nth-of-type(${pid.slice(1)})`);
     if (!target) return;
     target.classList.add("is-target");
+    if (target.matches(UNIT_SEL)) rove(target); // Tab into the page lands on the verse you came for
     if (scroll) requestAnimationFrame(() => target.scrollIntoView({ block: "center", behavior: "auto" }));
   }
 
@@ -1922,7 +2040,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   }
 
   function resize(delta) {
-    const sizes = [15, 16, 17, 18, 19, 21, 23, 26];
+    const sizes = [15, 16, 17, 18, 19, 21, 23, 26, 30, 34];
     const cur = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17;
     let i = Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(cur) + delta));
     if (sizes.indexOf(cur) === -1) i = delta > 0 ? 3 : 1;
@@ -1977,8 +2095,15 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   const barWatch = new MutationObserver((records) => { for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
   barWatch.observe(readerPane, { childList: true, subtree: true });
   // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
-  { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(26, Math.round(sys))) + "px"); } }
+  // The system size is read again whenever the app comes back to the front, since Larger Text may
+  // have changed in Settings meanwhile; the accessibility sizes reach 34px.
+  function applyReadingSize() { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(34, Math.round(sys))) + "px"); } }
+  applyReadingSize();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") applyReadingSize(); });
+  window.addEventListener("pageshow", (e) => { if (e.persisted) applyReadingSize(); });
   function systemTextSize() {
+    // only on a touch screen: a Mac answers with its 13px body size, which is not a reading preference
+    if (!(navigator.maxTouchPoints > 0)) return null;
     try {
       const wrap = el("div", { style: "position:absolute;visibility:hidden;font-size:11px" }, [el("span", { style: "font: -apple-system-body" })]);
       document.body.append(wrap);
@@ -2245,8 +2370,14 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     sheet.setAttribute("aria-label", label);
     const wasHidden = sheet.hidden;
     sheet.hidden = false;
-    if (wasHidden) { sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); openOverlay("sheet"); }
-    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: closeSheet }); scrim.id = "scrim"; document.body.append(scrim); }
+    if (wasHidden) {
+      sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); openOverlay("sheet");
+      const vv = window.visualViewport;
+      if (vv) { vv.addEventListener("resize", liftSheet); vv.addEventListener("scroll", liftSheet); }
+      liftSheet();
+      inertBehind(sheet, true);
+    }
+    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: () => { if (!keepTyped()) closeSheet(); } }); scrim.id = "scrim"; document.body.append(scrim); }
     $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;
@@ -2261,10 +2392,54 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   function hideNote() {
     const wasOpen = !sheet.hidden;
     sheet.hidden = true; $("#scrim")?.remove();
+    inertBehind(sheet, false); // before the focus goes back to what opened it
+    sheetKeep = null;
+    const vv = window.visualViewport;
+    if (vv) { vv.removeEventListener("resize", liftSheet); vv.removeEventListener("scroll", liftSheet); }
+    sheet.style.bottom = ""; sheet.style.maxHeight = "";
     if (wasOpen && sheetOpener && sheetOpener.isConnected) { try { sheetOpener.focus({ preventScroll: true }); } catch (_) {} }
     sheetOpener = null;
   }
   function closeSheet() { const had = overlay === "sheet"; hideNote(); if (had) dropOverlay("sheet"); }
+  // A dialog over the page (the sheet, the stage) is modal: aria-modal on it, and everything else
+  // in the body inert while it is open, so VoiceOver and Tab stay inside it. The toast stays live
+  // (its Undo must stay reachable). inertBehind(node, false) undoes exactly what it did; the stage
+  // calls it from openStage and stopPresenting.
+  const inertSets = new Map(); // dialog -> the elements it made inert
+  function inertBehind(node, on) {
+    if (!node) return;
+    if (on) {
+      if (inertSets.has(node)) return;
+      node.setAttribute("aria-modal", "true");
+      const list = [...document.body.children].filter((n) => n !== node && !n.contains(node) && !n.inert && n.id !== "scrim" && n.id !== "toast" && n.tagName !== "SCRIPT");
+      for (const n of list) n.inert = true;
+      inertSets.set(node, list);
+    } else {
+      const list = inertSets.get(node);
+      if (!list) return;
+      for (const n of list) n.inert = false;
+      inertSets.delete(node);
+    }
+  }
+  // The iPhone keyboard covers the bottom of the layout viewport, and the sheet with it: while it
+  // is up the sheet sits on top of it (the visual viewport's bottom), so Save stays in reach.
+  function liftSheet() {
+    const vv = window.visualViewport;
+    if (!vv || sheet.hidden) return;
+    const covered = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    sheet.style.bottom = covered > 40 ? covered + "px" : "";
+    sheet.style.maxHeight = covered > 40 ? Math.max(160, Math.round(vv.height * 0.9)) + "px" : "";
+  }
+  // A sheet holding typed words (a note not yet saved) does not go on Esc or a tap outside:
+  // sheetKeep says whether it holds any; Save or Cancel decide.
+  let sheetKeep = null;
+  function keepTyped() {
+    if (!sheetKeep || !sheetKeep()) return false;
+    toast("Your note is not saved yet: Save it, or Cancel to let it go.");
+    const ta = sheet.querySelector("textarea");
+    if (ta) { try { ta.focus({ preventScroll: true }); } catch (_) {} }
+    return true;
+  }
   sheet.tabIndex = -1;
   sheet.addEventListener("keydown", (e) => { // Tab stays within the sheet while it is open
     if (e.key !== "Tab") return;
@@ -2335,7 +2510,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     // Single-key shortcuts never fire while typing in any field (the Ask box, a deck title, a label).
     const a = document.activeElement;
     const typing = !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable);
-    if (e.key === "Escape") { if (!sheet.hidden) closeSheet(); else if (typing) a.blur(); return; }
+    if (e.key === "Escape") { if (!sheet.hidden) { if (!keepTyped()) closeSheet(); } else if (typing) a.blur(); return; }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === "/" && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }

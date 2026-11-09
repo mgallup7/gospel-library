@@ -265,6 +265,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     }
     let added = 0;
     lastAddedIds = [];
+    const cards = []; // each new card and the paragraphs it holds, for its marks
     for (const r of runs) {
       const verses = r.kind === "verse" ? r.units.map((u) => ({ n: u.verse, text: u.text })) : null;
       const text = verses ? verses.map((v) => v.text).join(" ") : r.units.map((u) => u.text).join("\n\n");
@@ -276,10 +277,44 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
         ...citationFor(doc, verses),
       });
       lastAddedIds.push(id);
+      cards.push({ id, pids: r.units.map((u) => u.pid) });
       added++;
     }
     save();
+    if (added) carryMarks(doc, cards);
     return added;
+  }
+  // The reader's marks come along: a verse he colored arrives with that color (item.color, and on
+  // each verse; the PowerPoint does not read it, the board can), and a note on a verse the card
+  // holds becomes its speaker note. The marks store answers after the add has returned, so the
+  // cards are filled in a moment later; a card already taken off (Undo) is left alone.
+  function carryMarks(doc, cards) {
+    if (!window.Marks || !doc?.uri) return;
+    window.Marks.forDoc(doc.uri).then((marks) => {
+      if (!marks || !marks.length) return;
+      const byPid = new Map(marks.map((m) => [m.pid, m]));
+      let changed = false;
+      for (const { id, pids } of cards) {
+        const it = deck.items.find((i) => i.id === id);
+        if (!it) continue;
+        const colors = pids.map((p) => byPid.get(p)?.color || null);
+        if (it.verses) it.verses.forEach((v, i) => { if (colors[i]) v.color = colors[i]; });
+        const color = colors.find(Boolean) || null;
+        if (color) { it.color = color; changed = true; }
+        // a note covers its own verse, or a range of them: any overlap with the card brings it
+        const lo = it.verses ? it.verses[0].n : null, hi = it.verses ? it.verses[it.verses.length - 1].n : null;
+        const notes = marks.filter((m) => m.note && (pids.includes(m.pid) || (m.pid_end && pids.includes(m.pid_end))
+          || (lo !== null && Number.isFinite(m.verse) && m.kind === "verse" && m.verse <= hi && (Number.isFinite(m.verse_end) ? m.verse_end : m.verse) >= lo)))
+          .sort((a, b) => (a.verse || 0) - (b.verse || 0));
+        for (const m of notes) {
+          const text = m.note.trim();
+          if (!text || (it.notes || "").includes(text)) continue;
+          it.notes = it.notes && it.notes.trim() ? `${it.notes.trim()}\n\n${text}` : text;
+          changed = true;
+        }
+      }
+      if (changed) save();
+    }).catch(() => {});
   }
 
   /** A section heading at the end of the deck (what "Think it through" builds under). */
