@@ -62,9 +62,11 @@
   }
   const remove = (uri, pid) => tx("readwrite", (s) => s.delete(idFor(uri, pid)));
 
-  async function exportJson() {
-    return JSON.stringify({ app: "gospel-library", kind: "marks", exported: new Date().toISOString(), marks: await all() }, null, 1);
+  // The file, from a list already read (so a share can start inside the tap that asked for it)
+  function exportJsonOf(marks) {
+    return JSON.stringify({ app: "gospel-library", kind: "marks", exported: new Date().toISOString(), marks }, null, 1);
   }
+  async function exportJson() { return exportJsonOf(await all()); }
   // Marks from a file: newer wins where both sides have the same paragraph
   async function importJson(textOrObj) {
     const data = typeof textOrObj === "string" ? JSON.parse(textOrObj) : textOrObj;
@@ -92,5 +94,5 @@
     return added;
   }
 
-  window.Marks = { COLORS, COLOR_NAME, forDoc, all, count, get, set, remove, exportJson, importJson };
+  window.Marks = { COLORS, COLOR_NAME, forDoc, all, count, get, set, remove, exportJson, exportJsonOf, importJson };
 })();

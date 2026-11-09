@@ -113,6 +113,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       for (const u of ["/x/old", "/x/bad", "/x/ok"]) await window.Marks.remove(u, "p1");
       return out;
     });
+    // Export: no touch screen here, so the file downloads (an iPhone or iPad takes the share sheet)
+    const dl = await Promise.all([page.waitForEvent("download", { timeout: 5000 }), page.click("#homeBody .marks-tools button:has-text('Export')")]).then(([d]) => d).catch(() => null);
+    check(dl && /^gospel-marks-\d{4}-\d\d-\d\d\.json$/.test(dl.suggestedFilename()), `Export downloads the marks file (${dl && dl.suggestedFilename()})`);
     check(imp.n === 3 && imp.old === null && imp.bad === null && imp.ok === "p3" && imp.okv === 3, `import sanitizes the range: ${JSON.stringify(imp)}`);
     await shot("05-marks-list");
     // tapping a mark opens the verse

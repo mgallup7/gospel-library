@@ -467,6 +467,9 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .hl-dots { display: inline-flex; gap: 6px; align-items: center; }
 .hl-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0,0,0,.08); }
 .hl-dot.hl-y { background: var(--hl-y-dot); } .hl-dot.hl-g { background: var(--hl-g-dot); } .hl-dot.hl-b { background: var(--hl-b-dot); } .hl-dot.hl-p { background: var(--hl-p-dot); }
+/* in light mode a ring in a darker shade of each color, so the dot reads against the chrome (3:1 or more) */
+.hl-dot.hl-y { border-color: #9a7b00; } .hl-dot.hl-g { border-color: #3d8a3b; } .hl-dot.hl-b { border-color: #3b6fc4; } .hl-dot.hl-p { border-color: #c2507f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hl-dot { border-color: rgba(0,0,0,.08); } }
 .hl-dot:active { transform: scale(.92); }
 .hl-dot[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 4px var(--ink-2); } /* the color the selection carries */
 /* Touch targets of 44pt around controls drawn smaller: the look stays, a clear box around each
@@ -575,6 +578,7 @@ body.first-run .bar, body.first-run #filters { display: none; }
 /* The timer and the next passage sit with the buttons, in the count's muted type, so they fade with them */
 .stage-controls { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 16px); }
 .stage-controls .stage-timer { width: auto; min-width: 56px; padding: 0 10px; font-size: 15px; font-variant-numeric: tabular-nums; opacity: .7; }
+.stage:not(.dark):not(.themed) .stage-controls .stage-timer { opacity: 1; color: #4a4d53; } /* the light stage: a darker timer instead of a faded one (3.67:1 before) */
 .stage-upnext { flex-basis: 100%; text-align: right; padding: 4px 4px 0; font: 14px/1.35 var(--sans); opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stage-upnext:empty { display: none; }
 body.presenting { overflow: hidden; }

@@ -1479,8 +1479,22 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     sec.append(el("div", { class: "marks-tools" }, [
       marks.length ? el("button", { type: "button", class: "text-btn", text: "Export", title: "Save your highlights and notes to a file", onclick: async () => {
         try {
-          const blob = new Blob([await window.Marks.exportJson()], { type: "application/json" });
-          const a = el("a", { href: URL.createObjectURL(blob), download: `gospel-marks-${new Date().toISOString().slice(0, 10)}.json` });
+          // built from the marks already listed, with no wait, so the share sheet opens inside the tap
+          const name = `gospel-marks-${new Date().toISOString().slice(0, 10)}.json`;
+          const text = window.Marks.exportJsonOf ? window.Marks.exportJsonOf(marks) : await window.Marks.exportJson();
+          // on an iPhone or iPad the share sheet (Save to Files, AirDrop) is the dependable way out of
+          // a home-screen app, as it is for the deck; a download link is the way elsewhere
+          if (navigator.maxTouchPoints > 0 && typeof File === "function") {
+            const file = new File([text], name, { type: "application/json" });
+            let can = false;
+            try { can = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
+            if (can) {
+              try { await navigator.share({ files: [file], title: "Highlights and notes" }); return; }
+              catch (err) { if (err && err.name === "AbortError") return; } // anything else: the download below
+            }
+          }
+          const blob = new Blob([text], { type: "application/json" });
+          const a = el("a", { href: URL.createObjectURL(blob), download: name });
           document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
         } catch (_) { toast("Could not export just now."); }
       } }) : null,
