@@ -1130,11 +1130,10 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       trailButton(),
       el("div", { class: "crumb", text: crumbFor(doc) }),
       el("div", { class: "spacer" }),
-      el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
-      el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
-      el("button", { class: "icon-btn", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
+      ...sizeTools(doc),
+      el("button", { class: "icon-btn bar-extra", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
-      el("a", { class: "icon-btn", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
+      el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
       el("span", { class: "pane-switch-slot" }),
     ].filter(Boolean));
     const body = sanitize(el("article", { class: "doc", html: doc.body_html || "" }));
@@ -1727,6 +1726,53 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     document.documentElement.style.setProperty("--reading-size", sizes[i] + "px");
     store.set("readingSize", sizes[i]);
   }
+  // The reader bar's text sizes: two buttons where there is room, one "Aa" that opens Smaller and
+  // Larger where there is not (an iPad in portrait with the Hebrew and the Page | Deck switch). In
+  // the narrowest case the menu also takes Present and the Church's site, so Back and the crumb keep theirs.
+  function sizeTools(doc) {
+    const glyph = (px) => `<span style='font-size:${px}px;font-weight:600'>A</span>`;
+    const jsp = doc.collection && doc.collection.startsWith("jsp-");
+    const menu = el("div", { class: "size-menu", role: "menu", hidden: true }, [
+      el("button", { type: "button", role: "menuitem", onclick: () => resize(-1) }, [el("span", { class: "g", html: glyph(14) }), "Smaller text"]),
+      el("button", { type: "button", role: "menuitem", onclick: () => resize(1) }, [el("span", { class: "g", html: glyph(20) }), "Larger text"]),
+      el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]),
+      el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: () => shut() }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
+    ]);
+    const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size", title: "Text size", "aria-haspopup": "menu", "aria-expanded": "false", text: "Aa", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } });
+    const away = (e) => { if (!wrap.contains(e.target)) shut(); };
+    const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
+    function openMenu() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.addEventListener("keydown", key); menu.querySelector("button")?.focus({ preventScroll: true }); }
+    function shut() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); }
+    const wrap = el("span", { class: "size-pop" }, [btn, menu]);
+    return [
+      el("span", { class: "size-btns" }, [
+        el("button", { class: "icon-btn", "aria-label": "Smaller text", title: "Smaller text", onclick: () => resize(-1), html: glyph(14) }),
+        el("button", { class: "icon-btn", "aria-label": "Larger text", title: "Larger text", onclick: () => resize(1), html: glyph(20) }),
+      ]),
+      wrap,
+    ];
+  }
+  // How much of the bar folds away: none, the sizes into Aa, then the match count's words and a
+  // tighter switch, then Present and the site into the menu. Measured with nothing allowed to shrink
+  // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
+  const BAR_LEVELS = ["compact", "tight", "tighter"];
+  function fitReaderBar(bar) {
+    if (!bar.querySelector(".size-pop")) return;
+    bar.classList.remove(...BAR_LEVELS);
+    if (!wide() || bar.offsetParent === null) return;
+    for (const level of BAR_LEVELS) {
+      bar.classList.add("measuring");
+      const over = bar.scrollWidth > bar.clientWidth + 1;
+      bar.classList.remove("measuring");
+      if (!over) return;
+      bar.classList.add(level);
+    }
+  }
+  function fitReaderBars() { for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar); }
+  window.addEventListener("resize", fitReaderBars);
+  // what joins the bar after it is drawn (the match count, the Hebrew button, the switch) refits it
+  const barWatch = new MutationObserver((records) => { for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
+  barWatch.observe(readerPane, { childList: true, subtree: true });
   // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
   { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(26, Math.round(sys))) + "px"); } }
   function systemTextSize() {
@@ -2178,6 +2224,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     }
     // a switch that had focus keeps it on the pane now showing
     if (hadFocus) { const visible = [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.classList.contains("on")); if (visible) { try { visible.focus({ preventScroll: true }); } catch (_) {} } }
+    fitReaderBars(); // a pane just shown, or a switch come or gone, changes what the bar needs
   }
 
   function searchFor(q) {

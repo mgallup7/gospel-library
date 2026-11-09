@@ -295,6 +295,30 @@ body.overview .scopes { display: none; }
   border-bottom: 1px solid var(--rule);
 }
 .reader-bar .spacer { flex: 1; }
+/* text size: two buttons, or one Aa with a small menu when the bar has no room (app.js fitReaderBar) */
+.reader-bar .size-btns { display: inline-flex; gap: 4px; flex: none; }
+.reader-bar .size-pop { display: none; position: relative; flex: none; }
+.reader-bar .size-pop-btn { font: 600 16px var(--sans); color: var(--ink-2); }
+.reader-bar .size-pop-btn[aria-expanded="true"] { background: var(--chrome-2); }
+.size-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 200px; padding: 6px; display: grid; gap: 2px; background: var(--paper); border: 1px solid var(--rule); border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, .16); font-family: var(--sans); }
+.size-menu[hidden] { display: none; }
+.size-menu > * { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 8px; font-size: 15px; color: var(--ink); text-align: left; text-decoration: none; white-space: nowrap; }
+.size-menu > *:hover, .size-menu > *:focus-visible { background: var(--chrome); }
+.size-menu .g { display: inline-flex; justify-content: center; width: 22px; color: var(--accent); }
+.size-menu .g svg { width: 20px; height: 20px; }
+.size-menu .menu-extra { display: none; }
+.reader-bar.compact .size-btns { display: none; }
+.reader-bar.compact .size-pop { display: inline-flex; }
+.reader-bar.compact .spacer { flex: 0 0 0; } /* what room there is goes to the crumb */
+.reader-bar.tight .matchnav > span:first-child { display: none; }
+.reader-bar.tight .matchnav { padding-left: 4px; }
+.reader-bar.tight .pane-switch button { padding: 0 8px; }
+.reader-bar.tighter .bar-extra { display: none; }
+.reader-bar.tighter .size-menu .menu-extra { display: flex; }
+/* measuring what the bar needs: nothing shrinks, and the crumb keeps enough to be read */
+.reader-bar.measuring > * { flex-shrink: 0 !important; }
+.reader-bar.measuring .crumb { flex: 0 0 72px; }
+.reader-bar.measuring .spacer { flex: 0 0 0; }
 /* Back, saying where it leads: "‹ Alma 32", "‹ Results", "‹ Library" */
 .list-trail { display: flex; padding: 6px 8px 0; }
 .trail-back { display: inline-flex; align-items: center; gap: 1px; flex: none; height: 36px; max-width: 42%; padding: 0 8px 0 2px; border-radius: 8px; color: var(--accent); font-size: 15px; font-weight: 500; }
