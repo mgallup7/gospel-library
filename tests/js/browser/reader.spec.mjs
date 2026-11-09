@@ -38,6 +38,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(await page.evaluate(() => document.querySelector("#reader .reader-bar").nextElementSibling?.classList.contains("select-bar")), "the selection bar comes right after the reader bar");
     const barBottom = await page.evaluate(() => { const b = document.querySelector("#reader .select-bar").getBoundingClientRect(); return Math.round(b.bottom); });
     check(barBottom > viewport.height - 160, `the selection bar is still drawn at the bottom (${barBottom})`);
+    // on a phone, one way to the deck while the bar is up: its + Deck, not the bottom bar's Add to deck too
+    if (viewport.width < 760) {
+      const shown = await page.evaluate(() => [...document.querySelectorAll("#reader .select-bar .add-deck, #reader .reader-foot .foot-btn")].filter((b) => b.offsetParent && /deck/i.test(b.getAttribute("aria-label") || b.textContent)).length);
+      check(shown === 1, `one Add to deck control with a selection on the phone (${shown})`);
+      check(await page.isVisible("#reader .reader-foot .foot-btn[aria-label='Present']"), "Present stays in the bottom bar");
+    }
     await shot("01-selected");
     // after a color the focus stays on the dot; after Add to deck it returns to the verse
     await page.focus("#reader .select-bar .hl-dot.hl-g");

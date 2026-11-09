@@ -36,6 +36,10 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(/^Next: \S/.test(peek), `Next line on the first slide: ${peek}`);
     check(!/^Next: \d/.test(peek), `Next line should drop the verse number: ${peek}`);
     await page.screenshot({ path: `${OUT}${name}-01-first.png` });
+    // the timer, the buttons and Close on one row, each at least 44 px
+    const row = await page.$$eval(".stage .stage-controls button", (bs) => bs.filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return { top: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; }));
+    check(new Set(row.map((r) => r.top)).size === 1, `the controls should sit on one row: ${JSON.stringify(row.map((r) => r.top))}`);
+    check(row.every((r) => r.w >= 44 && r.h >= 44), `every control at least 44 px: ${JSON.stringify(row)}`);
     // the timer keeps going while blanked, and a tap starts it again
     await page.keyboard.press("b");
     check(await page.evaluate(() => document.querySelector("#stage").classList.contains("blank")), "B should blank the screen");

@@ -652,6 +652,13 @@ body.first-run .bar, body.first-run #filters { display: none; }
 /* Close sits at the far end of the row, away from the timer, so a tap meant for one never lands on the other */
 .stage-controls .stage-close { order: 2; margin-left: 10px; }
 .stage-controls .stage-upnext { order: 3; }
+/* At 393 wide the timer, six buttons and Close fit one row only if the gaps and the timer's
+   padding give a little; every button keeps its 44 px */
+@media (max-width: 430px) {
+  .stage-controls { gap: 1px; }
+  .stage-controls .stage-timer { min-width: 44px; padding: 0 5px; }
+  .stage-controls .stage-close { margin-left: 6px; }
+}
 .stage-speaker .slash { display: none; }
 .stage.no-speaker .stage-speaker .slash { display: inline; }
 .stage.no-speaker .stage-timer, .stage.no-speaker .stage-upnext { display: none; }
@@ -729,7 +736,13 @@ body.presenting { overflow: hidden; }
 .doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: 64px 0 90px; }
 @media (max-width: 759px) { .doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: calc(var(--bar-real, 66px) + 56px) 0 150px; } }
 .select-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 6px; padding: 10px calc(14px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(14px + var(--safe-left)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
-@media (max-width: 759px) { #reader .select-bar { bottom: calc(68px + var(--safe-bottom)); } }
+/* On a phone the selection bar sits on the bottom bar. While it is up the selection's own "+ Deck"
+   is the one way to the deck, so the bottom bar's Add to deck steps aside; Present (the chapter, as
+   a kept selection still allows), Text size and Site stay where the thumb expects them. */
+@media (max-width: 759px) {
+  #reader .select-bar { bottom: calc(68px + var(--safe-bottom)); }
+  #reader:has(> .select-bar) > .reader-foot .foot-btn[aria-label="Add to deck"] { display: none; }
+}
 .select-bar .n { flex: 1; font-size: var(--ui-13); color: var(--ink-2); }
 .select-bar .primary, .deck .primary, .deck-summary .primary { height: 44px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .deck .primary:disabled, .deck .text-btn:disabled { opacity: .45; }
