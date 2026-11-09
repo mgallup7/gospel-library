@@ -3,7 +3,7 @@
 // before the three were brought together here.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { surname, conferenceShort, talkCitation, chapterOf, shortCitation, shortTitle } from "../../web/lib/cite.js";
+import { surname, conferenceShort, talkCitation, chapterOf, shortCitation, shortTitle, papersPageOf, papersCitation } from "../../web/lib/cite.js";
 
 test("surname drops the title and keeps the last name", () => {
   assert.equal(surname("President Russell M. Nelson"), "Nelson");
@@ -66,4 +66,25 @@ test("the deck's map: a talk card keeps the speaker in citation and the conferen
   // deck.js shortCitation is talkCitation(it.citation, it.label) for anything but a verse
   assert.equal(talkCitation("President Russell M. Nelson", "April 2024 General Conference"), "Nelson, Apr 2024");
   assert.equal(talkCitation("Bishop Gérald Caussé", "October 2019 General Conference"), "Caussé, Oct 2019");
+});
+
+// The Joseph Smith Papers: the form Cite copies and Copy puts under the words (app.js citePapers, copyText)
+test("papersPageOf reads the page a Papers document is", () => {
+  assert.equal(papersPageOf("Journal, December 1841–December 1842, page 95"), "95");
+  assert.equal(papersPageOf("Revelation Book 1, page 12a"), "12a");
+  assert.equal(papersPageOf("Letter to Emma Smith, 4 June 1834"), null);
+  assert.equal(papersPageOf(undefined), null);
+});
+
+test("papersCitation: the paper's title, the pages, the Papers, the day, the address", () => {
+  const accessed = new Date(2026, 10, 8);
+  const url = "https://www.josephsmithpapers.org/paper-summary/letter-to-emma-smith-4-june-1834";
+  assert.equal(papersCitation({ title: "Letter to Emma Smith, 4 June 1834", pages: ["56"], url, accessed }),
+    `“Letter to Emma Smith, 4 June 1834,” p. 56, The Joseph Smith Papers, accessed November 8, 2026, ${url}`);
+  assert.equal(papersCitation({ title: "Letter to Emma Smith, 4 June 1834", pages: ["56", "56", "57"], url, accessed }),
+    `“Letter to Emma Smith, 4 June 1834,” pp. 56–57, The Joseph Smith Papers, accessed November 8, 2026, ${url}`);
+  assert.equal(papersCitation({ title: "Journal, December 1841–December 1842, page 95", pages: ["95"], url: "https://www.josephsmithpapers.org/paper-summary/journal-december-1841-december-1842/26", accessed }),
+    "“Journal, December 1841–December 1842,” p. 95, The Joseph Smith Papers, accessed November 8, 2026, https://www.josephsmithpapers.org/paper-summary/journal-december-1841-december-1842/26");
+  // no page known: none named, and never the shelf ("Joseph Smith Papers: Journals, ...")
+  assert.equal(papersCitation({ title: "Journal, December 1841–December 1842", pages: [null], url: "u", accessed }), "“Journal, December 1841–December 1842,” The Joseph Smith Papers, accessed November 8, 2026, u");
 });

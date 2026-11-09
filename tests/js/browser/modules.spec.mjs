@@ -24,7 +24,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const want = ["./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./marks.js"].map((s) => `${s}:module`);
     if (JSON.stringify(got.types) !== JSON.stringify(want)) errors.push(`${name} scripts: ${got.types.join(", ")}`);
     if (got.globals.length) errors.push(`${name} missing: ${got.globals.join(", ")}`);
-    for (const bit of ["<h1>Notes</h1>", "<blockquote>A quote</blockquote>", "<li><i>two</i></li>", '<a href="https://example.com/">site</a>']) if (!got.md.includes(bit)) errors.push(`${name} study markdown lacks ${bit}`);
+    for (const bit of ['<h1 id="notes">Notes</h1>', "<blockquote>A quote</blockquote>", "<li><i>two</i></li>", '<a href="https://example.com/">site</a>']) if (!got.md.includes(bit)) errors.push(`${name} study markdown lacks ${bit}`);
     if (got.chunks.join("|") !== "Alma 32:1 (1 of 3)|Alma 32:2 (2 of 3)|Alma 32:3 (3 of 3)") errors.push(`${name} chunks: ${got.chunks.join("|")}`);
     await page.screenshot({ path: OUT + `${name}-home.png` });
     await ctx.close();

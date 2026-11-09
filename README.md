@@ -77,6 +77,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   its own scripts intact in a sandboxed frame, and every link in it to the
   scriptures or to a talk opens the library's copy. Think it through works
   on it too.
+- Your studies in the library's flow: a search lists the studies that have
+  the words typed ("In your studies"), each opening at the nearest heading;
+  a chapter a study links to says so under its title; references written as
+  plain words in a Markdown or text study ("see Alma 32:21") are links.
 - The home screen: where you were (the last chapter or talk, the deck in
   progress), this week's Come, Follow Me lesson (read from the lessons'
   own dates, with Next week beside it), the shelves as tiles with what each

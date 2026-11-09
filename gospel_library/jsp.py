@@ -578,7 +578,13 @@ class JspSync:
         for n in range(2, pages + 1):
             summaries.append(page_summary(self.fetcher, paper.slug, n))
         whole = pages <= WHOLE_PAPER_MAX_PAGES
-        docs = paper_documents(summaries, paper.slug, paper.title, whole=whole)
+        # The documents are filed under the paper's own name as the page states it (summary "uri"),
+        # not the catalog link that led here: the address is what Cite copies, so it must be the
+        # paper's even when the link is an alias of it or serves another paper.
+        slug = str(first.get("uri") or "").strip().strip("/").split("/")[0] or paper.slug
+        if slug != paper.slug:
+            log.warning("%s: the site serves this paper as %s; filed under that", paper.slug, slug)
+        docs = paper_documents(summaries, slug, paper.title, whole=whole)
         year = _year_of(first.get("date"))
         for i, doc in enumerate(docs):
             inside = not whole or i > 0  # a page, a source note or an introduction sits under the paper's own title

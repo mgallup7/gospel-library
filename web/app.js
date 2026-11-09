@@ -1,7 +1,7 @@
 /* Gospel Library — personal edition. Plain JavaScript, no build step.
    The library lives on this device; engine.js (a Web Worker) holds it and
    answers searches. This file is the interface. */
-import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
+import { shortTitle as shortTitleOf, chapterOf, papersCitation, papersPageOf } from "./lib/cite.js";
 import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks.js";
 
 (() => {
@@ -710,6 +710,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     listPane.scrollTop = 0;
     markActive();
     updateThinkFab();
+    studiesInResults(data);
   }
   function scopeLabel() { return state.scope === "all" ? "" : ` in ${SCOPE_NAME[state.scope] || state.scope}`; }
 
@@ -1188,18 +1189,37 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     });
     highlightTerms(body);
     applyMarks(doc, body);
+    showInStudies(doc, body);
   }
 
   // A citation for a Joseph Smith Papers page, in the Papers' own form, with the manuscript page
   // when the page is known (the title carries it, or the selection sits under a page marker).
-  function pageOf(doc) { const m = /, page (\d+[a-z]?)$/i.exec(doc.title || ""); return m ? m[1] : null; }
+  function pageOf(doc) { return papersPageOf(doc.title); }
+  // the manuscript page a paragraph is on: the page marker ("[p. 56]") before it, or the page the document is
+  function markerPageOf(doc, node) {
+    for (let n = node; n && n !== readerPane; n = n.parentElement) {
+      for (let prev = n.previousElementSibling; prev; prev = prev.previousElementSibling) {
+        if (prev.classList?.contains("jsp-page")) { const m = /\[p\.\s*([^\]]+)\]/.exec(prev.textContent || ""); if (m) return m[1].trim(); }
+      }
+    }
+    return pageOf(doc);
+  }
+  const isPapers = (doc) => !!(doc && doc.collection && doc.collection.startsWith("jsp-"));
+  function papersCitationFor(doc, nodes) {
+    return papersCitation({ title: doc.title, pages: nodes.length ? nodes.map((n) => markerPageOf(doc, n)) : [pageOf(doc)], url: doc.source_url });
+  }
+  // Copy with the citation: a verse or paragraph each with its own; on a Papers page, the words and
+  // then the citation Cite copies, with the pages they are on
+  function copyText(units) {
+    if (isPapers(currentDoc)) {
+      const nodes = units.map((x) => $(`.doc #${CSS.escape(x.pid)}`, readerPane)).filter(Boolean);
+      return `${units.map((x) => x.text).join("\n\n")}\n\n${papersCitationFor(currentDoc, nodes)}`;
+    }
+    const cite = (x) => x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
+    return units.map((x) => `${x.text} (${cite(x)})`).join("\n\n");
+  }
   function citePapers(doc) {
-    const sel = $(".doc .sel", readerPane);
-    let page = pageOf(doc);
-    if (!page && sel) { let n = sel; while (n && n !== readerPane) { let prev = n.previousElementSibling; while (prev) { if (prev.classList?.contains("jsp-page")) { const m = /\[p\.\s*([^\]]+)\]/.exec(prev.textContent || ""); if (m) page = m[1].trim(); break; } prev = prev.previousElementSibling; } if (page) break; n = n.parentElement; } }
-    const title = (doc.title || "").replace(/, page \d+[a-z]?$/i, "");
-    const when = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-    const text = `“${title},” ${page ? `p. ${page}, ` : ""}The Joseph Smith Papers, accessed ${when}, ${doc.source_url}`;
+    const text = papersCitationFor(doc, [...readerPane.querySelectorAll(".doc .sel")]);
     navigator.clipboard?.writeText(text).then(() => toast("Citation copied."), () => {
       const bodyEl = $(".sheet-body", sheet);
       bodyEl.replaceChildren(el("div", { class: "nm", text: "Citation" }), el("p", { class: "note-passage", text }));
@@ -1304,8 +1324,12 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
   // the app); its links come back to the app, which opens the local copy.
   let currentStudy = null, studyScroll = 0, studyUrl = null;
   function releaseStudyUrl() { if (studyUrl) { try { URL.revokeObjectURL(studyUrl); } catch (_) {} studyUrl = null; } }
-  async function openStudy(id, { push: doPush = true, scroll = 0 } = {}) {
+  let studyAnchor = null; // a heading to open the study at (from a match in the results), once
+  async function openStudy(id, { push: doPush = true, scroll = 0, anchor = null } = {}) {
     if (!id || !window.Studies) return;
+    const frameNow = currentStudy && currentStudy.id === id ? readerPane.querySelector(".study-frame") : null;
+    if (anchor && frameNow) frameNow.contentWindow?.postMessage({ type: "gospel:anchor", id: anchor }, "*");
+    studyAnchor = frameNow ? null : anchor;
     state.docId = null; state.pid = null; state.studyId = id;
     currentDoc = null;
     if (doPush) { push(); paneView = "page"; }
@@ -1338,7 +1362,10 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     releaseStudyUrl();
     studyUrl = URL.createObjectURL(new Blob([window.Studies.frameHtml(rec)], { type: "text/html;charset=utf-8" }));
     frame.src = studyUrl;
-    frame.addEventListener("load", () => { if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*"); });
+    frame.addEventListener("load", () => {
+      if (studyAnchor) { frame.contentWindow?.postMessage({ type: "gospel:anchor", id: studyAnchor }, "*"); studyAnchor = null; }
+      else if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*");
+    });
     readerPane.replaceChildren(bar, frame);
     readerPane.classList.add("has-study");
     refreshSwitches();
@@ -1399,6 +1426,96 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     }
     body.append(rows);
     await renderMarks(body);
+  }
+
+  // ---- My studies in the library's flow ---------------------------------------
+  // The studies are read once (their words, headings and links, studies.js index) and kept in
+  // memory until one is added or removed: a search looks in their words, and a chapter one of
+  // them links to says so under its title.
+  let studyIndexP = null, studyLinksP = null;
+  window.addEventListener("studies:change", () => { studyIndexP = null; studyLinksP = null; });
+  function studiesIndex() {
+    if (!studyIndexP) studyIndexP = (async () => {
+      const out = [];
+      for (const m of (window.Studies ? await window.Studies.list() : [])) {
+        try { const rec = await window.Studies.get(m.id); if (rec) { const x = window.Studies.index(rec); x.lower = x.text.toLowerCase(); out.push(x); } } catch (_) {}
+      }
+      return out;
+    })();
+    return studyIndexP;
+  }
+  const nearestAnchor = (s, at) => { let a = null; for (const x of s.anchors) { if (x.at <= at) a = x; else break; } return a; };
+  // Results: up to three studies that have every word typed, each with the words around the first
+  // match, opening at the heading nearest it.
+  async function studiesInResults(data) {
+    if (!window.Studies || data.typeahead && state.q.trim().length < 3) return;
+    const terms = [...new Set((state.terms.length ? state.terms : termsFrom(data.query || "")).map((t) => t.toLowerCase().replace(/^["'(]+|["')]+$/g, "")).filter((t) => t.length >= 2))];
+    if (!terms.length) return;
+    let idx;
+    try { idx = await studiesIndex(); } catch (_) { return; }
+    if (!idx.length || state.lastSearch !== data || state.view === "all") return;
+    const wordAt = (lower, t, from = 0) => { const re = new RegExp(`(^|[^\\p{L}\\p{N}])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "giu"); re.lastIndex = from; const m = re.exec(lower); return m ? m.index + m[1].length : -1; };
+    const found = [];
+    for (const s of idx) {
+      const first = terms.map((t) => wordAt(s.lower, t));
+      if (first.some((i) => i < 0)) continue;
+      let n = 0;
+      for (const t of terms) { let i = -1, k = 0; while (k < 50 && (i = wordAt(s.lower, t, i + 1)) >= 0) { n++; k++; } }
+      found.push({ s, at: Math.min(...first), n });
+    }
+    if (!found.length) return;
+    found.sort((a, b) => b.n - a.n);
+    const mark = (text) => { let h = esc(text); for (const t of terms) h = h.replace(new RegExp(`(^|[^\\p{L}\\p{N}])(${esc(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\p{L}\\p{N}]*)`, "giu"), "$1<b>$2</b>"); return h; };
+    const group = el("div", { class: "studies-hits" }, [el("div", { class: "group-title", text: "In your studies" })]);
+    for (const { s, at } of found.slice(0, 3)) {
+      const a = nearestAnchor(s, at);
+      const from = Math.max(0, s.text.lastIndexOf(" ", Math.max(0, at - 70)) + 1), to = Math.min(s.text.length, at + 130);
+      const snip = (from > 0 ? "…" : "") + s.text.slice(from, to).replace(/\s+\S*$/, "") + (to < s.text.length ? "…" : "");
+      group.append(el("button", { type: "button", class: "hit study-hit", onclick: () => openStudy(s.id, { anchor: a ? a.id : null }) }, [
+        el("div", { class: "cite" }, [el("span", { text: s.title }), el("span", { class: "where", text: a ? `My studies · ${a.label}` : "My studies" })]),
+        el("div", { class: "snip", html: mark(snip) }),
+      ]));
+    }
+    if (state.lastSearch !== data || !listPane.isConnected) return;
+    listPane.querySelector(".studies-hits")?.remove();
+    // after the title matches, before the passages
+    const before = [...listPane.querySelectorAll(".group-title, .empty, .best, .hit-row, .more")].find((n) => n.textContent !== "By title" && !n.closest(".studies-hits"));
+    if (before) before.before(group); else listPane.append(group);
+  }
+  // Chapters the studies link to: each study's links resolved once, as the library resolves a link
+  // pressed in the study, to the page that would open.
+  function studyLinks() {
+    if (!studyLinksP) studyLinksP = (async () => {
+      const map = new Map(), seen = new Map();
+      for (const s of await studiesIndex()) {
+        const mine = new Set();
+        for (const l of s.links.slice(0, 800)) {
+          const url = l.href.startsWith("/") ? "https://www.churchofjesuschrist.org" + l.href : l.href;
+          if (!CHURCH.test(url)) continue;
+          const key = url.replace(/[?#].*$/, "").replace(/\.\d+(-\d+)?$/, "");
+          let r = seen.get(key);
+          if (r === undefined) { try { r = await api("resolve", { href: url }); } catch (_) { r = null; } seen.set(key, r); }
+          if (!r || !r.found || !r.doc_id || mine.has(r.doc_id)) continue;
+          mine.add(r.doc_id);
+          const a = nearestAnchor(s, l.at);
+          (map.get(r.doc_id) || map.set(r.doc_id, []).get(r.doc_id)).push({ id: s.id, title: s.title, anchor: a ? a.id : null });
+        }
+      }
+      return map;
+    })();
+    return studyLinksP;
+  }
+  // "In your studies: The Second Coming" under the title of a chapter a study links to
+  async function showInStudies(doc, body) {
+    if (!window.Studies || !doc) return;
+    let list;
+    try { list = (await studyLinks()).get(doc.id); } catch (_) { return; }
+    if (!list || !body.isConnected || currentDoc?.id !== doc.id || body.querySelector(".in-studies")) return;
+    const line = el("p", { class: "subtitle in-studies" }, [el("span", { text: "In your studies: " })]);
+    list.slice(0, 4).forEach((s, i) => line.append(i ? ", " : "", el("button", { type: "button", class: "text-btn small inline", text: s.title, onclick: () => openStudy(s.id, { anchor: s.anchor }) })));
+    if (list.length > 4) line.append(` and ${list.length - 4} more`);
+    const head = body.querySelector("header");
+    if (head) head.append(line); else body.prepend(line);
   }
 
   // Highlights and notes across the library, newest first (the latest few, or all of them on request),
@@ -1529,8 +1646,7 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
         el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); } }),
         el("button", { type: "button", class: "text-btn", text: "Copy", title: "Copy with the citation", onclick: () => {
-          const cite = (x) => x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
-          const text = selectedUnits().map((x) => `${x.text} (${cite(x)})`).join("\n\n");
+          const text = copyText(selectedUnits());
           navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
         } }),
         el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: clearSelection }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),

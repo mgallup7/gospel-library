@@ -32,8 +32,9 @@ export function unverifiedQuotes(src, passages) {
  *   passages: the passages quotations are checked against (none: no check);
  *   cite(n): the HTML for a citation [n] (none: [n] stays as written);
  *   page: a page of notes rather than an answer: "#" is h1 (in an answer it is h2, since the
- *         answer sits under the app's own heading), and block quotes, rules, `code` and
- *         links to the web or to the site are read too.
+ *         answer sits under the app's own heading), and block quotes, rules, `code`, fenced
+ *         code blocks, and links to the web, to the site or to a heading of the page are read
+ *         too; each heading gets an id from its words, so [x](#its-words) finds it.
  */
 export function markdown(src, { passages = null, cite = null, page = false } = {}) {
   const quoted = (t) => {
@@ -53,22 +54,34 @@ export function markdown(src, { passages = null, cite = null, page = false } = {
     html = html
       .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
       .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>");
-    if (page) html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => /^(https?:\/\/|\/)/i.test(url) ? `<a href="${url.replace(/"/g, "%22")}">${text}</a>` : text);
+    if (page) html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => /^(https?:\/\/|\/|#)/i.test(url) ? `<a href="${url.replace(/"/g, "%22")}">${text}</a>` : text);
     if (cite) html = html.replace(/\[(\d+)\]/g, (_, n) => cite(n));
     return html;
   };
   const HEADING = page ? /^(#{1,3})\s+(.*)$/ : /^(#{1,4})\s+(.*)$/;
   const shift = page ? 0 : 1;
   const out = [];
-  let list = null, para = [], quote = [];
+  let list = null, para = [], quote = [], fence = null;
+  const ids = new Map(); // a heading's id, numbered when two headings share their words
+  const idFor = (text) => { const base = slugOf(text) || "section"; const n = ids.get(base) || 0; ids.set(base, n + 1); return n ? `${base}-${n}` : base; };
   const closePara = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
   const closeQuote = () => { if (quote.length) { out.push(`<blockquote>${inline(quote.join(" "))}</blockquote>`); quote = []; } };
   for (const raw of src.split("\n")) {
     const line = raw.trimEnd();
     let m;
+    if (page && /^\s*```/.test(line)) {
+      if (fence) { out.push(`<pre><code>${esc(fence.join("\n"))}</code></pre>`); fence = null; } else { closePara(); closeList(); closeQuote(); fence = []; }
+      continue;
+    }
+    if (fence) { fence.push(raw.replace(/\r$/, "")); continue; }
     if (!line.trim()) { closePara(); closeList(); closeQuote(); continue; }
-    if ((m = line.match(HEADING))) { closePara(); closeList(); closeQuote(); out.push(`<h${m[1].length + shift}>${inline(m[2])}</h${m[1].length + shift}>`); continue; }
+    if ((m = line.match(HEADING))) {
+      closePara(); closeList(); closeQuote();
+      const h = m[1].length + shift;
+      out.push(page ? `<h${h} id="${esc(idFor(m[2]))}">${inline(m[2])}</h${h}>` : `<h${h}>${inline(m[2])}</h${h}>`);
+      continue;
+    }
     if (page && /^(-{3,}|\*{3,})$/.test(line.trim())) { closePara(); closeList(); closeQuote(); out.push("<hr>"); continue; }
     if (page && (m = line.match(/^\s*>\s?(.*)$/))) { closePara(); closeList(); quote.push(m[1]); continue; }
     if ((m = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/))) {
@@ -82,5 +95,12 @@ export function markdown(src, { passages = null, cite = null, page = false } = {
     para.push(page ? line.trim() : line);
   }
   closePara(); closeList(); closeQuote();
+  if (fence) out.push(`<pre><code>${esc(fence.join("\n"))}</code></pre>`);
   return out.join("\n");
+}
+
+/** A heading's id, from its words as GitHub makes them: "Faith & Hope, 1830" -> "faith--hope-1830". */
+export function slugOf(text) {
+  return String(text ?? "").replace(/[*_`]/g, "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").toLowerCase().trim()
+    .replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/\s/g, "-");
 }
