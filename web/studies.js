@@ -10,6 +10,7 @@
    A small script added to the page hands its links to the web over to the app, which
    resolves them against the library (app.js followLink). */
 import { markdown as renderMarkdown } from "./lib/markdown.js";
+import { esc, mb } from "./lib/format.js";
 import { findReferences } from "./lib/refs.js";
 
 (() => {
@@ -72,7 +73,6 @@ import { findReferences } from "./lib/refs.js";
     return first && first.length <= 80 ? first : fallback;
   }
   function decode(s) { const d = document.createElement("textarea"); d.innerHTML = s; return d.value; }
-  const mb = (n) => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
   // ---- the page, ready for the frame -------------------------------------
   // The hand-off script: any link to the web goes to the app, which opens the local copy
@@ -112,7 +112,6 @@ a{color:var(--accent)}code{font:14px ui-monospace,Menlo,monospace;background:rgb
 pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px solid var(--rule);margin:1.6em 0}
 </style></head><body>${body}</body></html>`;
   }
-  function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   // Enough Markdown for notes and lessons: headings, paragraphs, lists, quotes, emphasis, links.
   // The renderer is Ask's (lib/markdown.js) in its page mode: no citation buttons and no
   // quotation check, since the frame has neither the passages nor the app.

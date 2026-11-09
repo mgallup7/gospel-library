@@ -41,7 +41,7 @@ export default async function run(browser, { BASE: UPSTREAM, SHOTS }) {
     if (!cached.keys.includes("gospel-shell-v31")) errors.push(`caches: ${cached.keys.join(", ")}`);
     if (cached.n < 24) errors.push(`only ${cached.n} shell files cached`);
     const preload = await page.evaluate(() => [...document.querySelectorAll('link[rel="modulepreload"]')].map((l) => l.getAttribute("href")));
-    if (preload.join(" ") !== "./app.js ./lib/cite.js ./lib/markdown.js ./lib/chunk.js ./lib/checks.js ./lib/step.js ./lib/refs.js") errors.push(`modulepreload: ${preload.join(" ")}`);
+    if (preload.join(" ") !== "./app.js ./lib/cite.js ./lib/markdown.js ./lib/chunk.js ./lib/checks.js ./lib/step.js ./lib/refs.js ./lib/format.js") errors.push(`modulepreload: ${preload.join(" ")}`);
 
     // second launch: every shell file from the worker's cache
     const seen = new Map();

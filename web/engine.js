@@ -4,6 +4,7 @@
 import sqlite3InitModule from "./vendor/sqlite3.mjs";
 import * as S from "./lib/scriptures.js";
 import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections } from "./lib/query.js";
+import { esc } from "./lib/format.js";
 // Search by meaning lives in its own module; if it fails to load (a broken
 // download, an old browser), search by words carries on without it. The
 // message handler waits for this to settle, so the first call sees the outcome.
@@ -542,7 +543,6 @@ async function inflate(blob) {
   const ds = new DecompressionStream("deflate");
   return new Response(new Blob([blob]).stream().pipeThrough(ds)).text();
 }
-function esc(s) { return String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 function rows(sql, bind = []) { return bind.length ? db.selectObjects(sql, bind) : db.selectObjects(sql); }
 function row(sql, bind = []) { return (bind.length ? db.selectObject(sql, bind) : db.selectObject(sql)) || null; }
 function value(sql, bind = []) { return bind.length ? db.selectValue(sql, bind) : db.selectValue(sql); }
@@ -585,11 +585,11 @@ function summary(r) {
 function highlight(snip) { return esc(snip).replaceAll(HL_OPEN, "<mark>").replaceAll(HL_CLOSE, "</mark>"); }
 let markCache = { key: "", re: null };
 function markTerms(text, terms) {
-  const escaped = esc(text);
+  const escaped = esc(text); // (?<!&) below: the amp of an &amp; or the quot of a &quot; is not a word to mark
   const key = terms.join("\u0001");
   if (markCache.key !== key) {
     const stems = [...new Set(terms.map((t) => t.toLowerCase()).filter((t) => t.length >= 2))].sort((a, b) => b.length - a.length);
-    markCache = { key, re: stems.length ? new RegExp("\\b(" + stems.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi") : null };
+    markCache = { key, re: stems.length ? new RegExp("\\b(?<!&)(" + stems.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*").join("|") + ")", "gi") : null };
   }
   return markCache.re ? escaped.replace(markCache.re, "<mark>$1</mark>") : escaped;
 }

@@ -4,12 +4,16 @@
    here; the .pptx is written in the browser by PptxGenJS. */
 import { chunksOf, fontSize, MAX_CHARS } from "./lib/chunk.js";
 import { talkCitation, chapterOf } from "./lib/cite.js";
+import { esc } from "./lib/format.js";
 
 (() => {
   "use strict";
 
-  const { el, esc, store } = window.GL || {};
+  // app.js's helpers are read when used, not when this file loads, so the order the scripts run in
+  // does not matter (ask.js does the same).
   const GL = () => window.GL;
+  const el = (...a) => GL().el(...a);
+  const store = { get: (...a) => GL().store.get(...a), set: (...a) => GL().store.set(...a), del: (...a) => GL().store.del(...a) };
   const $ = (sel, root = document) => root.querySelector(sel);
   const SVG = "http://www.w3.org/2000/svg";
   const raf = (fn) => (window.requestAnimationFrame ? window.requestAnimationFrame(fn) : setTimeout(fn, 0));
@@ -656,7 +660,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
           const otherText = other.hl ? `: “${phraseOf(other.item, other.hl)}”` : "";
           row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this connection", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
             el("b", { text: String(linkNumber(l)) }),
-            ` ${out ? "→" : "←"} ${shortCitation(other.item)}${otherText}`,
+            ` ${out ? "→" : "←"} ${cardCitation(other.item)}${otherText}`,
             el("i", { text: l.label ? `, ${l.label}` : ", add a label" }),
           ]));
         }
@@ -1454,10 +1458,10 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     if (!edges.length) return null;
     const ids = new Set(edges.flatMap((e) => [e.from, e.to]));
     // in deck order, so the picture reads the way the slides were presented
-    const nodes = deck.items.filter((it) => ids.has(it.id)).map((it) => ({ id: it.id, label: shortCitation(it) }));
+    const nodes = deck.items.filter((it) => ids.has(it.id)).map((it) => ({ id: it.id, label: cardCitation(it) }));
     return { nodes, edges };
   }
-  function shortCitation(it) {
+  function cardCitation(it) {
     if (!it) return "";
     if (it.kind === "verse") return it.citation;
     return talkCitation(it.citation, it.label); // a talk's card keeps the speaker in citation (citationFor)

@@ -4,7 +4,7 @@
 // Pure: it returns HTML and touches no DOM, so it runs the same in the sandboxed frame's
 // source, in the app, and in node.
 
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+import { esc } from "./format.js";
 
 // ---------------------------------------------------------- quotations --
 // Every quotation in an answer is checked, word for word, against the

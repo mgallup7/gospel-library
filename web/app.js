@@ -3,6 +3,7 @@
    answers searches. This file is the interface. */
 import { shortTitle as shortTitleOf, chapterOf, papersCitation, papersPageOf } from "./lib/cite.js";
 import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks.js";
+import { esc, mb } from "./lib/format.js";
 
 (() => {
   "use strict";
@@ -20,10 +21,8 @@ import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks
     for (const c of [].concat(children)) if (c !== null && c !== undefined) node.append(c);
     return node;
   };
-  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const wide = () => window.matchMedia("(min-width: 760px)").matches; // two panes from an iPad in portrait up (app.css agrees)
   const monthName = (m) => (m === 4 ? "April" : m === 10 ? "October" : "");
-  const mb = (n) => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(n > 50 * 1048576 ? 0 : 1)} MB`;
   const BASE = new URL(".", document.baseURI);
   const MANIFEST_URL = new URL("data/manifest.json", BASE).href;
   // Small preferences in localStorage. set returns false when the write did not take (the store

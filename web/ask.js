@@ -155,6 +155,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
 
   // --------------------------------------------------------------- render --
   let handed = null;  // a question typed on the home screen, asked as soon as the tab can
+  // When the owner's writing skills arrive, the Ask tab redraws with their modes, if it is still
+  // the one showing. One listener for the life of the page, not one more on every render.
+  let asked = null;
+  window.addEventListener("skills:change", () => { if (asked && view === asked && asked.isConnected) render(asked); });
   let handedPage = null; // a page to think through, from the floating button
   function render(container, { question = null, think = null } = {}) {
     view = container;
@@ -162,6 +166,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     if (question) handed = question;
     if (think) handedPage = think;
     if (!settings.key) { renderKeySetup(container); return; }
+    asked = container;
     const box = el("div", { class: "ask" });
     const modes = el("div", { class: "seg ask-mode" }, [
       el("button", { type: "button", "data-mode": "ask", class: "on", text: "Ask" }),
@@ -183,7 +188,6 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         input.placeholder = k ? (k.placeholder || `What to write: ${k.description || k.name}`) : m === "draft" ? "A 10-minute zone conference training on obedience, with four scriptures and two conference quotes" : "What have the prophets said about covenants and identity?";
       });
     }
-    window.addEventListener("skills:change", () => { if (view === container && container.isConnected) render(container); }, { once: true });
     go.addEventListener("click", () => submit(input, modes, log));
     input.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(input, modes, log); } });
     gear.addEventListener("click", () => renderSettings(container));

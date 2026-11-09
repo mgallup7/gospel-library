@@ -27,7 +27,7 @@ function load(fetchImpl, saved = {}) {
   const store = { get: (k, d) => (k in data ? data[k] : d), set: (k, v) => { data[k] = v; }, del: (k) => { delete data[k]; } };
   const calls = [];
   const fetch = (url, opts) => { calls.push({ url, body: JSON.parse(opts.body), signal: opts.signal }); return fetchImpl(opts); };
-  const window = { GL: { el: () => ({}), esc: (s) => s, store } };
+  const window = { GL: { el: () => ({}), esc: (s) => s, store }, addEventListener() {} };
   const ctx = {
     window, document: { addEventListener() {} }, navigator: { onLine: true }, fetch, console, __lib: LIB,
     setTimeout: (fn, ms) => setTimeout(fn, ms / 1000), clearTimeout,
