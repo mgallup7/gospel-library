@@ -33,7 +33,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.fill(".bcard[data-id='a'] .bc-notes-text", "Read slowly; this is the hinge of the lesson.");
   await page.waitForTimeout(400);
   await page.screenshot({ path: OUT + "01-board.png" });
-  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.deck")));
+  const saved = await page.evaluate(() => JSON.parse(JSON.stringify(window.Deck.state)));
   const q = saved.items.find((i) => i.type === "question"), nt = saved.items.find((i) => i.type === "note");
   if (!q || q.text !== "What has faith asked of you this transfer?") errors.push("question not saved");
   if (!nt || !/Pause here/.test(nt.text)) errors.push("note not saved");

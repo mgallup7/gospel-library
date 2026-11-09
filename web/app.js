@@ -25,9 +25,18 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   const mb = (n) => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(n > 50 * 1048576 ? 0 : 1)} MB`;
   const BASE = new URL(".", document.baseURI);
   const MANIFEST_URL = new URL("data/manifest.json", BASE).href;
+  // Small preferences in localStorage. set returns false when the write did not take (the store
+  // is full, or the browser refuses it) and says so once in a while, so nothing is lost unheard.
+  let storeWarned = 0;
   const store = {
     get(k, d = null) { try { const v = localStorage.getItem("gospel." + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
-    set(k, v) { try { localStorage.setItem("gospel." + k, JSON.stringify(v)); } catch (_) {} },
+    set(k, v) {
+      try { localStorage.setItem("gospel." + k, JSON.stringify(v)); return true; }
+      catch (_) {
+        if (Date.now() - storeWarned > 10000) { storeWarned = Date.now(); try { toast(/^deck/.test(k) ? "Storage is full. The deck could not be saved." : "Storage is full. The setting could not be saved."); } catch (__) {} }
+        return false;
+      }
+    },
     del(k) { try { localStorage.removeItem("gospel." + k); } catch (_) {} },
   };
 

@@ -37,7 +37,9 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   // slide follows the later of its two passages.
   const uid = () => Math.random().toString(36).slice(2, 10);
   const blank = () => ({ id: uid(), title: "", subtitle: "", theme: DEFAULT_THEME, themeSet: true, items: [], links: [], chain: null, updated: Date.now() });
-  let deck = migrate(store.get("deck")) || blank();
+  // The deck starts blank and the one kept on the device arrives a moment later (see storage below);
+  // the board draws from memory and never waits on the database.
+  let deck = blank();
 
   function migrate(d) {
     if (!d || typeof d !== "object") return null;
@@ -68,9 +70,134 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     return d;
   }
 
+  // ------------------------------------------------------------ storage --
+  // The current deck and the saved decks, with their full text and speaker notes, outgrow
+  // localStorage (about 5 MB, and a full store refuses the write), so they live in the browser's
+  // database, like the marks: "current" holds the deck in progress under the key "deck", "saved"
+  // one record per saved deck. What is in memory is the truth; writes follow a moment behind.
+  const DB = "gospel-decks";
+  let dbOpen = null;
+  function openDb() {
+    if (dbOpen) return dbOpen;
+    dbOpen = new Promise((resolve, reject) => {
+      const r = indexedDB.open(DB, 1);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains("current")) r.result.createObjectStore("current");
+        if (!r.result.objectStoreNames.contains("saved")) r.result.createObjectStore("saved", { keyPath: "id" });
+      };
+      r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); dbOpen = null; }; resolve(db); };
+      r.onerror = () => { dbOpen = null; reject(r.error || new Error("the decks database did not open")); };
+    });
+    return dbOpen;
+  }
+  async function tx(name, mode, work) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction(name, mode);
+      const req = work(t.objectStore(name));
+      t.oncomplete = () => resolve(req ? req.result : undefined);
+      t.onerror = () => reject(t.error || new Error("the decks database failed"));
+      t.onabort = () => reject(t.error || new Error("the decks database failed"));
+    });
+  }
+  const isFull = (err) => !!err && (err.name === "QuotaExceededError" || /quota|full/i.test(err.message || ""));
+  let warnedAt = 0;
+  function warn(err) {
+    if (Date.now() - warnedAt < 10000) return;
+    warnedAt = Date.now();
+    GL()?.toast(isFull(err) ? "Storage is full. The deck could not be saved." : `The deck could not be saved: ${err?.message || "the browser refused"}.`);
+  }
+  // A browser without the database (or one that will not open it) keeps the decks in localStorage, as before.
+  let noDb = typeof indexedDB === "undefined";
+  let loaded = false, writeTimer = null, writeWanted = false;
+  let savedDecks = []; // [{id, title, updated, deck}], newest first
+  const bc = typeof BroadcastChannel === "function" ? new BroadcastChannel(DB) : null;
+
+  async function writeCurrent() {
+    clearTimeout(writeTimer); writeTimer = null;
+    if (!loaded) { writeWanted = true; return; }
+    writeWanted = false;
+    if (noDb) { store.set("deck", deck); return; }
+    try { await tx("current", "readwrite", (s) => s.put(deck, "deck")); bc?.postMessage({ what: "current", updated: deck.updated }); }
+    catch (err) { warn(err); }
+  }
+  function scheduleWrite() { clearTimeout(writeTimer); writeTimer = setTimeout(writeCurrent, 400); }
+  // A deck being typed into when the page goes away is written at once.
+  const flushNow = () => { if (writeTimer) writeCurrent(); };
+  window.addEventListener("pagehide", flushNow);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushNow(); });
+
+  async function putSaved(entry) {
+    if (noDb) return store.set("decks", savedDecks);
+    try { await tx("saved", "readwrite", (s) => s.put(entry)); bc?.postMessage({ what: "saved" }); return true; }
+    catch (err) { warn(err); return false; }
+  }
+  async function dropSaved(id) {
+    if (noDb) return store.set("decks", savedDecks);
+    try { await tx("saved", "readwrite", (s) => s.delete(id)); bc?.postMessage({ what: "saved" }); return true; }
+    catch (err) { warn(err); return false; }
+  }
+  const sortSaved = () => savedDecks.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+
+  // First run after the move: what localStorage holds goes into the database, and leaves
+  // localStorage only once it is safely written. A newer copy wins where both have one.
+  const ready = (async () => {
+    await null; // after this file has run to the end, so the board's variables exist
+    let current = null, saved = [];
+    if (!noDb) {
+      try { [current, saved] = await Promise.all([tx("current", "readonly", (s) => s.get("deck")), tx("saved", "readonly", (s) => s.getAll())]); }
+      catch (err) { console.warn("decks stay in localStorage:", err?.message); noDb = true; }
+    }
+    const oldDeck = store.get("deck"), oldSaved = store.get("decks", null);
+    if (noDb) { current = oldDeck; saved = Array.isArray(oldSaved) ? oldSaved : []; }
+    else {
+      if (oldDeck && typeof oldDeck === "object" && (!current || (oldDeck.updated || 0) >= (current.updated || 0))) {
+        try { await tx("current", "readwrite", (s) => s.put(oldDeck, "deck")); current = oldDeck; store.del("deck"); } catch (err) { current = oldDeck; console.warn("the deck stays in localStorage for now:", err?.message); }
+      } else if (oldDeck) store.del("deck");
+      if (Array.isArray(oldSaved)) {
+        const byKey = new Map((saved || []).map((d) => [d.id, d]));
+        const take = oldSaved.filter((d) => d && d.id && d.deck && (!byKey.has(d.id) || (d.updated || 0) > (byKey.get(d.id).updated || 0)));
+        try {
+          if (take.length) await tx("saved", "readwrite", (s) => { for (const d of take) s.put(d); });
+          for (const d of take) byKey.set(d.id, d);
+          saved = [...byKey.values()];
+          store.del("decks");
+        } catch (err) { saved = [...byKey.values(), ...take]; console.warn("saved decks stay in localStorage for now:", err?.message); }
+      }
+    }
+    savedDecks = (saved || []).filter((d) => d && d.id && d.deck);
+    sortSaved();
+    // Anything added in the moment before the stored deck arrived joins it rather than replacing it.
+    const early = deck;
+    deck = migrate(current) || deck;
+    if (early !== deck && early.items.length) {
+      for (const it of early.items) if (!(it.type === "passage" && has(it.doc_id, it.pid))) deck.items.push(it);
+      deck.links.push(...early.links);
+      deck.updated = Date.now();
+      writeWanted = true;
+    }
+    loaded = true;
+    if (writeWanted) writeCurrent();
+    draw(); updateBadge();
+    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+  })();
+
+  // Another tab saved: take its newer deck rather than writing over it later.
+  if (bc) bc.onmessage = async (e) => {
+    try {
+      if (e.data?.what === "current") {
+        const other = await tx("current", "readonly", (s) => s.get("deck"));
+        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
+      } else if (e.data?.what === "saved") {
+        savedDecks = (await tx("saved", "readonly", (s) => s.getAll())) || [];
+        sortSaved();
+      }
+    } catch (_) { /* the next save writes ours */ }
+  };
+
   function save({ redraw = true } = {}) {
     deck.updated = Date.now();
-    store.set("deck", deck);
+    scheduleWrite();
     updateBadge();
     if (redraw) draw();
     else if (ui) { syncDownloadButton(); schedulePrepare(); }
@@ -154,15 +281,6 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     save();
     return added;
   }
-
-  // Another tab saved the deck: take its newer state rather than writing over it later.
-  window.addEventListener("storage", (e) => {
-    if (e.key !== "gospel.deck" || !e.newValue) return;
-    try {
-      const other = JSON.parse(e.newValue);
-      if (other && other.updated > deck.updated) { deck = migrate(other); draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
-    } catch (_) { /* not ours */ }
-  });
 
   /** A section heading at the end of the deck (what "Think it through" builds under). */
   function addSection(title) {
@@ -497,7 +615,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       cards.append(card);
     });
     if (!deck.items.length) {
-      const savedAny = store.get("decks", []).length > 0;
+      const savedAny = savedDecks.length > 0;
       cards.append(el("div", { class: "board-empty" }, [
         el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
         savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
@@ -1038,17 +1156,24 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   }
 
   // Saved decks
+  // Saved decks: kept in memory, each written to the database on its own. No cap: the database
+  // has room, and dropping the oldest without a word is what this storage is here to stop.
   function saveNamed(nameGiven) {
-    const all = store.get("decks", []);
     const name = (nameGiven || "").trim() || deck.title || `Deck ${new Date().toLocaleDateString()}`;
-    const i = all.findIndex((d) => d.id === deck.id);
     const entry = { id: deck.id, title: name, updated: Date.now(), deck: JSON.parse(JSON.stringify(deck)) };
-    if (i >= 0) all[i] = entry; else all.unshift(entry);
-    store.set("decks", all.slice(0, 50));
-    flash(`Saved “${name}”.`);
+    savedDecks = [entry, ...savedDecks.filter((d) => d.id !== deck.id)];
+    putSaved(entry).then((ok) => { if (ok !== false) flash(`Saved “${name}”.`); });
+  }
+  function renameSaved(d) {
+    const name = (prompt("A new name for this deck", d.title) || "").trim();
+    if (!name || name === d.title) return false;
+    d.title = name;
+    if (d.deck) d.deck.title = d.deck.title || name;
+    putSaved(d);
+    return true;
   }
   function savedList(onBack, onPick) {
-    const all = store.get("decks", []);
+    const all = savedDecks;
     const box = el("div", { class: "deck saved" }, [
       el("div", { class: "crumbs" }, [el("button", { type: "button", text: "Back", onclick: onBack }), el("span", { text: "My decks" })]),
     ]);
@@ -1060,7 +1185,10 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
           el("div", { class: "cite-edit", text: d.title }),
           el("div", { class: "where", text: `${n} ${n === 1 ? "passage" : "passages"}, ${new Date(d.updated).toLocaleDateString()}` }),
         ]),
-        el("div", { class: "tools" }, [el("button", { type: "button", "aria-label": "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; store.set("decks", all.filter((x) => x.id !== d.id)); box.replaceWith(savedList(onBack, onPick)); } })]),
+        el("div", { class: "tools" }, [
+          el("button", { type: "button", class: "rename", "aria-label": `Rename “${d.title}”`, text: "Rename", onclick: () => { if (renameSaved(d)) box.replaceWith(savedList(onBack, onPick)); } }),
+          el("button", { type: "button", class: "delete", "aria-label": `Delete “${d.title}”`, title: "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; savedDecks = savedDecks.filter((x) => x.id !== d.id); dropSaved(d.id); box.replaceWith(savedList(onBack, onPick)); } }),
+        ]),
       ]));
     }
     return box;
@@ -1751,6 +1879,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   window.Deck = {
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
+    ready, flush: () => writeCurrent(), // ready: the stored deck has arrived; flush: write now rather than a moment later
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
   };
