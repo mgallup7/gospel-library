@@ -31,8 +31,19 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#reader .select-bar .hl-dot.hl-y");
     await page.waitForTimeout(500);
     check(await page.evaluate(() => document.querySelector("#reader .doc #p21").classList.contains("hl-y") && document.querySelector("#reader .doc #p22").classList.contains("hl-y")), "both verses should be yellow");
-    check(!(await page.$("#reader .select-bar")), "selection should clear after highlighting");
+    // the selection and the bar stay, and the yellow dot says the verses carry it
+    check((await page.locator("#reader .doc .sel").count()) === 2, "both verses stay selected after a color");
+    check((await page.getAttribute("#reader .select-bar .hl-dot.hl-y", "aria-pressed")) === "true", "the yellow dot is pressed");
+    check((await page.getAttribute("#reader .select-bar .hl-dot.hl-g", "aria-pressed")) === "false", "the green dot is not pressed");
     await shot("02-highlighted");
+    // a note on the two, kept selected after it saves
+    await page.click("#reader .select-bar button:has-text('Note')");
+    await page.waitForSelector("#sheet:not([hidden]) .note-text");
+    await page.fill("#sheet .note-text", "Two verses, one note.");
+    await page.click("#sheet .peek-row .primary");
+    await page.waitForTimeout(500);
+    check((await page.locator("#reader .doc .sel").count()) === 2, "the selection stays after a note saves");
+    await page.click("#reader .select-bar .clear-sel");
     // a note on verse 23
     await page.click("#reader .doc #p23");
     await page.click("#reader .select-bar button:has-text('Note')");
@@ -43,6 +54,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(500);
     check(!!(await page.$("#reader .doc #p23 .note-mark")), "verse 23 should carry a note marker");
     check(await page.evaluate(() => document.querySelector("#sheet").hidden), "sheet closes after saving");
+    await page.click("#reader .select-bar .clear-sel");
     // the same color again removes the highlight on verse 22
     await page.click("#reader .doc #p22");
     await page.click("#reader .select-bar .hl-dot.hl-y");

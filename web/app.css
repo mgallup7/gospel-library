@@ -462,6 +462,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .hl-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0,0,0,.08); }
 .hl-dot.hl-y { background: var(--hl-y-dot); } .hl-dot.hl-g { background: var(--hl-g-dot); } .hl-dot.hl-b { background: var(--hl-b-dot); } .hl-dot.hl-p { background: var(--hl-p-dot); }
 .hl-dot:active { transform: scale(.92); }
+.hl-dot[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 4px var(--ink-2); } /* the color the selection carries */
 .select-bar .short { display: none; }
 @media (max-width: 759px) {
   .select-bar .only-wide, .select-bar .n, .select-bar .long { display: none; }
@@ -612,12 +613,15 @@ body.presenting { overflow: hidden; }
 .doc .sel { background: color-mix(in srgb, var(--accent) 9%, var(--paper)); box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 9%, var(--paper)), inset 3px 0 0 var(--accent); border-radius: 2px; position: relative; }
 .doc .sel::before { content: "✓"; position: absolute; left: -24px; top: .2em; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 700 12px/18px var(--sans); text-align: center; }
 .doc .sel.is-target { background: color-mix(in srgb, var(--accent) 9%, var(--target)); }
+/* a selection kept after a color shows the color under it */
+.doc .sel.hl-y { background: var(--hl-y); } .doc .sel.hl-g { background: var(--hl-g); } .doc .sel.hl-b { background: var(--hl-b); } .doc .sel.hl-p { background: var(--hl-p); }
 .select-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 6px; padding: 10px 14px calc(10px + var(--safe-bottom)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
 @media (max-width: 759px) { #reader .select-bar { bottom: calc(68px + var(--safe-bottom)); } }
 .select-bar .n { flex: 1; font-size: 13px; color: var(--ink-2); }
 .select-bar .primary, .deck .primary, .deck-summary .primary { height: 44px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .deck .primary:disabled, .deck .text-btn:disabled { opacity: .45; }
 .toast { position: fixed; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translate(-50%, 10px); z-index: 60; padding: 10px 16px; border-radius: 10px; background: var(--ink); color: var(--paper); font: 14px var(--sans); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(--safe-bottom)); } /* above a selection bar that stays up */
 @media (max-width: 759px) {
   body.reading .toast { bottom: calc(84px + var(--safe-bottom)); } /* above the reader's bottom bar */
   main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(144px + var(--safe-bottom)); } /* and the selection bar */

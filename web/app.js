@@ -1215,10 +1215,9 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         if (rec) { docMarks.set(u.pid, rec); drawMark(body, rec); } else { docMarks.delete(u.pid); undrawMark(body, u.pid); }
       } catch (_) { toast("Could not save that mark."); return; }
     }
-    clearSelection();
-    // focus stays on the page: the first verse marked, not the body
-    const first = body.querySelector(`#${CSS.escape(units[0].pid)}`);
-    if (first) { try { first.focus({ preventScroll: true }); } catch (_) {} }
+    // the verses stay selected and the bar stays up (focus with it), so a note or Add to deck can
+    // follow without selecting them again; the dot shows the color they now carry
+    updateSelectBar();
     toast(allSame ? "Highlight removed." : units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
   }
   // A note on a paragraph, written in the sheet
@@ -1233,7 +1232,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         const rec = await window.Marks.set({ uri: currentDoc.uri, doc_id: currentDoc.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, note: ta.value, text: unit.text, citation: citeUnit(unit), title: currentDoc.title });
         const body = $(".doc", readerPane);
         if (rec) { docMarks.set(unit.pid, rec); if (body) drawMark(body, rec); } else { docMarks.delete(unit.pid); if (body) undrawMark(body, unit.pid); }
-        closeSheet(); clearSelection();
+        closeSheet(); updateSelectBar(); // the selection stays, for a color or Add to deck after the note
         toast(ta.value.trim() ? "Note saved." : "Note removed.");
       } catch (_) { toast("Could not save the note."); }
     };
@@ -1474,7 +1473,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (!bar) {
       bar = el("div", { class: "select-bar" }, [
         el("span", { class: "n" }),
-        window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
+        window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
         window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the first selected passage", onclick: () => { const u = selectedUnits()[0]; if (u) editNote(u); } }) : null,
         el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
           const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
@@ -1493,6 +1492,9 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       if (rf) rf.before(bar); else readerPane.append(bar);
     }
     $(".n", bar).textContent = `${n} selected`;
+    // a dot is pressed when every selected passage carries its color (pressing it again takes it off)
+    const pids = [...readerPane.querySelectorAll(".doc .sel")].map((u) => u.id);
+    for (const d of bar.querySelectorAll(".hl-dot")) d.setAttribute("aria-pressed", String(!!pids.length && pids.every((pid) => docMarks.get(pid)?.color === d.dataset.color)));
   }
   // toast(text, { action: "Undo", onAction }) adds a button and stays about five seconds, long
   // enough to reach it; the plain toast still goes after two. A newer toast replaces an older one.
