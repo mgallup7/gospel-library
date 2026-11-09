@@ -322,6 +322,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     $("#askBtn").setAttribute("aria-pressed", String(tab === "ask"));
     $("#deckBtn").setAttribute("aria-pressed", String(tab === "deck"));
     document.body.classList.toggle("tab-open", tab === "ask" || tab === "deck");
+    document.body.classList.toggle("shelf-studies", tab === "studies" && !state.q.trim());
   }
 
   // ------------------------------------------------------------ render ----
@@ -939,9 +940,10 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   function openShelf(key) {
     rememberScroll();
     leaveSearch();
-    state.q = ""; syncControls();
+    state.q = "";
     state.browse = { tab: key };
-    if (TAB_SCOPE[key]) { state.scope = TAB_SCOPE[key]; syncControls(); }
+    if (TAB_SCOPE[key]) state.scope = TAB_SCOPE[key];
+    syncControls();
     renderHome();
     push();
   }
@@ -1408,31 +1410,57 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
 
   // Highlights and notes across the library, newest first (the latest few, or all of them on request),
   // with a way to keep them safe
+  // The list can be searched (words, citation, note) and narrowed to one color; it shows the latest
+  // ten of what matches, or all of it, under a heading per book when more than one book is in it.
   let allMarksShown = false;
+  const marksFilter = { q: "", color: null };
+  // a verse's book ("Alma 32:21" is Alma, "D&C 4:2" is D&C); any other mark goes under its page
+  function markBook(m) { const v = /^(.+?)\s+\d+:\d+/.exec(m.citation || ""); return v ? v[1] : m.title || m.citation || "Other"; }
   async function renderMarks(body) {
     if (!window.Marks) return;
     let marks = [];
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
-    const head = el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" }),
-      marks.length > 10 ? el("button", { type: "button", class: "text-btn small", text: allMarksShown ? "Latest only" : `All ${marks.length}`, onclick: () => { allMarksShown = !allMarksShown; sec.replaceWith(el("div")); renderMarks(body); } }) : null].filter(Boolean));
-    sec.append(head);
+    const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
+    sec.append(el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" }), allBtn]));
+    const list = el("div", { class: "mark-list" });
+    const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
+      let id = m.doc_id;
+      try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
+      if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
+    } }, [
+      el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
+      el("span", { class: "mk-text", text: (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "") }),
+      m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
+    ].filter(Boolean));
+    function draw() {
+      const words = marksFilter.q.toLowerCase().split(/\s+/).filter(Boolean);
+      const hits = marks.filter((m) => (!marksFilter.color || m.color === marksFilter.color)
+        && words.every((w) => [m.text, m.citation, m.title, m.note].some((f) => (f || "").toLowerCase().includes(w))));
+      const shown = hits.slice(0, allMarksShown ? hits.length : 10);
+      allBtn.hidden = hits.length <= 10;
+      allBtn.textContent = allMarksShown ? "Latest only" : `All ${hits.length}`;
+      if (!shown.length) { list.replaceChildren(el("p", { class: "studies-lede mk-none", text: "No highlight or note matches." })); return; }
+      const books = new Map();
+      for (const m of shown) { const b = markBook(m); if (!books.has(b)) books.set(b, []); books.get(b).push(m); }
+      if (books.size < 2) { list.replaceChildren(...shown.map(row)); return; }
+      list.replaceChildren(...[...books].flatMap(([b, ms]) => [el("h3", { class: "mk-book", text: b }), ...ms.map(row)]));
+    }
     if (!marks.length) {
       sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note: your marks come back whenever the page opens, and are listed here." }));
     } else {
-      const list = el("div", { class: "mark-list" });
-      for (const m of marks.slice(0, allMarksShown ? 1000 : 10)) {
-        list.append(el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
-          let id = m.doc_id;
-          try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
-          if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
-        } }, [
-          el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
-          el("span", { class: "mk-text", text: (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "") }),
-          m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
-        ].filter(Boolean)));
+      if (marks.length > 3) {
+        const find = el("input", { type: "search", class: "mk-find", placeholder: "Find in your marks", "aria-label": "Find in your highlights and notes", value: marksFilter.q });
+        find.addEventListener("input", () => { marksFilter.q = find.value; draw(); });
+        const dot = (c, name) => el("button", { type: "button", class: `mk-dot${c ? ` hl-${c}` : " all"}`, "aria-pressed": String(marksFilter.color === c), "aria-label": c ? `Only ${name}` : "All colors", title: c ? `Only ${name}` : "All colors", text: c ? "" : "All", onclick: (e) => {
+          marksFilter.color = c;
+          for (const d of e.currentTarget.parentElement.children) d.setAttribute("aria-pressed", String(d === e.currentTarget));
+          draw();
+        } });
+        sec.append(el("div", { class: "mk-filter" }, [find, el("div", { class: "mk-colors", role: "group", "aria-label": "Color" }, [dot(null, "All"), ...(window.Marks.COLORS || []).map((c) => dot(c, window.Marks.COLOR_NAME?.[c] || c))])]));
       }
       sec.append(list);
+      draw();
     }
     const pick = el("input", { type: "file", accept: ".json,application/json", hidden: true, "aria-hidden": "true" });
     pick.addEventListener("change", async () => {

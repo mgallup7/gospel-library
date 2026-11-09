@@ -249,6 +249,7 @@ main {
 .ask-teaser .primary { height: 40px; padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .home-foot { font-size: 13px; color: var(--ink-3); line-height: 1.4; }
 body.overview .scopes { display: none; }
+body.shelf-studies .scopes { display: none; } /* your own pages and marks: no shelf for the search to keep to */
 @media (min-width: 760px) {
   body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
   body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
@@ -500,7 +501,8 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .sheet .note-text { display: block; width: 100%; box-sizing: border-box; min-height: 110px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--serif); resize: vertical; margin: 0 0 10px; }
 .sheet .text-btn.danger { color: var(--danger); }
 .marks-sec { margin-top: 20px; padding: 0 16px; }
-.marks-sec .home-sec-head { padding-left: 0; padding-right: 0; }
+.marks-sec .home-sec-head { padding-left: 0; padding-right: 0; margin-bottom: 8px; }
+.marks-sec .home-sec-head h2 { margin: 0; }
 .mark-list { display: grid; gap: 8px; }
 .mark-row { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 12px 10px 14px; border: 1px solid var(--rule); border-left-width: 5px; border-radius: 10px; background: var(--paper); }
 .mark-row.hl-y { border-left-color: var(--hl-y-dot); } .mark-row.hl-g { border-left-color: var(--hl-g-dot); } .mark-row.hl-b { border-left-color: var(--hl-b-dot); } .mark-row.hl-p { border-left-color: var(--hl-p-dot); }
@@ -511,6 +513,17 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .mk-note .ic { display: inline-flex; color: var(--accent); flex: none; margin-top: 2px; }
 .mk-note .ic svg { width: 14px; height: 14px; }
 .marks-tools { display: flex; gap: 8px; margin-top: 10px; }
+.mk-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 2px 0 12px; }
+.mk-find { flex: 1 1 180px; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); color: var(--ink); font: 16px var(--sans); -webkit-appearance: none; }
+.mk-colors { display: flex; align-items: center; gap: 6px; }
+.mk-dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; box-shadow: inset 0 0 0 1px var(--rule); }
+.mk-dot.hl-y { background: var(--hl-y-dot); } .mk-dot.hl-g { background: var(--hl-g-dot); } .mk-dot.hl-b { background: var(--hl-b-dot); } .mk-dot.hl-p { background: var(--hl-p-dot); }
+.mk-dot.all { width: auto; padding: 0 10px; border-radius: 15px; font: 600 13px var(--sans); color: var(--ink-2); background: var(--chrome); }
+.mk-dot[aria-pressed="true"] { border-color: var(--ink); }
+.mk-dot.all[aria-pressed="true"] { color: var(--ink); background: var(--paper); }
+.mk-book { margin: 10px 0 0; font: 600 12px var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+.mk-book:first-child { margin-top: 0; }
+.mk-none { padding: 0; }
 
 /* ---- my studies: a page of your own in a frame -------------------------- */
 .study-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: light dark; }
@@ -520,10 +533,10 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .study-list { border-top: 1px solid var(--rule); }
 .study-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--rule); }
 .study-row.on { background: var(--chrome); }
-.study-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 4px; text-align: left; }
+.study-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 4px 10px 16px; text-align: left; }
 .study-open .t { font: 16px/1.35 var(--serif); }
 .study-open .s { font-size: 13px; color: var(--ink-2); }
-.study-remove { width: 40px; height: 40px; flex: none; color: var(--ink-3); font-size: 22px; border-radius: 8px; }
+.study-remove { width: 40px; height: 40px; flex: none; margin-right: 8px; color: var(--ink-3); font-size: 22px; border-radius: 8px; }
 .study-remove:active { background: var(--chrome-2); }
 .studies-add .primary { height: 44px; padding: 0 18px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 @media (max-width: 759px) { main:has(#reader.has-study) ~ .fab-think.over-reader { bottom: calc(18px + var(--safe-bottom)); } } /* no bottom bar under a study */
