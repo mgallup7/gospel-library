@@ -393,6 +393,15 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
   main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: calc(140px + var(--safe-bottom)); }
 }
 .think-card .ask-q { color: var(--accent); }
+/* Think it through: its three questions, each a question card for the deck in one tap */
+.think-questions { margin: 12px 0 4px; border-top: 1px solid var(--rule); font-family: var(--sans); }
+.think-questions .tq-head { font: 600 12px var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); margin: 10px 0 2px; }
+.think-questions .tq { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
+.think-questions .tq-body { flex: 1; min-width: 0; }
+.think-questions .tq-kind { font: 600 12px var(--sans); color: var(--accent); margin-bottom: 2px; }
+.think-questions .tq-text { font: 15px/1.4 var(--serif); color: var(--ink); }
+.think-questions .tq .primary.small { flex: none; height: 32px; padding: 0 12px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 13px; white-space: nowrap; }
+.think-questions .tq .primary.small:disabled { background: var(--chrome-2); color: var(--ink-2); }
 .ask-tools .primary.small { height: 32px; padding: 0 12px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 13px; }
 
 /* match navigator inside the reader */

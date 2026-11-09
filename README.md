@@ -43,8 +43,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   reading (or over a set of results) hands it to Claude on the Ask tab, with
   anything you have selected: Claude studies the chapter, lesson or talk,
   searches the library itself, and comes back with what connects to it
-  across the shelves, the Hebrew or Greek behind a key word, questions to
-  ask, and a deck section to build from it, in one tap. The deck's own
+  across the shelves, the Hebrew or Greek behind a key word, three questions
+  to ask (what it says, what it means, what you will do, as Preach My
+  Gospel teaches), each a question card on the deck in a tap, and a deck
+  section to build from it, in one tap. The deck's own
   "Think it through" still studies a chain of passages already on the deck.
 - A Back that says where it leads. Every place has an address (a shelf and
   how far into it you are, a search, a page, Ask, Deck), so "‹ Alma 32" or
