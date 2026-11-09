@@ -313,7 +313,8 @@ references and queries exactly as the Python ones do (against
 `tests/fixtures/parsers.json`, frozen from the Python side), and
 `tests/js/browser/run.mjs` drives the app itself in Chromium at iPad and
 phone sizes (the trail and Back, links and My studies, highlights and notes,
-the concordance, focus, deck cards, the tile legend); its header says how to
+the concordance, focus, deck cards, the tile legend, a delta built by the
+Python and applied on the device, a second tab, a search fuzz); its header says how to
 serve a copy for it to point at.
 
 `bin/gen-web-data.py` regenerates `web/lib/scriptures-data.js` if the scripture

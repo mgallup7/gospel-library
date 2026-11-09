@@ -105,11 +105,10 @@ async function bootOnce() {
     // 400 ms for about 2.5 s, and only then call it another tab. A failed try
     // must keep the files (by default sqlite would try to delete the pool) and
     // the next must not be handed the cached failure.
-    const isLock = (err) => /NoModificationAllowedError|createSyncAccessHandle|access handle/i.test(String(err?.name || "") + " " + String(err?.message || ""));
     try {
       for (let attempt = 0; ; attempt++) {
         try {
-          pool = await sqlite3.installOpfsSAHPoolVfs({ name: "gospel-library", initialCapacity: 6, preserveOnInitFailure: true, forceReinitIfPreviouslyFailed: true });
+          pool = await installPool();
           break;
         } catch (err) {
           if (!isLock(err) || attempt >= 6) throw err;
@@ -128,6 +127,8 @@ async function bootOnce() {
     mode = "memory";
   }
 }
+const isLock = (err) => /NoModificationAllowedError|createSyncAccessHandle|access handle/i.test(String(err?.name || "") + " " + String(err?.message || ""));
+const installPool = () => sqlite3.installOpfsSAHPoolVfs({ name: "gospel-library", initialCapacity: 6, preserveOnInitFailure: true, forceReinitIfPreviouslyFailed: true });
 // A file of its own name, so another tab's probe or the library's pool is never in the way
 async function probeSyncHandle() {
   const name = `.probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -177,6 +178,12 @@ const methods = {
   },
   async open({ slot }) {
     await boot();
+    // the page asks again every few seconds while another tab holds the storage: once that tab
+    // has closed, the pool can be had, and this tab opens the library without a reload of the worker
+    if (locked && pool === null) {
+      try { pool = await installPool(); mode = "opfs"; locked = false; }
+      catch (err) { if (!isLock(err)) locked = false; }
+    }
     closeDb();
     if (mode === "opfs" && slot && pool.getFileNames().includes(slot)) {
       db = new pool.OpfsSAHPoolDb(slot);
