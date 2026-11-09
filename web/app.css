@@ -765,8 +765,10 @@ body.presenting { overflow: hidden; }
 .stage { --stage-rule-c: #8a5a00; }
 .stage.dark { --stage-rule-c: #e3c27a; }
 .stage.themed { --stage-rule-c: var(--stage-accent); }
-.stage-kicker { position: absolute; top: calc(var(--safe-top) + 6vmin); left: 6vmin; font: 600 2.3vmin var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--stage-rule-c); pointer-events: none; }
-.stage-kicker::after { content: ""; display: block; width: 5.5vmin; height: .45vmin; margin-top: 1.3vmin; background: var(--stage-rule-c); }
+.stage-kicker { position: absolute; top: calc(var(--safe-top) + 6vmin); left: 6vmin; font: 600 max(11px, 2.3vmin) var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--stage-rule-c); pointer-events: none; }
+.stage-kicker::after { content: ""; display: block; width: max(28px, 5.5vmin); height: max(2px, .45vmin); margin-top: max(6px, 1.3vmin); background: var(--stage-rule-c); }
+/* on a phone the woken controls fill the top row, so the kicker steps aside while they show */
+@media (max-width: 759px) { .stage.show-controls .stage-kicker, .stage:has(.stage-controls:focus-within) .stage-kicker { visibility: hidden; } }
 .stage-kicker[hidden] { display: none; }
 .stage.blank .stage-kicker { visibility: hidden; }
 .stage-body.is-question .stage-text::after { content: ""; display: block; width: 9vmin; height: .45vmin; margin: .7em auto 0; background: var(--stage-rule-c); }
