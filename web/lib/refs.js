@@ -7,7 +7,7 @@ import { parseReference } from "./scriptures.js";
 
 // a run of up to five words that could name a book (a number, then capitalized words, with
 // "of", "and" or "the" between them), then chapter:verse and maybe -verse
-const CANDIDATE = /(?<![\w&])((?:[1-4]\s?)?[A-Z][\w&'’.—–-]*(?:\s+(?:of|and|the|[A-Z][\w&'’.—–-]*)){0,4}?)\s+(\d{1,3})\s?:\s?(\d{1,3})(?:\s?[-–]\s?(\d{1,3}))?(?![\d:])/g;
+const CANDIDATE = /(?<![\w&])((?:[1-4]\s?)?[A-Z][\w&'’.\u2014\u2013-]*(?:\s+(?:of|and|the|[A-Z][\w&'’.\u2014\u2013-]*)){0,4}?)\s+(\d{1,3})\s?:\s?(\d{1,3})(?:\s?[-–]\s?(\d{1,3}))?(?![\d:])/g;
 
 /** The library address a reference opens: the Church's form, which the study frame hands to the app. */
 export function hrefOf(r) {

@@ -7,7 +7,7 @@ const found = (text) => findReferences(text).map((r) => [text.slice(r.start, r.e
 
 test("references in running text, with the words before them left out", () => {
   assert.deepEqual(found("In Alma 32:21 we read, and see 1 Nephi 3:7 and D&C 76:22-24."), [["Alma 32:21", "Alma 32:21"], ["1 Nephi 3:7", "1 Nephi 3:7"], ["D&C 76:22-24", "D&C 76:22–24"]]);
-  assert.deepEqual(found("Doctrine and Covenants 88:118; JS—H 1:17; Moroni 10:4–5"), [["Doctrine and Covenants 88:118", "D&C 88:118"], ["JS—H 1:17", "Joseph Smith—History 1:17"], ["Moroni 10:4–5", "Moroni 10:4–5"]]);
+  assert.deepEqual(found("Doctrine and Covenants 88:118; JS\u2014H 1:17; Moroni 10:4–5"), [["Doctrine and Covenants 88:118", "D&C 88:118"], ["JS\u2014H 1:17", "Joseph Smith\u2014History 1:17"], ["Moroni 10:4–5", "Moroni 10:4–5"]]);
   assert.deepEqual(found("1 Ne. 3:7, Hel. 5:12 and Rev. 21:4 (Ether 12:6)"), [["1 Ne. 3:7", "1 Nephi 3:7"], ["Hel. 5:12", "Helaman 5:12"], ["Rev. 21:4", "Revelation 21:4"], ["Ether 12:6", "Ether 12:6"]]);
 });
 
