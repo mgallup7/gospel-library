@@ -127,6 +127,26 @@ async function bootOnce() {
     mode = "memory";
   }
 }
+// A file of its own name, so another tab's probe or the library's pool is never in the way
+async function probeSyncHandle() {
+  const name = `.probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  let root = null;
+  try {
+    root = await navigator.storage.getDirectory();
+    const handle = await (await root.getFileHandle(name, { create: true })).createSyncAccessHandle();
+    try {
+      const size = handle.getSize();
+      if (size && typeof size.then === "function") { await size.catch(() => {}); return false; }
+      return typeof size === "number";
+    } finally {
+      try { const closed = handle.close(); if (closed && typeof closed.then === "function") await closed; } catch (_) {}
+    }
+  } catch (_) {
+    return null;
+  } finally {
+    if (root) root.removeEntry(name).catch(() => {});
+  }
+}
 let locked = false;
 let exclusive = null; // a promise while a delta is being applied: other calls wait for it
 
@@ -145,6 +165,15 @@ function forgetDerived() {
 }
 
 const methods = {
+  // What this browser can do, reported before the storage is opened. The library needs sync
+  // access handles, which exist only inside a worker, so the page cannot look for itself. An
+  // earlier WebKit had the class with methods that returned promises, which sqlite cannot use:
+  // one throwaway handle tells the two apart (null when that cannot be tried).
+  async features() {
+    const syncAccess = typeof FileSystemSyncAccessHandle === "function";
+    const syncMethods = syncAccess ? await Promise.race([probeSyncHandle(), new Promise((r) => setTimeout(() => r(null), 2000))]) : false;
+    return { syncAccess, syncMethods };
+  },
   async open({ slot }) {
     await boot();
     closeDb();
