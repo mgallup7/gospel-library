@@ -12,14 +12,33 @@ const semLoaded = import("./semantic.js").then((m) => { Sem = m; }).catch((err) 
 // The model itself runs in a worker of its own when the app has handed one over
 // (model-worker.js, attachModel), so loading it never stalls a search here; without
 // one it runs in this worker, as it used to.
-let modelPort = null, modelReady = false, modelFailed = null, modelLoading = null, modelSeq = 0;
+let modelPort = null, modelReady = false, modelFailed = null, modelLoading = null, modelSeq = 0, modelBase = null;
 const modelPending = new Map();
+const MODEL_WAIT = { load: 180000, embed: 8000, status: 5000 };
+// A call to the model worker, with a wait it may not exceed: a worker iOS has killed, or one that
+// never answers, must not hang every search behind it. On a timeout the channel is dropped and
+// the model runs in this worker from then on.
 function modelCall(method, params, onProgress) {
   return new Promise((resolve, reject) => {
     const id = ++modelSeq;
-    modelPending.set(id, { resolve, reject, onProgress });
-    modelPort.postMessage({ id, method, params });
+    const timer = setTimeout(() => {
+      if (!modelPending.has(id)) return;
+      modelPending.delete(id);
+      reject(new Error(`the search model did not answer (${method})`));
+      detachModel("no answer");
+    }, MODEL_WAIT[method] || 10000);
+    modelPending.set(id, { resolve, reject, onProgress, timer });
+    try { modelPort.postMessage({ id, method, params }); } catch (err) { clearTimeout(timer); modelPending.delete(id); reject(err); detachModel(err.message); }
   });
+}
+// The model worker is gone or silent: the model runs here instead, loading in the background
+function detachModel(why) {
+  if (!modelPort) return;
+  console.warn("search model worker dropped:", why);
+  try { modelPort.onmessage = null; } catch (_) {}
+  modelPort = null; modelReady = false; modelLoading = null;
+  for (const [id, p] of modelPending) { clearTimeout(p.timer); p.reject(new Error("the search model worker stopped")); modelPending.delete(id); }
+  if (Sem && modelBase && !Sem.ready()) Sem.load({ base: modelBase }).catch((err) => { modelFailed = err; });
 }
 function attachModel(port) {
   modelPort = port;
@@ -28,6 +47,7 @@ function attachModel(port) {
     const p = modelPending.get(id);
     if (!p) return;
     if (progress) { p.onProgress && p.onProgress(progress); return; }
+    clearTimeout(p.timer);
     modelPending.delete(id);
     if (error) p.reject(new Error(error.message)); else p.resolve(result);
   };
@@ -35,6 +55,7 @@ function attachModel(port) {
 const semReady = () => modelPort ? modelReady : !!(Sem && Sem.ready());
 const semFailed = () => modelPort ? modelFailed : (Sem && Sem.failed()) || null;
 function loadModel(base, onProgress) {
+  modelBase = base;
   if (!modelPort) return Sem.load({ base, onProgress });
   if (modelReady) return Promise.resolve(true);
   if (modelLoading) return modelLoading;
@@ -117,7 +138,7 @@ function closeDb() {
 }
 // Everything computed from the library's contents, dropped when those contents change
 function forgetDerived() {
-  speakerIndex = null; vocab = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
+  speakerIndex = null; vocab = null; vocabBuild = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
   lastRanked = null; originalsKnown = null; translitMap = null; lexiconAscii = null;
   bitIndex = null; bitIndexTried = false; docOfIndex = null; scopeMasks = new Map(); building = null; libraryGen++;
   try { db && db.exec("DROP TABLE IF EXISTS temp.vocab"); } catch (_) {}
@@ -132,6 +153,7 @@ const methods = {
       tune(db);
       const bundle = metaValue("bundle") || {};
       current = { slot, version: bundle.version || null, builtAt: bundle.built_at || null };
+      setTimeout(buildVocabulary, 2500);
       return { hasLibrary: true, mode, ...current };
     }
     current = null;
@@ -170,6 +192,7 @@ const methods = {
       db = fresh;
       tune(db);
       current = { slot: target, version: manifest.version, builtAt: manifest.built_at };
+      setTimeout(buildVocabulary, 2500);
     } else {
       const bytes = await sealed.all();
       const fresh = new sqlite3.oo1.DB();
@@ -184,6 +207,7 @@ const methods = {
       db = fresh;
       tune(db);
       current = { slot: null, version: manifest.version, builtAt: manifest.built_at };
+      setTimeout(buildVocabulary, 2500);
     }
     void header;
     return { hasLibrary: true, mode, ...current, manifest };
@@ -257,6 +281,7 @@ const methods = {
         try { db.exec("DETACH DATABASE d"); } catch (_) {} attached = false;
         progress({ phase: "install", loaded: 1, total: 1 });
         current = { ...(current || {}), version: info.to, builtAt: manifest.built_at };
+        setTimeout(buildVocabulary, 1500);
         return { hasLibrary: true, mode, ...current, manifest, applied: { changed: info.documents_changed, removed: info.documents_removed, vectors: info.vecbits, bytes: bytes.length } };
       } finally {
         if (attached) { try { db.exec("DETACH DATABASE d"); } catch (_) {} }
@@ -284,6 +309,7 @@ const methods = {
   async stats() { need(); return stats(); },
   // The app hands over one end of a channel to the model worker (see model-worker.js).
   async attachModel({ port }) { if (port) attachModel(port); return { ok: !!port }; },
+  async detachModel({ why = "the app said so" } = {}) { detachModel(why); return { ok: true }; },
   // A small sealed file published beside the library (the owner's private
   // writing skills), unlocked with the same passphrase and returned as text.
   async unseal({ url, passphrase }) {
@@ -326,6 +352,8 @@ const methods = {
   async context({ doc_id, pid, before = 1, after = 1 }) { need(); return context(Number(doc_id), pid, before, after); },
   async verses({ words, volume = "all", limit = 400 }) { need(); return allVerses(words, volume, limit); },
   async matches(params) { need(); return allMatches(params || {}); },
+  // Every passage a search's words matched, in reading order, counted the way the search counted them
+  async concordance(params) { need(); return concordance(params || {}); },
   // The Hebrew Bible and Greek New Testament, word by word.
   async originalsInfo() { need(); return haveOriginals() ? metaValue("originals") : null; },
   async original(params) { need(); return originalWords(params || {}); },
@@ -587,8 +615,9 @@ function expandPrefix(match) {
   const parts = m[1].split(/\s+/).filter(Boolean);
   const last = parts[parts.length - 1];
   if (!last || last.length > 4 || last.length < 2) return match;
+  if (!vocab) { buildVocabulary(); return match; } // not built yet: the plain prefix, and the build starts
   let candidates = [];
-  try { candidates = loadVocab().filter(([t]) => t.startsWith(last)).sort((a, b) => b[1] - a[1]).slice(0, PREFIX_WORDS).map(([t]) => t); } catch (_) { return match; }
+  try { candidates = vocab.filter(([t]) => t.startsWith(last)).sort((a, b) => b[1] - a[1]).slice(0, PREFIX_WORDS).map(([t]) => t); } catch (_) { return match; }
   if (!candidates.length) return match;
   if (!candidates.includes(last) && candidates.length >= PREFIX_WORDS) candidates[candidates.length - 1] = last; // the word itself, if it is one
   const head = parts.slice(0, -1).join(" ");
@@ -679,16 +708,21 @@ async function rankedSearch(q, opts) {
       for (const r of rs) { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", rank++); }
       if (rank >= (typeahead ? 40 : 120)) break;
     }
-    const last = tiers[tiers.length - 1];
+    // "N with these words" means all of the words: the strict tier, which the concordance opens too
+    const concord = n.strict || n.phrase || n.loose || null;
     if (typeahead) lexTotal = rank;
-    else { try { lexTotal = last ? countRows(last, cq) : 0; } catch (_) { lexTotal = rank; } }
+    else { try { lexTotal = concord ? countRows(concord, cq) : 0; } catch (_) { lexTotal = rank; } }
+    out.lexical_match = concord;
   } else if (cq.match) {
     try {
       const rs = passageRows(cq.match, cq, typeahead ? 40 : 100, 0);
       rs.forEach((r, i) => { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", exactTotal + i); });
       lexTotal = typeahead ? rs.length : countRows(cq.match, cq);
+      out.lexical_match = cq.match;
     } catch (err) { out.error = `could not run that query (${err.message})`; return out; }
   }
+  // the filters the words were counted under, so the concordance can count them the same way
+  out.filters = { collections: cq.collections || [], speaker: cq.speaker || null, yearFrom: cq.yearFrom || null, yearTo: cq.yearTo || null, bookSlug: cq.bookSlug || null, volume: cq.volume || null, edition: cq.edition || null, excludeEdition: cq.excludeEdition || null };
   // 3. The meaning, when the model is here and this is a real search, not a keystroke or a request for exact words.
   let semantic = false;
   if (!typeahead && !light && !explicit && !out.jump && semReady() && semanticIndex()) {
@@ -781,7 +815,7 @@ function searchDocuments(q, { scope, speaker, from, to, book, edition, exclude_e
 // A word the library has never seen ("spirt") is swapped for the nearest
 // word it has, measured against the index's own vocabulary; everything else
 // is left exactly as typed.
-let vocab = null;
+let vocab = null, vocabBuild = null;
 function loadVocab() {
   if (vocab) return vocab;
   try {
@@ -789,6 +823,30 @@ function loadVocab() {
     vocab = rows("SELECT term, cnt FROM temp.vocab WHERE cnt >= 2 AND length(term) >= 3").map((r) => [r.term, r.cnt]);
   } catch (_) { vocab = []; }
   return vocab;
+}
+// The same list, built in slices between other work once the library is open, so the first
+// word typed never waits for a walk of the whole term index (seconds on the full library).
+function buildVocabulary() {
+  if (vocab || vocabBuild || !db) return vocabBuild;
+  const gen = libraryGen;
+  vocabBuild = (async () => {
+    const out = [];
+    try {
+      db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab USING fts5vocab(main, 'paragraphs', 'row')");
+      let after = "";
+      for (;;) {
+        if (!db || gen !== libraryGen) return;
+        const slice = rows("SELECT term, cnt FROM temp.vocab WHERE term > ? ORDER BY term LIMIT 4000", [after]);
+        if (!slice.length) break;
+        for (const r of slice) if (r.cnt >= 2 && r.term.length >= 3) out.push([r.term, r.cnt]);
+        after = slice[slice.length - 1].term;
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      if (db && gen === libraryGen && !vocab) vocab = out;
+    } catch (_) { /* the next search builds it the old way */ }
+    finally { if (gen === libraryGen) vocabBuild = null; }
+  })();
+  return vocabBuild;
 }
 function editDistance(a, b) {
   const m = a.length, n = b.length;
@@ -974,6 +1032,29 @@ function allMatches({ words, phrase, mode = "any", scope = "all", limit = 400, e
     return { total: 0, passages: [], query: match, error: err.message };
   }
   return { total, query: match, by_document: byDoc, passages: rs.map((r) => ({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, citation: citation(r, r.verse) })) };
+}
+
+// The concordance behind "N with these words": the same match and filters the search counted
+// with, so the number on the button is the number of rows here. Ids are sorted first (the joins
+// carry the reading order), then the text is fetched for the rows shown.
+function concordance({ match, filters = {}, limit = 600 }) {
+  if (!match) return { total: 0, passages: [], by_document: [], query: "" };
+  const cq = { collections: filters.collections || [], speaker: filters.speaker || null, yearFrom: filters.yearFrom || null, yearTo: filters.yearTo || null,
+    bookSlug: filters.bookSlug || null, volume: filters.volume || null, edition: filters.edition || null, excludeEdition: filters.excludeEdition || null };
+  const { where, params } = whereParts(cq);
+  const cond = ["paragraphs MATCH ?", ...where].join(" AND ");
+  let total = 0, ids = [], byDoc = [];
+  try {
+    total = countRows(match, cq);
+    ids = rows(`SELECT p.rowid AS id${PASSAGE_FROM} WHERE ${cond} ORDER BY d.sort_key, p.seq LIMIT ?`, [match, ...params, Math.min(limit, 1000)]).map((r) => r.id);
+    byDoc = rows(`SELECT d.id AS doc_id, COUNT(*) AS n${PASSAGE_FROM} WHERE ${cond} GROUP BY d.id ORDER BY d.sort_key`, [match, ...params]);
+  } catch (err) {
+    return { total: 0, passages: [], by_document: [], query: match, error: err.message };
+  }
+  if (!ids.length) return { total, passages: [], by_document: byDoc, query: match };
+  const details = new Map(rows(`SELECT ${PASSAGE_COLS}${PASSAGE_FROM} WHERE p.rowid IN (${ids.map(() => "?").join(",")})`, ids).map((r) => [r.paragraph_id, r]));
+  const passages = ids.map((id) => details.get(id)).filter(Boolean).map((r) => ({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, citation: citation(r, r.verse) }));
+  return { total, query: match, by_document: byDoc, passages };
 }
 
 function allVerses(words, volume, limit) {

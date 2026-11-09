@@ -72,7 +72,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(150);
     check(await badge() === "1", "the header should show 1 after adding again");
-    // a toast after the toast's own time is gone, so the Undo does not linger
+    // a toast after the toast's own time is gone, so the Undo does not linger (the pointer moves off it:
+    // a pointer resting on the toast holds it, by design)
+    await page.mouse.move(5, 5);
     await page.waitForTimeout(5600);
     check(!(await page.$(".toast")), "the toast should go after about five seconds");
     await page.click("#deckBtn");

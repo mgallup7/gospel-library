@@ -8,7 +8,7 @@
    - the search model and ONNX Runtime (model/, vendor/ort/): cache first, in a
      cache of their own that a shell update leaves alone, so 50 MB is fetched once;
    - the data files (the library bundle and its manifest): network only. */
-const SHELL = "gospel-shell-v29";
+const SHELL = "gospel-shell-v30";
 const ASSETS = "gospel-assets-v1";
 const FILES = ["./", "./index.html", "./app.css", "./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./marks.js", "./engine.js", "./model-worker.js", "./semantic.js", "./lib/wordpiece.js", "./vendor/pptxgen.bundle.js", "./lib/query.js", "./lib/scriptures.js",
   "./lib/scriptures-data.js", "./lib/cite.js", "./lib/markdown.js", "./lib/chunk.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
@@ -16,7 +16,9 @@ const NETWORK_WAIT = 3000;
 
 self.addEventListener("install", (e) => {
   // each file on its own, so one that is missing does not cost the whole offline shell
-  e.waitUntil(caches.open(SHELL).then((c) => Promise.allSettled(FILES.map((f) => c.add(f)))).then(() => self.skipWaiting()));
+  // each fetched fresh (not from the browser's own cache, which could hold an older file), so a
+  // new shell is whole: one app.js with the lib files it expects
+  e.waitUntil(caches.open(SHELL).then((c) => Promise.allSettled(FILES.map((f) => fetch(f, { cache: "reload", credentials: "same-origin" }).then((r) => { if (r.ok) return c.put(f, r); throw new Error(`${f} ${r.status}`); })))).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== SHELL && k !== ASSETS).map((k) => caches.delete(k)))).then(() => self.clients.claim()));

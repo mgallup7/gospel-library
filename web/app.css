@@ -154,6 +154,7 @@ main {
 /* On a phone, reading takes the whole screen: the reader bar carries the way back and the bottom bar the tools. */
 @media (max-width: 759px) {
   body.reading .scopes, body.reading #filters { display: none; }
+  body.reading .reader-bar { top: var(--bar-real, calc(var(--bar-h) + var(--safe-top))); } /* the search header stays; Back sits under it, not behind it */
 }
 @media (min-width: 760px) {
   html, body { height: 100%; overflow: hidden; }
@@ -423,7 +424,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .sheet .peek { margin: 4px 0 10px; }
 .sheet .peek p { margin: 0 0 8px; font-size: var(--reading-size, 17px); line-height: 1.5; }
 .sheet .peek .vn { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink-3); margin-right: 6px; vertical-align: 2px; }
-.sheet .peek-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-family: var(--sans); }
+.sheet .peek-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-family: var(--sans); position: sticky; bottom: calc(-18px - var(--safe-bottom)); padding: 10px 0 calc(10px + var(--safe-bottom)); margin-bottom: calc(-18px - var(--safe-bottom)); background: var(--chrome); }
 .sheet .peek-row .primary { height: 40px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 15px; }
 .sheet .peek-row .text-btn { height: 40px; font-size: 15px; }
 
@@ -473,7 +474,8 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 .sheet .note-passage { margin: 0 0 10px; font-size: 15px; line-height: 1.45; color: var(--ink-2); }
 .sheet .note-text { display: block; width: 100%; box-sizing: border-box; min-height: 110px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--serif); resize: vertical; margin: 0 0 10px; }
 .sheet .text-btn.danger { color: var(--danger); }
-.marks-sec { margin-top: 20px; }
+.marks-sec { margin-top: 20px; padding: 0 16px; }
+.marks-sec .home-sec-head { padding-left: 0; padding-right: 0; }
 .mark-list { display: grid; gap: 8px; }
 .mark-row { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 12px 10px 14px; border: 1px solid var(--rule); border-left-width: 5px; border-radius: 10px; background: var(--paper); }
 .mark-row.hl-y { border-left-color: var(--hl-y-dot); } .mark-row.hl-g { border-left-color: var(--hl-g-dot); } .mark-row.hl-b { border-left-color: var(--hl-b-dot); } .mark-row.hl-p { border-left-color: var(--hl-p-dot); }
@@ -488,8 +490,8 @@ main:has(#reader:not([hidden]) .select-bar) ~ .fab-think.over-reader { bottom: c
 /* ---- my studies: a page of your own in a frame -------------------------- */
 .study-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: light dark; }
 #reader.has-study { overflow: hidden; }
-.studies-lede { font-size: 15px; line-height: 1.5; color: var(--ink-2); margin: 0 0 12px; }
-.studies-add { margin: 0 0 16px; }
+.studies-lede { font-size: 15px; line-height: 1.5; color: var(--ink-2); margin: 0 0 12px; padding: 0 16px; }
+.studies-add { margin: 0 16px 16px; }
 .study-list { border-top: 1px solid var(--rule); }
 .study-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--rule); }
 .study-row.on { background: var(--chrome); }
@@ -542,7 +544,10 @@ body.first-run .bar, body.first-run #filters { display: none; }
 .stage-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; font-family: var(--sans); font-size: 2.6vmin; opacity: .7; padding-top: 2vmin; }
 .stage-count { font-variant-numeric: tabular-nums; }
 .stage-controls { position: absolute; top: calc(var(--safe-top) + 8px); right: 8px; display: flex; gap: 2px; opacity: 0; transition: opacity .2s; }
-.stage:hover .stage-controls, .stage:focus-within .stage-controls, .stage.show-controls .stage-controls { opacity: 1; }
+/* The controls show when woken (a tap in the top-right corner, a mouse move, a key) and when a
+   control itself has focus; never just because the stage is under the pointer or holds focus,
+   or a mirrored screen would show the room the timer and what comes next. */
+.stage.show-controls .stage-controls, .stage-controls:focus-within { opacity: 1; }
 @media (hover: none) { .stage.show-controls .stage-controls { opacity: .8; } }
 .stage-controls button { width: 44px; height: 44px; border-radius: 10px; font: 20px var(--sans); color: inherit; background: rgba(127,127,127,.12); }
 .stage-controls button:disabled { opacity: .3; }
@@ -613,6 +618,11 @@ body.presenting { overflow: hidden; }
 .select-bar .primary, .deck .primary, .deck-summary .primary { height: 44px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .deck .primary:disabled, .deck .text-btn:disabled { opacity: .45; }
 .toast { position: fixed; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translate(-50%, 10px); z-index: 60; padding: 10px 16px; border-radius: 10px; background: var(--ink); color: var(--paper); font: 14px var(--sans); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+@media (max-width: 759px) {
+  body.reading .toast { bottom: calc(84px + var(--safe-bottom)); } /* above the reader's bottom bar */
+  main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(144px + var(--safe-bottom)); } /* and the selection bar */
+  body:has(.toast.show) .fab-think { opacity: 0; pointer-events: none; }
+}
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.has-action { display: flex; align-items: center; gap: 12px; padding: 4px 4px 4px 16px; pointer-events: auto; width: max-content; max-width: calc(100vw - 32px); }
 .toast-action { height: 40px; padding: 0 14px; border-radius: 8px; color: var(--paper); font: 600 14px var(--sans); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }

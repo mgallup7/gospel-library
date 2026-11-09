@@ -98,7 +98,7 @@
       ].filter(Boolean)),
       el("p", { class: "ow-credit", text: CREDIT }),
     );
-    openSheet(sheet);
+    openSheet(sheet, "Legend");
   }
   function hide(body, btn) {
     store.set("orig", false);
@@ -213,8 +213,8 @@
         const top = (lex.glosses || []).slice(0, 6).map((g) => `${g.gloss} (${g.n})`).join(", ");
         sec.append(el("p", { class: "ow-fine", text: `${lex.count.toLocaleString()} ${lex.count === 1 ? "occurrence" : "occurrences"} in ${lex.verses_total.toLocaleString()} ${lex.verses_total === 1 ? "verse" : "verses"}${lex.books && lex.books.length ? `, in ${lex.books.length === 1 ? lex.books[0].name : `${lex.books.length} books`}` : ""}.${top ? ` Rendered: ${top}.` : ""}` }));
         sec.append(el("div", { class: "deck-actions" }, [
-          el("button", { type: "button", class: "primary", text: `All ${lex.verses_total.toLocaleString()} verses with this word`, onclick: () => { closeSheet(); GL().search(lex.strongs); } }),
-          lex.senses && lex.senses.length > 1 && lex.strongs.length > 5 ? el("button", { type: "button", class: "text-btn", text: `Every sense of ${lex.strongs.slice(0, 5)}`, onclick: () => { closeSheet(); GL().search(lex.strongs.slice(0, 5)); } }) : null,
+          el("button", { type: "button", class: "primary", text: `All ${lex.verses_total.toLocaleString()} verses with this word`, onclick: () => { hideSheet(); GL().search(lex.strongs); } }),
+          lex.senses && lex.senses.length > 1 && lex.strongs.length > 5 ? el("button", { type: "button", class: "text-btn", text: `Every sense of ${lex.strongs.slice(0, 5)}`, onclick: () => { hideSheet(); GL().search(lex.strongs.slice(0, 5)); } }) : null,
         ]));
       }
       details.append(sec);
@@ -227,7 +227,7 @@
     if (helps.length && sheet.contains(details)) {
       details.append(el("div", { class: "ow-section" }, [
         el("div", { class: "nm", text: "In the study helps" }),
-        el("div", { class: "ow-helps" }, helps.map((h) => el("button", { type: "button", class: "chip", text: `${h.book}: ${h.title}`, onclick: () => { closeSheet(); GL().openDoc(h.id, null); } }))),
+        el("div", { class: "ow-helps" }, helps.map((h) => el("button", { type: "button", class: "chip", text: `${h.book}: ${h.title}`, onclick: () => { hideSheet(); GL().openDoc(h.id, null); } }))),
       ]));
     }
     details.append(el("p", { class: "ow-credit", text: CREDIT }));
@@ -283,17 +283,17 @@
       e.preventDefault();
       try {
         const r = await GL().api("locate", { ref: a.dataset.ref });
-        if (r && r.found) { closeSheet(); GL().openDoc(r.doc_id, r.pid); }
+        if (r && r.found) { hideSheet(); GL().openDoc(r.doc_id, r.pid); }
         else GL().toast("That verse is not in the library.");
       } catch (_) { GL().toast("That verse could not be opened."); }
     });
     return box;
   }
-  function openSheet(sheet) {
-    sheet.hidden = false;
-    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: closeSheet }); scrim.id = "scrim"; document.body.append(scrim); }
-  }
-  function closeSheet() { const sheet = $("#sheet"); if (sheet) sheet.hidden = true; $("#scrim")?.remove(); }
+  // The app owns the sheet (focus, the scrim, the history marker that lets Back close it):
+  // openSheet shows it; hideSheet takes it down before a move; closeSheet is the user closing it.
+  function openSheet(sheet, label = "Word") { if (GL().openSheet) GL().openSheet(label); else sheet.hidden = false; }
+  function closeSheet() { if (GL().closeSheet) GL().closeSheet(); else { const sheet = $("#sheet"); if (sheet) sheet.hidden = true; $("#scrim")?.remove(); } }
+  function hideSheet() { if (GL().hideSheet) GL().hideSheet(); else closeSheet(); }
 
   // ----------------------------------------------------------- results ----
   // The line above search results for a Hebrew, Greek or Strong's search.

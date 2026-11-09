@@ -66,7 +66,11 @@
     let added = 0;
     for (const m of list) {
       if (!m || typeof m.uri !== "string" || typeof m.pid !== "string") continue;
-      const rec = { ...m, id: idFor(m.uri, m.pid), color: COLORS.includes(m.color) ? m.color : null, note: typeof m.note === "string" && m.note.trim() ? m.note.trim() : null };
+      const str = (v, max) => (typeof v === "string" ? v : v === null || v === undefined ? "" : String(v)).slice(0, max);
+      const rec = { id: idFor(m.uri, m.pid), uri: m.uri, pid: m.pid, doc_id: Number.isFinite(m.doc_id) ? m.doc_id : null, verse: Number.isFinite(m.verse) ? m.verse : null,
+        kind: m.kind === "para" ? "para" : "verse", color: COLORS.includes(m.color) ? m.color : null, note: typeof m.note === "string" && m.note.trim() ? m.note.trim().slice(0, 4000) : null,
+        text: str(m.text, 400), citation: str(m.citation, 200), title: str(m.title, 200),
+        created: Number.isFinite(m.created) ? m.created : 0, updated: Number.isFinite(m.updated) ? m.updated : 0 };
       if (!rec.color && !rec.note) continue;
       const old = await get(m.uri, m.pid);
       if (old && (old.updated || 0) >= (rec.updated || 0)) continue;

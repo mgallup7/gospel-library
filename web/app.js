@@ -57,6 +57,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   (() => {
     try {
       const modelWorker = new Worker(new URL("model-worker.js", BASE), { type: "module" });
+      modelWorker.onerror = (e) => { console.warn("the search model's worker failed:", e?.message); call("detachModel", { why: e?.message || "worker error" }).catch(() => {}); };
       const channel = new MessageChannel();
       modelWorker.postMessage({ port: channel.port1 }, [channel.port1]);
       const id = ++seq;
@@ -161,18 +162,42 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
   function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
-  function rememberScroll() { setEntry({ scroll: { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY, study: studyScroll } }); }
+  // Where the view was scrolled, kept on the entry being left. A path that redraws before it pushes
+  // calls this first; push() then keeps that reading instead of measuring the new view.
+  let leavingScroll = null;
+  function rememberScroll() { leavingScroll = { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY, study: studyScroll, at: Date.now() }; setEntry({ scroll: leavingScroll }); }
   // place: the kind of entry, so typing in the same place refines it instead of stacking entries
   function placeNow() { return state.q.trim() ? (state.view === "all" ? "concordance" : "search") : state.browse?.tab || "home"; }
   function push(replace = false) {
     const url = urlFor();
     if (location.hash === url || (url === "#" && !location.hash)) return;
-    if (replace) { history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
-    rememberScroll();
+    if (replace) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
+    const fromOverlay = !!history.state?.overlay;
+    if (!fromOverlay && (!leavingScroll || Date.now() - leavingScroll.at > 2000)) rememberScroll(); // a reading older than the move it was taken for is stale
+    leavingScroll = null;
     const prev = history.state?.label || "Library";
-    history.pushState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url);
+    // leaving from inside a sheet or the stage: its marker entry becomes the new place, so Back
+    // from there returns to the page under it, not to a sheet that is no longer open
+    if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url); }
+    else history.pushState({ n: here() + 1, label: null, prev, scroll: null, place: null }, "", url);
     nameEntry();
     refreshTrailButtons();
+  }
+  // Overlays (a sheet, the stage) sit over a place without being one. Opening one puts a marker
+  // entry in history at the same address, so Back closes the overlay and nothing else; closing it
+  // by hand pops that marker. The place's scroll is kept on its own entry before the marker goes on.
+  let overlay = null;          // "sheet" or "stage" while one is open with a marker entry
+  let poppingOverlay = false;  // a Back we asked for, to pop a marker: nothing to render on it
+  function openOverlay(kind) {
+    if (overlay) return;
+    rememberScroll(); leavingScroll = null;
+    overlay = kind;
+    history.pushState({ ...(history.state || {}), overlay: kind }, "", location.href);
+  }
+  function dropOverlay(kind) {
+    if (overlay !== kind) return;
+    overlay = null;
+    if (history.state?.overlay === kind) { poppingOverlay = true; history.back(); }
   }
   function backLabel() { return here() > 0 ? history.state?.prev || "Back" : null; }
   function goBack() {
@@ -180,12 +205,13 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     else goHome();
   }
   function goHome() {
+    rememberScroll();
     leaveSearch();
     state.q = ""; state.docId = null; state.pid = null; state.studyId = null; state.browse = null; state.scope = "all";
     syncControls(); renderHome(); showList(); push();
   }
   // A step within the shelves (a book, a year, a volume): a place of its own, so Back retraces it
-  function go(browse) { state.browse = browse; renderHome(); push(); }
+  function go(browse) { rememberScroll(); state.browse = browse; renderHome(); push(); }
   // Edge swipes in the home-screen app, where iOS keeps its own gesture for itself: in from the
   // left edge goes back, in from the right edge goes forward. In Safari the system gesture does
   // this already, so the app stays out of its way there.
@@ -228,7 +254,15 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   function listTrail() { return backLabel() ? el("div", { class: "list-trail" }, [trailButton()]) : null; }
   window.addEventListener("popstate", () => {
     if (!state.ready) return;
-    hideNote(); window.Original?.closeSheet?.(); if (!stage.hidden) stopPresenting();
+    if (poppingOverlay) { poppingOverlay = false; return; } // our own pop of a marker, already closed
+    if (overlay && !history.state?.overlay) { // Back with a sheet or the stage open: close it, stay where you are
+      const kind = overlay; overlay = null;
+      if (kind === "sheet") hideNote(); else if (!stage.hidden) stopPresenting();
+      return;
+    }
+    if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href); // a marker reached from elsewhere is its place
+    overlay = null;
+    hideNote(); if (!stage.hidden) stopPresenting();
     readUrl(); syncControls(); render({ restore: history.state?.scroll || null });
   });
 
@@ -262,7 +296,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   async function render({ restore = null } = {}) {
     const searching = state.q.trim().length >= 2;
     if (searching && !state.terms.length) state.terms = termsFrom(state.q);
-    const listWork = searching ? runSearch({ typeahead: false, silent: true }) : (state.lastSearch = null, renderHome());
+    const listWork = searching ? runSearch({ typeahead: false, silent: true, restore }) : (state.lastSearch = null, renderHome());
     const boardFirst = wide() && !searching && state.browse?.tab === "deck";
     // #deck with a page open shows the board, and the page loads behind it for the switch to offer
     if (boardFirst) paneView = "board";
@@ -285,7 +319,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   function showList() {
     listPane.hidden = false;
-    if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; }
+    if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; window.scrollTo(0, 0); } // a list starts at its top (a restore puts it back after)
     document.body.classList.toggle("reading", !wide() && !readerPane.hidden);
     syncControls();
     updateThinkFab();
@@ -296,7 +330,11 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     document.body.classList.toggle("reading", !wide());
     window.scrollTo(0, 0);
     updateThinkFab();
+    measureBar();
   }
+  // The header's real height, for what must sit just under it (the phone's reader bar)
+  function measureBar() { requestAnimationFrame(() => { const h = $("header.bar")?.offsetHeight; if (h) document.documentElement.style.setProperty("--bar-real", h + "px"); }); }
+  window.addEventListener("resize", measureBar);
 
   // ------------------------------------------------------------- setup ----
   // The library is downloaded once per device and unlocked with the passphrase.
@@ -335,9 +373,15 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (status.locked && active) {
       listPane.replaceChildren(el("div", { class: "setup" }, [
         el("h1", { text: "Open in another tab" }),
-        el("p", { class: "lede", text: "The library is open in another tab or window of this browser, and only one can hold it at a time. Close it there, then try again here." }),
+        el("p", { class: "lede", text: "The library is open in another tab or window of this browser, and only one can hold it at a time. Close it there; this tab opens the library as soon as it is free." }),
         el("button", { type: "button", class: "primary", text: "Try again", onclick: () => location.reload() }),
       ]));
+      // the other tab may close any moment: keep trying quietly
+      const again = setInterval(async () => {
+        let s2 = null;
+        try { s2 = await call("open", { slot: active?.slot }); } catch (_) { return; }
+        if (s2 && s2.hasLibrary) { clearInterval(again); location.reload(); }
+      }, 3000);
       return false;
     }
     return new Promise((resolve) => renderSetup(status, resolve));
@@ -444,7 +488,15 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     let result = null;
     if (delta && active?.version === delta.from) {
       try { result = await call("applyDelta", { passphrase, manifestUrl: MANIFEST_URL }, onProgress(false)); }
-      catch (err) { console.warn("delta update failed, installing the whole library:", err?.message); result = null; }
+      catch (err) {
+        // the small update did not take: the whole library is the way on, but it is a big download, so ask first
+        console.warn("delta update failed:", err?.message);
+        label.textContent = `The small update did not apply (${err?.message || "unknown reason"}). Download the whole library instead (${mb(manifest.bundle_size)})?`;
+        const go = banner.querySelector(".text-btn");
+        if (go) { go.textContent = "Download it"; go.onclick = () => updateNow(banner, manifest, null); }
+        for (const b of banner.querySelectorAll("button")) b.disabled = false;
+        return;
+      }
     }
     try {
       if (!result) {
@@ -489,7 +541,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (last.length < 3 && !/\d/.test(last) && !/["'\u05d0-\u05ea\u0370-\u03ff]/.test(q)) return false;
     return !words.every((w) => COMMON.has(w));
   }
-  async function runSearch({ typeahead = false, silent = false, more = false } = {}) {
+  async function runSearch({ typeahead = false, silent = false, more = false, restore = null } = {}) {
     const q = state.q.trim();
     if (q.length < 2) { leaveSearch(); renderHome(); if (!silent) push(true); return; }
     if (typeahead) {
@@ -509,7 +561,8 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       });
       if (mySeq !== searchSeq) return;
       // a reference typed and entered opens the chapter itself on a wide screen; the list keeps the card
-      if (!typeahead && !more && data.jump?.doc_id && wide() && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
+      // a reference pressed opens its chapter on a wide screen; a re-render (Back, a reload) never navigates
+      if (!typeahead && !more && !silent && data.jump?.doc_id && wide() && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
       data.typeahead = typeahead;
       if (more && state.lastSearch) {
         const prev = state.lastSearch;
@@ -520,7 +573,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       }
       state.lastSearch = data;
       state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
-      if (state.view === "all" && !typeahead) renderConcordance(data); else renderResults(data);
+      if (state.view === "all" && !typeahead) await renderConcordance(data, { restore }); else renderResults(data);
       if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow() }); } // a new search from elsewhere is a move; refining one is not
       if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
@@ -608,7 +661,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     }
     const total = data.total || 0;
     if (data.hits.length || data.documents.length) {
-      const lexAll = data.lexical_total && data.lexical_total > total && state.group !== "documents" && !data.typeahead && (data.smart?.terms || []).length;
+      const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents" && !data.typeahead;
       const line = el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}` });
       if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline", text: `${data.lexical_total.toLocaleString()} with these words`, title: "Every match, in reading order", onclick: () => { state.view = "all"; runSearch({ typeahead: false }); } }));
       frag.append(line);
@@ -624,10 +677,13 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     else {
       const sm = data.smart || {};
       const first = data.hits[0];
-      const strong = first && !data.original && (first.before || first.after || first.why === "exact") && (first.why === "exact" || first.why === "both" || !sm.natural);
+      // a best match is one the words found (exact, or words and meaning together), never one found by
+      // meaning alone, and not when the search was really a Hebrew or Greek word (the hint line leads then)
+      const strong = first && !data.original && !data.original_hint && (first.before || first.after || first.why === "exact")
+        && (first.why === "exact" || first.why === "both" || (first.why === "words" && !sm.natural));
       if (first && !strong && sm.natural && window.Ask?.hasKey() && !data.typeahead) frag.append(el("div", { class: "ask-line" }, [
         el("span", { text: "A question: the passages below share its words; " }),
-        el("button", { type: "button", class: "text-btn small", text: "ask Claude to answer it", onclick: () => { state.browse = { tab: "ask", question: data.query }; state.q = ""; syncControls(); renderHome(); showList(); push(); } }),
+        el("button", { type: "button", class: "text-btn small", text: "ask Claude to answer it", onclick: () => { rememberScroll(); state.browse = { tab: "ask", question: data.query }; state.q = ""; syncControls(); renderHome(); showList(); push(); } }),
       ]));
       data.hits.forEach((h, i) => frag.append(i === 0 && strong ? bestCard(h) : hitRow(h)));
     }
@@ -700,13 +756,17 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   // Every passage with the words, in the order of the books, each chapter or talk with its count:
   // a concordance, for the teacher who wants to see them all rather than the best.
-  async function renderConcordance(data) {
+  async function renderConcordance(data, { restore = null } = {}) {
     const terms = (data.smart?.terms || []).flatMap((t) => t.split(" ")).filter((w) => w.length > 1);
     const phrase = /^".*"$/.test(data.query.trim()) ? data.query.trim().replace(/"/g, "") : null;
     listPane.replaceChildren(el("div", { class: "status", text: "Gathering every match…" }));
     let all;
-    try { all = await api("matches", phrase ? { phrase, scope: state.scope, limit: 600 } : { words: terms.join(" "), mode: "all", scope: state.scope, limit: 600 }); }
-    catch (e) { listPane.replaceChildren(el("div", { class: "status error", text: `Could not gather the matches (${e.message}).` })); return; }
+    try {
+      // the same match and filters the count above the results used, so the two agree
+      all = data.lexical_match
+        ? await api("concordance", { match: data.lexical_match, filters: data.filters || {}, limit: 600 })
+        : await api("matches", phrase ? { phrase, scope: state.scope, limit: 600 } : { words: terms.join(" "), mode: "all", scope: state.scope, limit: 600 });
+    } catch (e) { listPane.replaceChildren(el("div", { class: "status error", text: `Could not gather the matches (${e.message}).` })); return; }
     if (state.view !== "all") return;
     const frag = document.createDocumentFragment();
     const t = listTrail(); if (t) frag.append(t);
@@ -720,7 +780,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     for (const p of all.passages) {
       if (p.doc_id !== lastDoc) {
         lastDoc = p.doc_id;
-        const n = (all.by_document || []).find((d) => d.title === p.title && d.book_title === p.book_title)?.n;
+        const n = (all.by_document || []).find((d) => d.doc_id === p.doc_id || (d.title === p.title && d.book_title === p.book_title))?.n;
         frag.append(el("button", { type: "button", class: "conc-doc", "data-doc": p.doc_id, onclick: () => openDoc(p.doc_id, null) }, [
           el("span", { class: "t", text: p.collection === "scriptures" ? chapterOf(p.citation) : p.title }),
           el("span", { class: "m", text: [p.collection !== "scriptures" ? whereOf(p) : p.label, n ? `${n} ${n === 1 ? "match" : "matches"}` : null].filter(Boolean).join(" · ") }),
@@ -734,7 +794,8 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     }
     if (!all.passages.length) frag.append(el("div", { class: "empty", text: "No passage has these words." }));
     listPane.replaceChildren(frag);
-    listPane.scrollTop = 0;
+    listPane.scrollTop = restore ? restore.list || 0 : 0;
+    if (restore) window.scrollTo(0, restore.win || 0);
     markActive();
     updateThinkFab();
   }
@@ -831,6 +892,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   function setOverview(on) { document.body.classList.toggle("overview", !!on); }
   function openShelf(key) {
+    rememberScroll();
     leaveSearch();
     state.q = ""; syncControls();
     state.browse = { tab: key };
@@ -884,7 +946,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     } catch (_) { /* no conference yet */ }
     if (window.Ask) {
       const q = el("input", { type: "text", class: "ask-teaser-q", placeholder: "What have the prophets taught about covenants and identity?", "aria-label": "A question for the library" });
-      const go = () => { state.browse = { tab: "ask", question: q.value.trim() }; state.q = ""; syncControls(); renderHome(); showList(); push(); };
+      const go = () => { rememberScroll(); state.browse = { tab: "ask", question: q.value.trim() }; state.q = ""; syncControls(); renderHome(); showList(); push(); };
       q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
       body.append(el("section", { class: "home-sec sec-ask ask-teaser" }, [
         el("div", { class: "hc-t", text: "Ask the library" }),
@@ -1144,14 +1206,19 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     const units = selectedUnits();
     if (!units.length) return;
     const body = $(".doc", readerPane);
+    const page = currentDoc; // the page as it is now: a move while the marks save must not send them to another page
     const allSame = units.every((u) => docMarks.get(u.pid)?.color === color);
     for (const u of units) {
       try {
-        const rec = await window.Marks.set({ uri: currentDoc.uri, doc_id: currentDoc.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: u.text, citation: citeUnit(u), title: currentDoc.title });
+        const rec = await window.Marks.set({ uri: page.uri, doc_id: page.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: u.text, citation: citeUnit(u), title: page.title });
+        if (currentDoc !== page) return;
         if (rec) { docMarks.set(u.pid, rec); drawMark(body, rec); } else { docMarks.delete(u.pid); undrawMark(body, u.pid); }
       } catch (_) { toast("Could not save that mark."); return; }
     }
     clearSelection();
+    // focus stays on the page: the first verse marked, not the body
+    const first = body.querySelector(`#${CSS.escape(units[0].pid)}`);
+    if (first) { try { first.focus({ preventScroll: true }); } catch (_) {} }
     toast(allSame ? "Highlight removed." : units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
   }
   // A note on a paragraph, written in the sheet
@@ -1166,7 +1233,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         const rec = await window.Marks.set({ uri: currentDoc.uri, doc_id: currentDoc.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, note: ta.value, text: unit.text, citation: citeUnit(unit), title: currentDoc.title });
         const body = $(".doc", readerPane);
         if (rec) { docMarks.set(unit.pid, rec); if (body) drawMark(body, rec); } else { docMarks.delete(unit.pid); if (body) undrawMark(body, unit.pid); }
-        hideNote(); clearSelection();
+        closeSheet(); clearSelection();
         toast(ta.value.trim() ? "Note saved." : "Note removed.");
       } catch (_) { toast("Could not save the note."); }
     };
@@ -1177,7 +1244,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       el("div", { class: "peek-row" }, [
         el("button", { type: "button", class: "primary", text: "Save", onclick: save }),
         existing ? el("button", { type: "button", class: "text-btn danger", text: "Delete", onclick: () => { ta.value = ""; save(); } }) : null,
-        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: hideNote }),
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: closeSheet }),
       ].filter(Boolean)),
     );
     openSheet("Note");
@@ -1267,8 +1334,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       : "Pages of your own, kept on this device: a study you built, a lesson, notes. Add an HTML, Markdown or text file from Files; it opens here, offline, and its links to the scriptures and to talks open the library's copy." });
     body.append(intro);
     body.append(el("div", { class: "studies-add" }, [el("button", { type: "button", class: "primary", text: list.length ? "Add a page" : "Add a page from Files", onclick: () => pick.click() })]));
-    await renderMarks(body);
-    if (!list.length) return;
+    if (!list.length) { await renderMarks(body); return; }
     const rows = el("div", { class: "study-list" });
     for (const rec of list) {
       rows.append(el("div", { class: "study-row" + (state.studyId === rec.id ? " on" : "") }, [
@@ -1286,28 +1352,32 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       ]));
     }
     body.append(rows);
+    await renderMarks(body);
   }
 
-  // Highlights and notes across the library, newest first, with a way to keep them safe
+  // Highlights and notes across the library, newest first (the latest few, or all of them on request),
+  // with a way to keep them safe
+  let allMarksShown = false;
   async function renderMarks(body) {
     if (!window.Marks) return;
     let marks = [];
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
-    const head = el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" })]);
+    const head = el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" }),
+      marks.length > 10 ? el("button", { type: "button", class: "text-btn small", text: allMarksShown ? "Latest only" : `All ${marks.length}`, onclick: () => { allMarksShown = !allMarksShown; sec.replaceWith(el("div")); renderMarks(body); } }) : null].filter(Boolean));
     sec.append(head);
     if (!marks.length) {
       sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note: your marks come back whenever the page opens, and are listed here." }));
     } else {
       const list = el("div", { class: "mark-list" });
-      for (const m of marks.slice(0, 200)) {
+      for (const m of marks.slice(0, allMarksShown ? 1000 : 10)) {
         list.append(el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
           let id = m.doc_id;
           try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
           if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
         } }, [
           el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
-          el("span", { class: "mk-text", text: m.text.length > 140 ? m.text.slice(0, 138) + "…" : m.text }),
+          el("span", { class: "mk-text", text: (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "") }),
           m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
         ].filter(Boolean)));
       }
@@ -1355,6 +1425,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   function thinkHere() {
     if (!window.Ask) return;
+    rememberScroll();
     const page = state.docId && currentDoc && currentDoc.id === state.docId;
     const study = !page && state.studyId && currentStudy && currentStudy.id === state.studyId;
     const subject = page
@@ -1508,6 +1579,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   const TAB_OF = { "general-conference": "conference", scriptures: "scriptures", "preach-my-gospel": "preach-my-gospel", "missionary-standards": "missionary-standards", handbook: "handbook", "come-follow-me": "come-follow-me", manuals: "manuals", "study-helps": "study-helps" };
   function openBook(res) {
     hideNote();
+    rememberScroll();
     const tab = TAB_OF[res.collection] || (res.collection.startsWith("jsp-") ? "jsp" : "manuals");
     const browse = res.book_slug ? { tab, book: res.book_slug } : { tab, bookUri: res.book_uri };
     if (tab === "jsp") browse.series = res.collection.replace(/^jsp-/, "");
@@ -1545,6 +1617,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   // A page the library does not hold: on the web, if there is a web
   function openOutside(url) {
+    if (!/^https?:\/\//i.test(String(url || ""))) return; // only a web address leaves the app (a study page could hand over anything)
     if (!navigator.onLine) { toast("That page is not in the library, and you are offline."); return; }
     window.open(url, "_blank", "noopener");
   }
@@ -1669,8 +1742,14 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     clearTimeout(controlsTimer);
     controlsTimer = setTimeout(() => stage.classList.remove("show-controls"), 2500);
   }
-  stage.addEventListener("pointerdown", wakeControls, { passive: true });
-  stage.addEventListener("pointermove", wakeControls, { passive: true });
+  // A mouse moving wakes the controls; a touch wakes them only in the top-right corner, where
+  // they live, so taps that turn the page leave the room looking at the words alone.
+  stage.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse") wakeControls(); }, { passive: true });
+  stage.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse") { wakeControls(); return; }
+    const r = stage.getBoundingClientRect();
+    if (e.clientY - r.top < 120 && r.right - e.clientX < 220) wakeControls();
+  }, { passive: true });
   // The elapsed time since Present began, for the speaker only: it sits in the controls and
   // keeps counting while the screen is blanked. Tapping it starts it again from 0:00.
   let stageClock = null, stageT0 = 0;
@@ -1697,6 +1776,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   let stageOpener = null;
   function openStage(next) {
     show = { ...next, scale: store.get("stageScale", 1) };
+    openOverlay("stage");
     resetStageClock();
     stageOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     document.body.classList.add("presenting");
@@ -1730,6 +1810,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     const restore = () => { if (back && back.isConnected) { try { back.focus({ preventScroll: true }); } catch (_) {} } };
     if (document.fullscreenElement) { const p = document.exitFullscreen?.(); if (p && p.then) p.then(restore, restore); else restore(); }
     else restore();
+    dropOverlay("stage"); // closed by hand: its marker goes too (Back closing it has already cleared overlay)
   }
 
   function renderStage() {
@@ -1801,15 +1882,25 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   // Tap the right half to advance, the left half to go back; swipe works too.
   let touchX = null;
   $(".stage-body", stage).addEventListener("click", (e) => {
-    if (e.target.closest("button")) return;
+    if (e.target.closest("button") || pressed) return;
     const r = stage.getBoundingClientRect();
     stageStep(e.clientX - r.left > r.width / 2 ? 1 : -1);
   });
-  stage.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+  let pressTimer = null, pressed = false;
+  stage.addEventListener("touchstart", (e) => {
+    touchX = e.touches[0].clientX;
+    // a long press on the words blanks the screen (and brings it back), the way B does from a keyboard
+    pressed = false;
+    clearTimeout(pressTimer);
+    if (!e.target.closest("button")) pressTimer = setTimeout(() => { pressed = true; stage.classList.toggle("blank"); }, 600);
+  }, { passive: true });
+  stage.addEventListener("touchmove", () => { clearTimeout(pressTimer); }, { passive: true });
   stage.addEventListener("touchend", (e) => {
+    clearTimeout(pressTimer);
     if (touchX === null) return;
     const dx = e.changedTouches[0].clientX - touchX;
     touchX = null;
+    if (pressed) { pressed = false; return; }
     if (Math.abs(dx) > 60) stageStep(dx < 0 ? 1 : -1);
   }, { passive: true });
   document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && show) stopPresenting(); });
@@ -1835,23 +1926,26 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     sheet.setAttribute("aria-label", label);
     const wasHidden = sheet.hidden;
     sheet.hidden = false;
-    if (wasHidden) { sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); }
-    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: hideNote }); scrim.id = "scrim"; document.body.append(scrim); }
+    if (wasHidden) { sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); openOverlay("sheet"); }
+    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: closeSheet }); scrim.id = "scrim"; document.body.append(scrim); }
     $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;
       e.preventDefault();
       const href = a.getAttribute("href") || "";
-      if (href.startsWith("#")) { hideNote(); focusParagraph(href.slice(1)); return; }
+      if (href.startsWith("#")) { closeSheet(); focusParagraph(href.slice(1)); return; }
       followLink(href);
     };
   }
+  // hideNote takes the sheet down and leaves history alone: for the moment before a move, whose
+  // push() takes over the marker. closeSheet is the user closing it: the marker is popped as well.
   function hideNote() {
     const wasOpen = !sheet.hidden;
     sheet.hidden = true; $("#scrim")?.remove();
     if (wasOpen && sheetOpener && sheetOpener.isConnected) { try { sheetOpener.focus({ preventScroll: true }); } catch (_) {} }
     sheetOpener = null;
   }
+  function closeSheet() { const had = overlay === "sheet"; hideNote(); if (had) dropOverlay("sheet"); }
   sheet.tabIndex = -1;
   sheet.addEventListener("keydown", (e) => { // Tab stays within the sheet while it is open
     if (e.key !== "Tab") return;
@@ -1861,7 +1955,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (e.shiftKey && (document.activeElement === first || document.activeElement === sheet)) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
-  $(".close", sheet).addEventListener("click", hideNote);
+  $(".close", sheet).addEventListener("click", closeSheet);
 
   // ----------------------------------------------------------- controls ----
   input.addEventListener("input", () => {
@@ -1890,6 +1984,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
   function openTab(tab) {
     if (!state.ready) return;
+    rememberScroll();
     leaveSearch();
     state.q = "";
     if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
@@ -1909,6 +2004,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   window.addEventListener("resize", () => { if (!state.ready) return; if (state.docId) showReader(); else showList(); });
   document.addEventListener("keydown", (e) => {
     if (show) {
+      if ((e.key === " " || e.key === "Enter") && e.target && e.target.closest && e.target.closest(".stage-controls button")) return; // the button takes it
       if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown" || e.key === "ArrowDown") { e.preventDefault(); stageStep(1); }
       else if (e.key === "ArrowLeft" || e.key === "PageUp" || e.key === "ArrowUp" || e.key === "Backspace") { e.preventDefault(); stageStep(-1); }
       else if (e.key === "Escape") stopPresenting();
@@ -1920,7 +2016,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     // Single-key shortcuts never fire while typing in any field (the Ask box, a deck title, a label).
     const a = document.activeElement;
     const typing = !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable);
-    if (e.key === "Escape") { if (!sheet.hidden) hideNote(); else if (typing) a.blur(); return; }
+    if (e.key === "Escape") { if (!sheet.hidden) closeSheet(); else if (typing) a.blur(); return; }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === "/" && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
@@ -2019,6 +2115,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   function refreshSwitches() {
     const on = wide() && !!panel.lastEl && pageOpen();
     const boardUp = !panelPane.hidden;
+    const hadFocus = document.activeElement && document.activeElement.closest(".pane-switch") ? document.activeElement.textContent : null;
     for (const slot of document.querySelectorAll(".pane-switch-slot")) {
       if (!on) { slot.replaceChildren(); continue; }
       const seg = (label, active, go) => el("button", { type: "button", class: active ? "on" : "", "aria-pressed": String(active), text: label, onclick: () => { if (!active) go(); } });
@@ -2027,15 +2124,18 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         seg("Deck", boardUp, () => panel.restore()),
       ]));
     }
+    // a switch that had focus keeps it on the pane now showing
+    if (hadFocus) { const visible = [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.classList.contains("on")); if (visible) { try { visible.focus({ preventScroll: true }); } catch (_) {} } }
   }
 
   function searchFor(q) {
+    rememberScroll();
     state.q = q; state.offset = 0;
     if (!wide()) { state.docId = null; state.pid = null; }
     syncControls(); showList(); runSearch({ typeahead: false });
   }
   window.GL = {
-    api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor,
+    api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet,
     get ready() { return state.ready; },
     get skills() { return store.get("skills")?.data || null; },
     get wide() { return wide(); },

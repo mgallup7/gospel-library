@@ -124,6 +124,8 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
 
   /** Add passages from a document. units: [{pid, kind, verse, text}] in reading order. */
   function addFromDoc(doc, units) {
+    // what is already on the deck stays as it is; the rest goes on, in runs of consecutive verses
+    units = units.filter((u) => !has(doc.id, u.pid));
     const runs = [];
     let run = null;
     for (const u of units) {
