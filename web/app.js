@@ -1772,7 +1772,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
 
   function resize(delta) {
-    const sizes = [15, 16, 17, 18, 19, 21, 23, 26];
+    const sizes = [15, 16, 17, 18, 19, 21, 23, 26, 30, 34];
     const cur = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17;
     let i = Math.max(0, Math.min(sizes.length - 1, sizes.indexOf(cur) + delta));
     if (sizes.indexOf(cur) === -1) i = delta > 0 ? 3 : 1;
@@ -1780,8 +1780,15 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     store.set("readingSize", sizes[i]);
   }
   // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
-  { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(26, Math.round(sys))) + "px"); } }
+  // The system size is read again whenever the app comes back to the front, since Larger Text may
+  // have changed in Settings meanwhile; the accessibility sizes reach 34px.
+  function applyReadingSize() { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(34, Math.round(sys))) + "px"); } }
+  applyReadingSize();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") applyReadingSize(); });
+  window.addEventListener("pageshow", (e) => { if (e.persisted) applyReadingSize(); });
   function systemTextSize() {
+    // only on a touch screen: a Mac answers with its 13px body size, which is not a reading preference
+    if (!(navigator.maxTouchPoints > 0)) return null;
     try {
       const wrap = el("div", { style: "position:absolute;visibility:hidden;font-size:11px" }, [el("span", { style: "font: -apple-system-body" })]);
       document.body.append(wrap);
