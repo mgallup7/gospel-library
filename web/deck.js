@@ -1753,6 +1753,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
+    // a note card with its words already written (a Hebrew or Greek word from its sheet); Undo takes it off by its id
+    addNote: (text, notes = "") => { const it = addCard("note"); it.text = String(text || ""); it.notes = String(notes || ""); lastAddedIds = [it.id]; save(); return it; },
   };
   updateBadge();
 })();

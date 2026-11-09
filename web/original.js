@@ -2,6 +2,8 @@
    verses, each with its transliteration, meaning, grammar and Strong's number,
    and the lexicon behind the numbers. Data: STEP Bible, Tyndale House,
    Cambridge (CC BY 4.0), www.STEPBible.org. */
+import { foldGlosses } from "./lib/step.js";
+
 (() => {
   "use strict";
 
@@ -88,8 +90,14 @@
         ? "Each tile is one Hebrew word in the order of the Hebrew (right to left): the word with its vowel points and accents, how it sounds, and what it means here. Tap a tile for its dictionary entry, its grammar in plain words, and every verse that uses it."
         : "Each tile is one Greek word in the order of the Greek: the word with its accents, how it sounds, and what it means here. Tap a tile for its dictionary entry, its grammar in plain words, and every verse that uses it." }),
       el("ul", { class: "legend" }, [
-        he ? item("CAPITAL letter", "in the sound marks the stressed syllable (be.re.SHIT is stressed on its last syllable); dots divide syllables.") : item("(Sound)", "is a plain transliteration; stress follows the Greek accent on the word itself."),
-        item("[brackets]", "around an English word mean the translators supplied it; the original has no separate word for it."),
+        he ? item("Capital letter", "in the sound marks the stressed syllable: be.re.Shit is stressed on its last syllable, ba.Ra' on its second; dots divide the syllables.") : item("(Sound)", "is a plain transliteration; stress follows the Greek accent on the word itself."),
+        he ? item("' and ch", "in the sound: an apostrophe stands for aleph or ayin, letters English has no sound for (a catch in the throat): 'E.lo.Him, God; 'al, at. “ch” (and “kh”) is the rough sound in Scottish “loch”: che.sed, me.nu.Chot.") : null,
+        he ? item("Word order", "the meaning follows the Hebrew piece by piece, and a Hebrew word carries its little words with it: “and”, “the” or “in” at the front, “my”, “your” or “his” at the end. So “[is] shepherd my” (Psalm 23:1) is “is my shepherd”, and “he leads me” is one word.")
+          : item("Word order", "each tile is one Greek word with its own meaning, in the Greek order; read across a verse, the English comes out in the Greek's order, not the KJV's."),
+        item("[brackets]", `around an English word mean the glossers (STEP's editors, who wrote these meanings) supplied it: the ${he ? "Hebrew" : "Greek"} has no separate word for it, as with ${he ? "“[is]” in Psalm 23:1" : "“[the]” in John 1:1, “In [the] beginning”"}. They are not the KJV's italics.`),
+        item("<angle brackets>", he
+          ? "mark something the Hebrew has that English does not say. <obj.> (Genesis 1:1) is 'et, a small word that points to the object of the verb and has no English equal; a letter in them, as in rest<s> (Psalm 23:2, “waters of rests”), is the Hebrew's own form, here a plural, that the English reading leaves out."
+          : "mark something the Greek has that English does not say: <the> (John 1:1, “with <the> God”) is an article the Greek puts before a word where English has none."),
         he ? item("Dotted underline", "under the Hebrew word: either qere (the scribes' marginal reading, which the translators follow, where the written text differs) or a word restored from a parallel passage or the Septuagint; the word's sheet says which.") : item("Dashed edge", "a word in the Greek the KJV translators used (the Textus Receptus) that the critical text (NA28) behind modern translations does not have."),
         he ? null : item("Faded word", "a word in the critical text (NA28) that the KJV translators' Greek did not have, so the KJV has no word for it."),
         he ? item("Aramaic", "marks a verse written in Aramaic rather than Hebrew (parts of Daniel and Ezra).") : item("Editions", "in a word's sheet lists the Greek editions that have the word: NA28, SBL, Textus Receptus (TR), Byzantine (Byz) and others."),
@@ -210,11 +218,22 @@
         sec.append(el("p", { class: "ow-fine" }, [el("span", { text: "Senses told apart in the data: " }), ...lex.senses.map((s, i) => el("span", { text: `${i ? "; " : ""}${s.strongs} ${s.gloss || ""}` }))]));
       }
       if (lex.count) {
-        const top = (lex.glosses || []).slice(0, 6).map((g) => `${g.gloss} (${g.n})`).join(", ");
-        sec.append(el("p", { class: "ow-fine", text: `${lex.count.toLocaleString()} ${lex.count === 1 ? "occurrence" : "occurrences"} in ${lex.verses_total.toLocaleString()} ${lex.verses_total === 1 ? "verse" : "verses"}${lex.books && lex.books.length ? `, in ${lex.books.length === 1 ? lex.books[0].name : `${lex.books.length} books`}` : ""}.${top ? ` Rendered: ${top}.` : ""}` }));
+        // each number named for what it counts: the times the word occurs and the verses that hold
+        // it; for one sense of a word that has several, the whole word's too, which is what the
+        // "In the Hebrew" line over the results and a search for the bare number count
+        const base = lex.senses && lex.senses.length > 1 && /[A-Z]$/.test(lex.strongs) ? lex.strongs.slice(0, 5) : null;
+        const whole = base ? await GL().api("lexicon", { strongs: base, limit: 0 }).catch(() => null) : null;
+        if (!sheet.contains(details)) return;
+        const n = (x, one, many) => `${(x || 0).toLocaleString()} ${x === 1 ? one : many}`;
+        const where = lex.books && lex.books.length ? `, in ${lex.books.length === 1 ? lex.books[0].name : `${lex.books.length} books`}` : "";
+        const top = (lang === "he" ? foldGlosses(lex.glosses) : lex.glosses || []).slice(0, 6).map((g) => `${g.gloss} (${g.n})`).join(", ");
+        const counts = whole && whole.count
+          ? `${n(lex.count, "occurrence", "occurrences")} of this sense (${lex.strongs}) in ${n(lex.verses_total, "verse", "verses")}; ${n(whole.count, "occurrence", "occurrences")} of ${base} in all its senses, in ${n(whole.verses_total, "verse", "verses")}${where}.`
+          : `${n(lex.count, "occurrence", "occurrences")} in ${n(lex.verses_total, "verse", "verses")}${where}.`;
+        sec.append(el("p", { class: "ow-fine ow-counts", text: `${counts}${top ? ` Rendered: ${top}.` : ""}` }));
         sec.append(el("div", { class: "deck-actions" }, [
-          el("button", { type: "button", class: "primary", text: `All ${lex.verses_total.toLocaleString()} verses with this word`, onclick: () => { hideSheet(); GL().search(lex.strongs); } }),
-          lex.senses && lex.senses.length > 1 && lex.strongs.length > 5 ? el("button", { type: "button", class: "text-btn", text: `Every sense of ${lex.strongs.slice(0, 5)}`, onclick: () => { hideSheet(); GL().search(lex.strongs.slice(0, 5)); } }) : null,
+          el("button", { type: "button", class: "primary", text: `All ${n(lex.verses_total, "verse", "verses")} with ${whole ? "this sense" : "this word"}`, onclick: () => { hideSheet(); GL().search(lex.strongs); } }),
+          base ? el("button", { type: "button", class: "text-btn", text: `Every sense of ${base}${whole ? ` (${n(whole.verses_total, "verse", "verses")})` : ""}`, onclick: () => { hideSheet(); GL().search(base); } }) : null,
         ]));
       }
       details.append(sec);
@@ -222,6 +241,9 @@
       details.append(el("p", { class: "ow-fine", text: `Strong's ${w.strongs}` }));
     }
     if (w.tags && lang === "gr" && w.tags !== "") details.append(el("p", { class: "ow-fine", text: `Editions with this word: ${w.tags.replace(/\+/g, ", ")}` }));
+    if (window.Deck?.addNote) details.append(el("div", { class: "deck-actions ow-to-deck" }, [
+      el("button", { type: "button", class: "text-btn", text: "Add to deck as a note", title: "The word, its sound, its meaning here and its Strong's number, as a slide of its own", onclick: () => addWordNote(w, lex, cite) }),
+    ]));
     // the Topical Guide, Bible Dictionary and Guide to the Scriptures on the English word
     const helps = await studyHelpsFor(w, lex);
     if (helps.length && sheet.contains(details)) {
@@ -231,6 +253,19 @@
       ]));
     }
     details.append(el("p", { class: "ow-credit", text: CREDIT }));
+  }
+  // A word as a slide: what the teacher would write on the board about it.
+  function addWordNote(w, lex, cite) {
+    const gloss = cleanGloss(w.gloss);
+    const e = lex && lex.entry;
+    const text = [
+      `${w.word} ${w.translit || ""}`.trim(),
+      gloss ? `“${gloss}” in ${cite}` : cite,
+      [w.strongs ? `Strong's ${w.strongs}` : "", e && e.gloss ? `the dictionary word: ${e.lemma || ""} ${e.translit || ""}, ${e.gloss}`.replace(/\s+,/, ",") : ""].filter(Boolean).join("; "),
+    ].filter(Boolean).join("\n");
+    const it = window.Deck.addNote(text);
+    if (!it) { GL().toast("Could not add it to the deck."); return; }
+    GL().toast("On the deck as a note.", { action: "Undo", onAction: () => { window.Deck.removeIds([it.id]); GL().toast("Taken off the deck."); } });
   }
   const STOP = new Set(["the", "and", "that", "with", "for", "from", "unto", "into", "they", "them", "their", "his", "her", "him", "she", "you", "your", "who", "which", "what", "this", "these", "those", "there", "then", "than", "but", "not", "all", "any", "one", "two", "are", "was", "were", "been", "have", "has", "had", "will", "shall", "upon", "when", "also", "out", "over", "under", "before", "after", "because", "about", "through"]);
   async function studyHelpsFor(w, lex) {
