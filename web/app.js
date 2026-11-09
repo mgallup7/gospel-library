@@ -274,10 +274,12 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     for (const b of document.querySelectorAll(".trail-back")) if (!b.closest(".head-back")) b.replaceWith(trailButton());
     for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
   }
-  // A shelf's own heading: Back, except beside an open page on a wide screen, where the reader bar
-  // has Back and the heading would name the shelf twice ("‹ My studies  My studies"); there it goes home.
+  // A shelf's own heading: Back, except beside an open page or the board on a wide screen, where that
+  // pane's bar has Back and the heading would say it twice ("‹ My studies  My studies"); there the
+  // heading is the shelf's name alone (the header's home button is still there).
   function headBack() {
-    return backLabel() && !(wide() && (state.docId || state.studyId)) ? trailButton() : el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => goHome() });
+    if (wide() && (state.docId || state.studyId || !panelPane.hidden)) return "";
+    return backLabel() ? trailButton() : el("button", { type: "button", class: "text-btn home-back", text: "Library", onclick: () => goHome() });
   }
   // On a phone every list view carries Back at the top; on a wide screen the reader bar has it
   function listTrail() { return backLabel() ? el("div", { class: "list-trail" }, [trailButton()]) : null; }
@@ -617,6 +619,8 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       state.lastSearch = data;
       state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
       if (state.view === "all" && !typeahead) await renderConcordance(data, { restore }); else renderResults(data);
+      // an empty board has nothing to offer fresh results: the right pane goes back to the page (or rests empty)
+      if (wide() && paneView === "board" && !window.Deck?.count?.()) panel.page();
       if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow() }); } // a new search from elsewhere is a move; refining one is not
       if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
@@ -2235,6 +2239,9 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     const board = paneView === "board" && !!panel.lastEl;
     panelPane.hidden = !(board && panelPane.contains(panel.lastEl));
     readerPane.hidden = board || !(state.docId || state.studyId);
+    // one Back on the screen: with a pane up on the right its bar has it, so the list's own goes
+    document.body.classList.toggle("pane-up", !readerPane.hidden || !panelPane.hidden);
+    for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
     refreshSwitches();
     updateThinkFab();
   }

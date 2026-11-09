@@ -322,6 +322,7 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
 .reader-bar.measuring .spacer { flex: 0 0 0; }
 /* Back, saying where it leads: "‹ Alma 32", "‹ Results", "‹ Library" */
 .list-trail { display: flex; padding: 6px 8px 0; }
+@media (min-width: 760px) { body.pane-up .list-trail { display: none; } } /* the right pane's bar carries Back then */
 .trail-back { display: inline-flex; align-items: center; gap: 1px; flex: none; height: 36px; max-width: 42%; padding: 0 8px 0 2px; border-radius: 8px; color: var(--accent); font-size: 15px; font-weight: 500; }
 .trail-back .chev { font-size: 26px; line-height: 1; margin-top: -3px; }
 .trail-back .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
