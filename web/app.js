@@ -506,10 +506,16 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       }
       store.set("active", { slot: result.slot, version: result.version, builtAt: result.builtAt, mode: result.mode });
       banner.remove();
+      // the page redraws from the new library where it was: the same scroll, and the verses that
+      // were selected still selected if the page still has them
+      const keep = { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY, study: studyScroll };
+      const selected = [...readerPane.querySelectorAll(".doc .sel")].map((n) => n.id).filter(Boolean);
       currentDoc = null;
       statsCache = null;
       try { window.dispatchEvent(new CustomEvent("library:change")); } catch (_) {}
-      render();
+      await render({ restore: keep }).catch(() => {}); // the library is updated either way
+      const body = $(".doc", readerPane);
+      if (body && selected.length) { for (const pid of selected) body.querySelector(`#${CSS.escape(pid)}`)?.classList.add("sel"); updateSelectBar(); }
       setTimeout(loadSemantic, 1500);
       if (result.applied) toast(`Library updated: ${result.applied.changed} ${result.applied.changed === 1 ? "page" : "pages"} changed.`);
     } catch (err) {
