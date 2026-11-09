@@ -263,8 +263,21 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href); // a marker reached from elsewhere is its place
     overlay = null;
     hideNote(); if (!stage.hidden) stopPresenting();
-    readUrl(); syncControls(); render({ restore: history.state?.scroll || null });
+    const left = { doc: state.docId, pid: state.pid };
+    readUrl(); syncControls(); render({ restore: history.state?.scroll || null }).then(() => focusAfterBack(left), () => {});
   });
+  // On a phone Back swaps the whole screen and the focus went with it: it lands on the row of the
+  // page just left when the list has one, else on the list's own Back.
+  function focusAfterBack(left) {
+    if (wide() || !left.doc || state.docId === left.doc) return;
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && ae.isConnected && ae.offsetParent !== null) return; // something already has it
+    let target = null;
+    if (!state.docId && !listPane.hidden) {
+      target = (left.pid && listPane.querySelector(`[data-doc="${left.doc}"][data-pid="${CSS.escape(left.pid)}"]`)) || listPane.querySelector(`[data-doc="${left.doc}"]`) || listPane.querySelector(".trail-back");
+    } else if (!readerPane.hidden) target = readerPane.querySelector(".trail-back");
+    if (target) { try { target.focus({ preventScroll: true }); } catch (_) {} }
+  }
 
   // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
   const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", jsp: "jsp" };
@@ -1118,8 +1131,10 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       footBtn("Add to deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
         const units = selectedUnits();
         if (!units.length) { toast("Tap a verse or paragraph to select it first."); return; }
+        const first = $(".doc .sel", readerPane);
         const added = window.Deck?.addFromDoc(currentDoc, units);
         clearSelection();
+        focusUnit(first);
         deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
       }),
       el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
@@ -1132,11 +1147,22 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     refreshSwitches();
     body.addEventListener("click", onBodyClick);
     body.addEventListener("click", onSelectClick);
-    for (const unit of body.querySelectorAll("p.verse, .body-block p[id], .body-block li[id]")) unit.tabIndex = 0;
+    // The verses are one Tab stop (the one last visited): ArrowUp and ArrowDown move between them,
+    // Enter or Space selects, instead of a Tab for every verse before the selection bar.
+    const units = [...body.querySelectorAll(UNIT_SEL)];
+    units.forEach((u, i) => { u.tabIndex = i === 0 ? 0 : -1; });
+    body.addEventListener("focusin", (e) => { if (e.target.matches?.(UNIT_SEL)) rove(e.target); });
     body.addEventListener("keydown", (e) => {
+      const unit = e.target.closest(UNIT_SEL);
+      if (!unit || e.target !== unit || e.altKey || e.metaKey || e.ctrlKey) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        const all = [...body.querySelectorAll(UNIT_SEL)];
+        const next = all[all.indexOf(unit) + (e.key === "ArrowDown" ? 1 : -1)];
+        e.preventDefault();
+        if (next) { focusUnit(next); next.scrollIntoView({ block: "nearest" }); }
+        return;
+      }
       if (e.key !== "Enter" && e.key !== " ") return;
-      const unit = e.target.closest("p.verse, .body-block p[id], .body-block li[id]");
-      if (!unit || e.target !== unit) return;
       e.preventDefault();
       unit.classList.toggle("sel");
       updateSelectBar();
@@ -1197,6 +1223,19 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   }
   // The passages from one paragraph to another, in reading order (a note's range, a selection's span)
   const UNIT_SEL = "p.verse, .body-block p[id], .body-block li[id]";
+  // The one verse in the page that Tab reaches (a roving tabindex), and focus put back on the page
+  // after a control that held it goes away (the selection bar after Add to deck)
+  function rove(unit) {
+    const body = unit?.closest(".doc");
+    if (!body) return;
+    for (const n of body.querySelectorAll("[tabindex='0']")) if (n !== unit && n.matches(UNIT_SEL)) n.tabIndex = -1;
+    unit.tabIndex = 0;
+  }
+  function focusUnit(unit) {
+    if (!unit || !unit.isConnected) return;
+    rove(unit);
+    try { unit.focus({ preventScroll: true }); } catch (_) {}
+  }
   function unitsBetween(body, fromPid, toPid) {
     const all = [...body.querySelectorAll(UNIT_SEL)];
     const a = all.findIndex((n) => n.id === fromPid), b = all.findIndex((n) => n.id === toPid);
@@ -1522,8 +1561,10 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
         window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the selected passages, first to last", onclick: () => { const u = selectedUnits(); if (u.length) editNote(u[0], u.length > 1 ? u[u.length - 1] : null); } }) : null,
         el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
+          const first = $(".doc .sel", readerPane);
           const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
-          clearSelection();
+          clearSelection(); // the bar goes, and focus with it: back to the first verse that was selected
+          focusUnit(first);
           deckToast(added, added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
         el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); } }),
@@ -1532,10 +1573,11 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
           const text = selectedUnits().map((x) => `${x.text} (${cite(x)})`).join("\n\n");
           navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
         } }),
-        el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: clearSelection }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),
+        el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: () => { const f = $(".doc .sel", readerPane); clearSelection(); focusUnit(f); } }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),
       ]);
-      const rf = $(".reader-foot", readerPane);
-      if (rf) rf.before(bar); else readerPane.append(bar);
+      // right after the reader bar in the order Tab and VoiceOver follow; app.css draws it at the bottom
+      const rb = $(".reader-bar", readerPane);
+      if (rb) rb.after(bar); else readerPane.prepend(bar);
     }
     $(".n", bar).textContent = `${n} selected`;
     // a dot is pressed when every selected passage carries its color (pressing it again takes it off)
@@ -1679,6 +1721,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     if (!target && /^p\d+$/.test(pid)) target = body.querySelector(`.verse:nth-of-type(${pid.slice(1)})`);
     if (!target) return;
     target.classList.add("is-target");
+    if (target.matches(UNIT_SEL)) rove(target); // Tab into the page lands on the verse you came for
     if (scroll) requestAnimationFrame(() => target.scrollIntoView({ block: "center", behavior: "auto" }));
   }
 

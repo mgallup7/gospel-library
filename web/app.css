@@ -621,6 +621,16 @@ body.presenting { overflow: hidden; }
 .doc .note-range-end::after { bottom: .25em; border-bottom: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-bottom-right-radius: 3px; }
 /* a selection kept after a color shows the color under it */
 .doc .sel.hl-y { background: var(--hl-y); } .doc .sel.hl-g { background: var(--hl-g); } .doc .sel.hl-b { background: var(--hl-b); } .doc .sel.hl-p { background: var(--hl-p); }
+/* The selection bar comes right after the reader bar in the document (Tab reaches it at once) and
+   is drawn at the bottom: while it is up the pane is a column and the bar is ordered after the page. */
+#reader:has(> .select-bar) { display: flex; flex-direction: column; }
+#reader:has(> .select-bar) > * { flex: none; }
+#reader:has(> .select-bar) > .doc, #reader:has(> .select-bar) > .doc-nav, #reader:has(> .select-bar) > .doc-foot { width: 100%; }
+#reader > .select-bar { order: 1; }
+#reader > .size-row, #reader > .reader-foot { order: 2; }
+/* a verse reached by the arrow keys clears the sticky bars above and below it */
+.doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: 64px 0 90px; }
+@media (max-width: 759px) { .doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: calc(var(--bar-real, 66px) + 56px) 0 150px; } }
 .select-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 6px; padding: 10px 14px calc(10px + var(--safe-bottom)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
 @media (max-width: 759px) { #reader .select-bar { bottom: calc(68px + var(--safe-bottom)); } }
 .select-bar .n { flex: 1; font-size: 13px; color: var(--ink-2); }
