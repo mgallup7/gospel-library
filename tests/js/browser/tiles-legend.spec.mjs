@@ -14,7 +14,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
   await page.fill("#q", "Psalm 23"); await page.press("#q", "Enter");
   await page.waitForTimeout(800);
-  const jump = await page.$("#list .jump"); if (jump) await jump.click();
+  const jump = await page.$("#list .jump"); if (jump && await jump.isVisible()) await jump.click(); // Enter opens it on both sizes now
   await page.waitForSelector("#reader .doc", { timeout: 15000 });
   const fb = await page.$("#reader .reader-foot .foot-btn[aria-label='Hebrew']");
   await fb.click();
