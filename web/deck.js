@@ -425,6 +425,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   let editing = null;   // the link whose label editor is open
   let hintShown = false;
   let selectedId = null; // the card last tapped or typed in: where a new question or slide text goes
+  let naming = false;     // "Name this deck" was tapped on an empty deck: its title fields show
 
   // The card tools, drawn as strokes in the app's icon style rather than text arrows,
   // which sit at different heights in different fonts.
@@ -483,7 +484,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
       el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => {
         if (deck.items.length && !confirm("Start a new, empty deck? The current one is kept only if you saved it.")) return;
-        deck = blank(); pending = active = linking = null; save();
+        deck = blank(); pending = active = linking = null; naming = false; save();
       } }),
     ]);
     const banner = el("div", { class: "board-banner", hidden: true });
@@ -530,6 +531,9 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     const empty = !deck.items.length;
     // An empty deck has nothing to theme, download or present: the board shows only how to add a passage.
     ui.themes.hidden = empty; ui.actions.hidden = empty;
+    // nor anything to name: the title and subtitle wait for the first card, or for "Name this deck"
+    const named = !empty || naming || !!(deck.title || deck.subtitle);
+    ui.title.hidden = !named; ui.subtitle.hidden = !named;
     ui.moreRow.hidden = empty || ui.more.getAttribute("aria-expanded") !== "true";
     ui.download.disabled = empty; ui.present.disabled = empty;
     ui.think.disabled = count() < 2;
@@ -632,6 +636,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       const savedAny = savedDecks.length > 0;
       cards.append(el("div", { class: "board-empty" }, [
         el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
+        naming || deck.title || deck.subtitle ? null : el("button", { type: "button", class: "text-btn", text: "Name this deck", onclick: () => { naming = true; draw(); ui.title.focus(); } }),
         savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
       ].filter(Boolean)));
     }
@@ -947,7 +952,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
           const v = name.value.trim();
           if (!deck.title && v) deck.title = v;
           saveNamed(v);
-          deck = blank(); pending = active = linking = null; save();
+          deck = blank(); pending = active = linking = null; naming = false; save();
           GL().toast(`Saved “${v || deck.title}”. The deck is empty.`);
           finish("new");
         } }),
@@ -958,7 +963,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
         el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { store.set("deckKept", deck.id); finish("keep"); } }),
         el("button", { type: "button", class: "text-btn", text: "No, save it as it is, then start a new deck", onclick: (e) => { nameRow.hidden = false; e.currentTarget.hidden = true; name.focus(); name.select(); } }),
         nameRow,
-        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; save(); GL().toast("The deck is empty."); finish("new"); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; naming = false; save(); GL().toast("The deck is empty."); finish("new"); } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => finish("cancel") }),
       );
       scrim.addEventListener("click", () => finish("cancel"));
@@ -1210,7 +1215,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     for (const d of all) {
       const n = (d.deck.items || []).filter((i) => i.type === "passage").length;
       box.append(el("div", { class: "deck-item" }, [
-        el("button", { type: "button", class: "body preview", onclick: () => { deck = migrate(JSON.parse(JSON.stringify(d.deck))) || blank(); pending = active = linking = null; save(); onPick(); } }, [
+        el("button", { type: "button", class: "body preview", onclick: () => { deck = migrate(JSON.parse(JSON.stringify(d.deck))) || blank(); pending = active = linking = null; naming = false; save(); onPick(); } }, [
           el("div", { class: "cite-edit", text: d.title }),
           el("div", { class: "where", text: `${n} ${n === 1 ? "passage" : "passages"}, ${new Date(d.updated).toLocaleDateString()}` }),
         ]),
