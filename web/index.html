@@ -15,6 +15,11 @@
 <meta name="theme-color" content="#f3f2ef" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1d2024" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="./app.css">
+<!-- The interface's module chain, asked for at once rather than one import at a time -->
+<link rel="modulepreload" href="./app.js">
+<link rel="modulepreload" href="./lib/cite.js">
+<link rel="modulepreload" href="./lib/markdown.js">
+<link rel="modulepreload" href="./lib/chunk.js">
 </head>
 <body>
 <header class="bar">

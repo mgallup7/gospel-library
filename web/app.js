@@ -2027,7 +2027,47 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   const ICON_PRESENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
   const ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(new URL("sw.js", BASE)).catch(() => {});
+  // The app's own files come from the service worker's cache, as one set (sw.js). A newer set
+  // installs behind the page; once all of it is in, a quiet notice offers it, and Reload hands
+  // over to it. Left alone it waits, and takes over when the app next starts from cold.
+  // HTTPS only; a test turns it on over http on this machine with gospel.sw in localStorage.
+  function watchShell() {
+    if (!("serviceWorker" in navigator)) return;
+    if (location.protocol !== "https:" && !(window.isSecureContext && store.get("sw") === true)) return;
+    const sw = navigator.serviceWorker;
+    const hadController = !!sw.controller;
+    let reloading = false;
+    sw.addEventListener("controllerchange", () => {
+      if (reloading) { location.reload(); return; }
+      // another tab took the new version: this one is still running the old files
+      if (hadController) shellNotice(null);
+    });
+    sw.register(new URL("sw.js", BASE)).then((reg) => {
+      const offer = (w) => { if (w && sw.controller) shellNotice(w); }; // a first install has nothing to replace
+      if (reg.waiting) offer(reg.waiting);
+      reg.addEventListener("updatefound", () => {
+        const w = reg.installing;
+        if (w) w.addEventListener("statechange", () => { if (w.state === "installed") offer(w); });
+      });
+      // a home-screen app can stay open for days: look for a new version when it comes back
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(() => {});
+    function shellNotice(waiting) {
+      if ($(".banner.shell-update")) return;
+      const banner = el("div", { class: "banner shell-update", role: "status" }, [
+        el("span", { text: "A new version is ready." }),
+        el("button", { class: "text-btn", type: "button", text: "Reload", onclick: () => {
+          if (!waiting || waiting.state !== "installed") { location.reload(); return; }
+          reloading = true;
+          waiting.postMessage({ type: "take-over" });
+          setTimeout(() => location.reload(), 4000); // in case the hand-over is never announced
+        } }),
+        el("button", { class: "icon-btn", type: "button", "aria-label": "Later", text: "×", onclick: () => banner.remove() }),
+      ]);
+      $("header.bar").after(banner);
+    }
+  }
+  watchShell();
 
   // Search by meaning: the model (35 MB, once) and the paragraphs' vectors load
   // quietly after the library is open; until then search goes by words alone.

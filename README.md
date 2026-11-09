@@ -119,6 +119,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   (tap it to reset) and the first words of the next passage.
 - On an iPhone or iPad older than iOS 16.4, setup says so in plain words and
   how to update, instead of an engine error.
+- The app opens from the device at once, on a weak signal or none. A new
+  version downloads behind it, whole, and a line at the top offers it ("A new
+  version is ready. Reload"); until then the version in use carries on.
 - Deck: the passages you pick for a presentation. Tick a card under an Ask
   answer, tap + on a search result, or select verses while reading and choose
   Add to deck. On an iPad in landscape or a Mac the deck is a board on the
