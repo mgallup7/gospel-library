@@ -588,7 +588,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     }
     // a reference half typed ("Alma 32:21-", "Alma 32:21,", "Alma 32:") keeps its card: the separator
     // waiting for its second half is left off until it has one
-    if (/\d\s*[-–—,:;]\s*$/.test(q)) q = q.replace(/\s*[-–—,:;]\s*$/, "");
+    if (/\d\s*[-\u2013\u2014,:;]\s*$/.test(q)) q = q.replace(/\s*[-\u2013\u2014,:;]\s*$/, "");
     if (typeahead) {
       if (!worthTyping(q)) return;
       if (typeBusy) { typeAgain = true; return; }
