@@ -48,6 +48,19 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.keyboard.press("Enter");
     await page.waitForTimeout(400);
     check((await active()) === moved, `focus returns to the verse after Add to deck (${await active()})`);
+    // Esc with words typed in a note keeps them; Cancel lets them go
+    await page.click(`#reader .doc #${moved}`);
+    await page.click("#reader .select-bar button:has-text('Note')");
+    await page.waitForSelector("#sheet:not([hidden]) .note-text");
+    await page.fill("#sheet .note-text", "Half a thought");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    check(await page.evaluate(() => !document.querySelector("#sheet").hidden && document.querySelector("#sheet .note-text").value === "Half a thought"), "Esc keeps a note with words in it");
+    check((await page.evaluate(() => getComputedStyle(document.querySelector("#sheet .note-text")).fontSize)) === "16px", "the note field is 16px, so Safari does not zoom");
+    await page.click("#sheet .peek-row button:has-text('Cancel')");
+    await page.waitForTimeout(300);
+    check(await page.evaluate(() => document.querySelector("#sheet").hidden), "Cancel closes it");
+    await page.click("#reader .select-bar .clear-sel");
     // Back on the phone lands on the row of the page just left
     if (viewport.width < 760) {
       await page.click("#reader .reader-bar .trail-back");

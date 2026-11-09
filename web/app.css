@@ -127,7 +127,7 @@ body.tab-open .scopes { display: none; }
 }
 .filters label { display: grid; gap: 4px; font-size: 12px; color: var(--ink-2); }
 .filters input, .filters select {
-  height: 36px; padding: 0 10px; font: 15px var(--sans); color: var(--ink);
+  height: 36px; padding: 0 10px; font: 16px var(--sans); color: var(--ink);
   background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; -webkit-appearance: none; appearance: none;
 }
 .filters .row { display: flex; gap: 6px; }
@@ -244,7 +244,7 @@ main {
 .ask-teaser { padding: 14px; border-radius: 12px; background: var(--chrome); }
 .ask-teaser .hc-s { line-height: 1.4; }
 .ask-teaser-row { display: flex; gap: 8px; margin-top: 4px; }
-.ask-teaser-q { flex: 1; height: 40px; min-width: 0; padding: 0 12px; font: 15px var(--sans); color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; -webkit-appearance: none; appearance: none; }
+.ask-teaser-q { flex: 1; height: 40px; min-width: 0; padding: 0 12px; font: 16px var(--sans); color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; -webkit-appearance: none; appearance: none; }
 .ask-teaser .primary { height: 40px; padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .home-foot { font-size: 13px; color: var(--ink-3); line-height: 1.4; }
 body.overview .scopes { display: none; }
@@ -654,7 +654,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
 .deck { padding: 10px 16px 30px; }
 .deck-title, .deck-subtitle { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); color: var(--ink); -webkit-appearance: none; }
 .deck-title { font: 600 20px var(--serif); margin-bottom: 6px; }
-.deck-subtitle { font: 15px var(--sans); margin-bottom: 12px; }
+.deck-subtitle { font: 16px var(--sans); margin-bottom: 12px; }
 .themes { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .theme { display: grid; gap: 4px; justify-items: center; }
 .theme .swatch { width: 72px; height: 42px; border-radius: 8px; border: 1px solid; display: flex; align-items: center; justify-content: center; gap: 6px; position: relative; }
@@ -768,7 +768,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
 .bc-notes { margin-top: 6px; }
 .bc-notes .notes-toggle { height: 28px; padding: 0 6px; font-size: 12px; color: var(--ink-3); }
 .bc-notes.has .notes-toggle { color: var(--accent); }
-.bc-notes-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); font: 14px/1.45 var(--sans); user-select: text; -webkit-user-select: text; }
+.bc-notes-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); font: 16px/1.45 var(--sans); user-select: text; -webkit-user-select: text; }
 .stage-body.is-question .stage-text { text-align: center; font-weight: 600; }
 .stage-body.is-note .stage-text { font-family: var(--sans); font-weight: 500; }
 .board-empty { padding: 20px 4px 26px; font: 16px/1.5 var(--serif); color: var(--ink-2); }

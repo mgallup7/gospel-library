@@ -1332,6 +1332,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
       ].filter(Boolean)),
     );
     openSheet("Note");
+    sheetKeep = () => ta.value.trim() !== existing.trim(); // Esc or a tap outside keeps words not yet saved
     ta.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); save(); } });
     setTimeout(() => ta.focus(), 50);
   }
@@ -2017,8 +2018,13 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     sheet.setAttribute("aria-label", label);
     const wasHidden = sheet.hidden;
     sheet.hidden = false;
-    if (wasHidden) { sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); openOverlay("sheet"); }
-    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: closeSheet }); scrim.id = "scrim"; document.body.append(scrim); }
+    if (wasHidden) {
+      sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); openOverlay("sheet");
+      const vv = window.visualViewport;
+      if (vv) { vv.addEventListener("resize", liftSheet); vv.addEventListener("scroll", liftSheet); }
+      liftSheet();
+    }
+    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: () => { if (!keepTyped()) closeSheet(); } }); scrim.id = "scrim"; document.body.append(scrim); }
     $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;
@@ -2033,10 +2039,33 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
   function hideNote() {
     const wasOpen = !sheet.hidden;
     sheet.hidden = true; $("#scrim")?.remove();
+    sheetKeep = null;
+    const vv = window.visualViewport;
+    if (vv) { vv.removeEventListener("resize", liftSheet); vv.removeEventListener("scroll", liftSheet); }
+    sheet.style.bottom = ""; sheet.style.maxHeight = "";
     if (wasOpen && sheetOpener && sheetOpener.isConnected) { try { sheetOpener.focus({ preventScroll: true }); } catch (_) {} }
     sheetOpener = null;
   }
   function closeSheet() { const had = overlay === "sheet"; hideNote(); if (had) dropOverlay("sheet"); }
+  // The iPhone keyboard covers the bottom of the layout viewport, and the sheet with it: while it
+  // is up the sheet sits on top of it (the visual viewport's bottom), so Save stays in reach.
+  function liftSheet() {
+    const vv = window.visualViewport;
+    if (!vv || sheet.hidden) return;
+    const covered = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    sheet.style.bottom = covered > 40 ? covered + "px" : "";
+    sheet.style.maxHeight = covered > 40 ? Math.max(160, Math.round(vv.height * 0.9)) + "px" : "";
+  }
+  // A sheet holding typed words (a note not yet saved) does not go on Esc or a tap outside:
+  // sheetKeep says whether it holds any; Save or Cancel decide.
+  let sheetKeep = null;
+  function keepTyped() {
+    if (!sheetKeep || !sheetKeep()) return false;
+    toast("Your note is not saved yet: Save it, or Cancel to let it go.");
+    const ta = sheet.querySelector("textarea");
+    if (ta) { try { ta.focus({ preventScroll: true }); } catch (_) {} }
+    return true;
+  }
   sheet.tabIndex = -1;
   sheet.addEventListener("keydown", (e) => { // Tab stays within the sheet while it is open
     if (e.key !== "Tab") return;
@@ -2107,7 +2136,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     // Single-key shortcuts never fire while typing in any field (the Ask box, a deck title, a label).
     const a = document.activeElement;
     const typing = !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable);
-    if (e.key === "Escape") { if (!sheet.hidden) closeSheet(); else if (typing) a.blur(); return; }
+    if (e.key === "Escape") { if (!sheet.hidden) { if (!keepTyped()) closeSheet(); } else if (typing) a.blur(); return; }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === "/" && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
