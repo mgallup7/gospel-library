@@ -1,7 +1,7 @@
 /* Gospel Library — personal edition. Plain JavaScript, no build step.
    The library lives on this device; engine.js (a Web Worker) holds it and
    answers searches. This file is the interface. */
-import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
+import { shortTitle as shortTitleOf, chapterOf, papersCitation, papersPageOf } from "./lib/cite.js";
 
 (() => {
   "use strict";
@@ -1148,14 +1148,32 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
 
   // A citation for a Joseph Smith Papers page, in the Papers' own form, with the manuscript page
   // when the page is known (the title carries it, or the selection sits under a page marker).
-  function pageOf(doc) { const m = /, page (\d+[a-z]?)$/i.exec(doc.title || ""); return m ? m[1] : null; }
+  function pageOf(doc) { return papersPageOf(doc.title); }
+  // the manuscript page a paragraph is on: the page marker ("[p. 56]") before it, or the page the document is
+  function markerPageOf(doc, node) {
+    for (let n = node; n && n !== readerPane; n = n.parentElement) {
+      for (let prev = n.previousElementSibling; prev; prev = prev.previousElementSibling) {
+        if (prev.classList?.contains("jsp-page")) { const m = /\[p\.\s*([^\]]+)\]/.exec(prev.textContent || ""); if (m) return m[1].trim(); }
+      }
+    }
+    return pageOf(doc);
+  }
+  const isPapers = (doc) => !!(doc && doc.collection && doc.collection.startsWith("jsp-"));
+  function papersCitationFor(doc, nodes) {
+    return papersCitation({ title: doc.title, pages: nodes.length ? nodes.map((n) => markerPageOf(doc, n)) : [pageOf(doc)], url: doc.source_url });
+  }
+  // Copy with the citation: a verse or paragraph each with its own; on a Papers page, the words and
+  // then the citation Cite copies, with the pages they are on
+  function copyText(units) {
+    if (isPapers(currentDoc)) {
+      const nodes = units.map((x) => $(`.doc #${CSS.escape(x.pid)}`, readerPane)).filter(Boolean);
+      return `${units.map((x) => x.text).join("\n\n")}\n\n${papersCitationFor(currentDoc, nodes)}`;
+    }
+    const cite = (x) => x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
+    return units.map((x) => `${x.text} (${cite(x)})`).join("\n\n");
+  }
   function citePapers(doc) {
-    const sel = $(".doc .sel", readerPane);
-    let page = pageOf(doc);
-    if (!page && sel) { let n = sel; while (n && n !== readerPane) { let prev = n.previousElementSibling; while (prev) { if (prev.classList?.contains("jsp-page")) { const m = /\[p\.\s*([^\]]+)\]/.exec(prev.textContent || ""); if (m) page = m[1].trim(); break; } prev = prev.previousElementSibling; } if (page) break; n = n.parentElement; } }
-    const title = (doc.title || "").replace(/, page \d+[a-z]?$/i, "");
-    const when = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-    const text = `“${title},” ${page ? `p. ${page}, ` : ""}The Joseph Smith Papers, accessed ${when}, ${doc.source_url}`;
+    const text = papersCitationFor(doc, [...readerPane.querySelectorAll(".doc .sel")]);
     navigator.clipboard?.writeText(text).then(() => toast("Citation copied."), () => {
       const bodyEl = $(".sheet-body", sheet);
       bodyEl.replaceChildren(el("div", { class: "nm", text: "Citation" }), el("p", { class: "note-passage", text }));
@@ -1582,8 +1600,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
         el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); } }),
         el("button", { type: "button", class: "text-btn", text: "Copy", title: "Copy with the citation", onclick: () => {
-          const cite = (x) => x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || "";
-          const text = selectedUnits().map((x) => `${x.text} (${cite(x)})`).join("\n\n");
+          const text = copyText(selectedUnits());
           navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
         } }),
         el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: clearSelection }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),

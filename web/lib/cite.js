@@ -31,6 +31,26 @@ export function shortCitation(p) {
   return p.citation || p.label;
 }
 
+/** The page a Joseph Smith Papers document is, when its title ends ", page 95". */
+export function papersPageOf(title) {
+  const m = /, page (\d+[a-z]?)$/i.exec(title || "");
+  return m ? m[1] : null;
+}
+
+/**
+ * A Joseph Smith Papers citation in the Papers' own form, the one Cite copies and Copy puts under
+ * the words: “Letter to Emma Smith, 4 June 1834,” p. 56, The Joseph Smith Papers, accessed
+ * November 8, 2026, https://www.josephsmithpapers.org/paper-summary/... . pages: the manuscript
+ * pages, first to last (one, several, or none known); accessed: a Date.
+ */
+export function papersCitation({ title, pages = [], url, accessed = new Date() }) {
+  const t = String(title ?? "").replace(/, page \d+[a-z]?$/i, "");
+  const ps = [...new Set((pages || []).filter(Boolean))];
+  const where = !ps.length ? "" : ps.length === 1 ? `p. ${ps[0]}, ` : `pp. ${ps[0]}–${ps[ps.length - 1]}, `;
+  const when = accessed.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return `“${t},” ${where}The Joseph Smith Papers, accessed ${when}, ${url || ""}`.trim().replace(/,$/, "");
+}
+
 /** A document as the trail names it: a chapter of scripture by its chapter, anything else by a title cut to fit. */
 export function shortTitle(doc) {
   if (doc.collection === "scriptures") return doc.citation ? chapterOf(doc.citation) : doc.title;

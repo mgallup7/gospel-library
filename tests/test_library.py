@@ -548,7 +548,11 @@ def test_joseph_smith_papers(tmp_path):
             if path == "/the-papers/journals/jsppj2":
                 return {"docDetails": {"panes": [{"sections": [{"links": [{"text": "Letter to Emma Smith, 4 June 1834", "href": "/paper-summary/letter-to-emma-smith-4-june-1834"}]}]}]}}
             if path.startswith("/paper-summary/journal-"):
-                d = load("journal-26.json"); d["summary"]["numberOfPages"] = "1"; d["summary"]["requestedPageNumber"] = "1"; return d
+                d = load("journal-26.json"); d["summary"]["numberOfPages"] = "1"; d["summary"]["requestedPageNumber"] = "1"
+                # 1835-1836 is served as itself; 1832-1834 serves the December 1841 journal, which must be filed as that
+                if path.startswith("/paper-summary/journal-1835-1836/"):
+                    d["summary"]["uri"] = "journal-1835-1836"
+                return d
             if path == "/paper-summary/letter-to-emma-smith-4-june-1834/1":
                 d = load("letter-1.json"); d["summary"]["numberOfPages"] = "2"; return d
             if path == "/paper-summary/letter-to-emma-smith-4-june-1834/2":
@@ -565,7 +569,11 @@ def test_joseph_smith_papers(tmp_path):
     assert [b["uri"] for b in books] == ["/the-papers/journals/jsppj1", "/the-papers/journals/jsppj2"] and books[0]["title"].startswith("Journals, 1832")
     rows = store.conn.execute("SELECT uri, title, section_path, year FROM documents ORDER BY sort_key").fetchall()
     uris = [r["uri"] for r in rows]
-    assert "/paper-summary/letter-to-emma-smith-4-june-1834" in uris and "/paper-summary/journal-1832-1834" in uris
+    assert "/paper-summary/letter-to-emma-smith-4-june-1834" in uris and "/paper-summary/journal-1835-1836" in uris
+    # a paper is filed under the name its own page gives it, so Cite copies the paper's address
+    assert "/paper-summary/journal-december-1841-december-1842" in uris and "/paper-summary/journal-1832-1834" not in uris
+    jrow = store.conn.execute("SELECT title FROM documents WHERE uri = '/paper-summary/journal-december-1841-december-1842'").fetchone()
+    assert jrow["title"] == "Journal, December 1841–December 1842"
     letter_row = next(r for r in rows if r["uri"] == "/paper-summary/letter-to-emma-smith-4-june-1834")
     assert json.loads(letter_row["section_path"]) == ["Joseph Smith Papers: Journals", "Journals, 1841–1844"] or letter_row["section_path"]
     assert letter_row["year"] == 1834
