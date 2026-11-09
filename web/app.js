@@ -589,9 +589,9 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         speaker: state.speaker, from: state.from, to: state.to, book: state.book, group: state.group,
       });
       if (mySeq !== searchSeq) return;
-      // a reference typed and entered opens the chapter itself on a wide screen; the list keeps the card
-      // a reference pressed opens its chapter on a wide screen; a re-render (Back, a reload) never navigates
-      if (!typeahead && !more && !silent && data.jump?.doc_id && wide() && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
+      // a reference typed and entered opens the chapter at the verse, on the phone as on the iPad; the
+      // list keeps the card, so Back comes to it; a re-render (Back, a reload) never navigates
+      if (!typeahead && !more && !silent && data.jump?.doc_id && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
       data.typeahead = typeahead;
       if (more && state.lastSearch) {
         const prev = state.lastSearch;
@@ -777,11 +777,12 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
         if (vs.length) verses = vs.map((x) => ({ n: x.verse, text: x.text }));
       }
     } catch (_) { /* the text will do */ }
-    // on a wide screen the board opens beside the results; on a phone a toast says so and the results stay
-    window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: wide() });
+    // as Add to deck does in the reader: the pane stays where it is, and the toast (with Undo) and
+    // the count on the Deck button say it went on
+    window.Deck?.addPassage({ doc_id: h.doc_id, pid: h.pid, kind: h.kind, verse: h.verse, text, verses, citation: h.citation, label: h.label, author: h.author, title: h.title, collection: h.collection }, { show: false });
     btn.textContent = btn.classList.contains("add") ? "\u2713" : "On the deck";
     btn.setAttribute("aria-pressed", "true");
-    if (!wide()) deckToast(1, "On the deck.");
+    deckToast(1, "On the deck.");
   }
   // Every passage with the words, in the order of the books, each chapter or talk with its count:
   // a concordance, for the teacher who wants to see them all rather than the best.
