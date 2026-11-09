@@ -742,6 +742,10 @@ body.presenting { overflow: hidden; }
 .bcard.section input:focus { border-color: var(--rule); background: var(--paper); }
 /* question and note cards: the teacher's own words as slides; speaker notes under any card */
 .bcard.question { border-left: 4px solid var(--accent); }
+.bcard.selected { border-color: color-mix(in srgb, var(--accent) 55%, var(--rule)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.board-foot { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.board-foot .foot-add { min-height: 44px; padding: 0 16px; border: 1px dashed var(--rule); border-radius: 12px; color: var(--accent); background: transparent; font: 600 15px var(--sans); }
+.board-foot .foot-add:active { background: var(--chrome); }
 .bcard.note { background: var(--chrome); }
 .bcard .bc-card-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); font: 17px/1.45 var(--serif); user-select: text; -webkit-user-select: text; }
 .bcard.question .bc-card-text { font-weight: 600; }

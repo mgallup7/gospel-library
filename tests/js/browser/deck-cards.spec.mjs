@@ -21,13 +21,19 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 60000 });
   await page.click("#deckBtn");
   await page.waitForSelector(".board .bcard", { timeout: 10000 });
-  await page.click(".board-row button:has-text('More')");
-  await page.click(".board button:has-text('Add question')");
+  // the question goes in after the card tapped, not at the end; slide text after the question
+  await page.click(".bcard[data-id='a'] .bc-cite");
+  await page.click(".board .board-foot button:has-text('+ Question')");
   await page.waitForSelector(".bcard.question textarea", { timeout: 5000 });
   await page.fill(".bcard.question textarea", "What has faith asked of you this transfer?");
-  await page.click(".board button:has-text('Add note')");
+  await page.click(".board .board-foot button:has-text('+ Slide text')");
   await page.waitForSelector(".bcard.note textarea", { timeout: 5000 });
   await page.fill(".bcard.note .bc-card-text", "Pause here. Let them answer before moving on.");
+  const order = await page.evaluate(() => window.Deck.state.items.map((i) => i.type === "passage" ? i.id : i.type));
+  if (order.join(",") !== "a,question,note,b") errors.push(`cards should land after the selected card: ${order.join(",")}`);
+  if (!/Slide text/.test(await page.textContent(".bcard.note .bc-kind"))) errors.push("the note card should be labelled Slide text");
+  if (!/### Slide text\n\nPause here/.test(await page.evaluate(() => window.Deck.markdown()))) errors.push("the Markdown should head slide text as Slide text");
+  if (/Add question|Add note/.test(await page.textContent(".board .deck-actions.secondary"))) errors.push("More should no longer hold Add question or Add note");
   // speaker notes on the first passage
   await page.click(".bcard[data-id='a'] .notes-toggle");
   await page.fill(".bcard[data-id='a'] .bc-notes-text", "Read slowly; this is the hinge of the lesson.");

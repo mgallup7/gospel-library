@@ -424,6 +424,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
   let drag = null;      // a port being dragged
   let editing = null;   // the link whose label editor is open
   let hintShown = false;
+  let selectedId = null; // the card last tapped or typed in: where a new question or slide text goes
 
   // The card tools, drawn as strokes in the app's icon style rather than text arrows,
   // which sit at different heights in different fonts.
@@ -478,8 +479,6 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       think, md,
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
-      el("button", { type: "button", class: "text-btn", text: "Add question", title: "A question for the room, as a slide of its own", onclick: () => addCard("question") }),
-      el("button", { type: "button", class: "text-btn", text: "Add note", title: "A thought or teaching point, as a slide of its own", onclick: () => addCard("note") }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
       el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => {
@@ -505,6 +504,9 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
+    const touch = (e) => { const card = e.target.closest && e.target.closest(".bcard"); if (card) select(card.dataset.id); };
+    cards.addEventListener("pointerdown", touch);
+    cards.addEventListener("focusin", touch);
     window.addEventListener("resize", () => { if (board.isConnected) drawLines(); });
     if (window.ResizeObserver) new ResizeObserver(() => drawLines()).observe(cards);
   }
@@ -548,11 +550,18 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       : "To highlight: tap the first and last word of a phrase. To link: drag the dot at the end of a highlight onto a phrase in another passage. To name a link: tap its number.";
   }
 
+  // The selected card wears a quiet outline, so it is plain where the next question will land.
+  function select(id) {
+    if (selectedId === id || !ui) return;
+    selectedId = id;
+    for (const c of ui.cards.querySelectorAll(".bcard")) c.classList.toggle("selected", c.dataset.id === id);
+  }
   function drawCards() {
     const cards = ui.cards;
     cards.replaceChildren();
+    if (selectedId && !byId(selectedId)) selectedId = null;
     deck.items.forEach((it, idx) => {
-      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : ""), "data-id": it.id, "data-type": it.type });
+      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : ""), "data-id": it.id, "data-type": it.type });
       const tools = el("div", { class: "bc-tools" }, [
         el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
         el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
@@ -568,12 +577,12 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       }
       if (it.type === "question" || it.type === "note") {
         card.classList.add(it.type);
-        const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "A thought, a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Note" });
+        const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "Words for the room to read: a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Slide text" });
         ta.value = it.text || "";
         const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
         ta.addEventListener("input", () => { it.text = ta.value; grow(); save({ redraw: false }); });
         requestAnimationFrame(grow);
-        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Note" })]), tools]));
+        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
         card.append(ta);
         card.append(notesEl(it));
         cards.append(card);
@@ -614,6 +623,11 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       }
       cards.append(card);
     });
+    // A question or slide text is added from the foot of the list, after the selected card.
+    if (deck.items.length) cards.append(el("div", { class: "board-foot" }, [
+      el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => addCard("question") }),
+      el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => addCard("note") }),
+    ]));
     if (!deck.items.length) {
       const savedAny = savedDecks.length > 0;
       cards.append(el("div", { class: "board-empty" }, [
@@ -623,10 +637,13 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     }
   }
   function speakerNotes(s, it) { const text = (it.notes || "").trim(); if (text) { try { s.addNotes(text); } catch (_) {} } }
-  // A question or a note: a slide of its own, with words the teacher writes
+  // A question or slide text (kind "note" in the data, so saved decks still load): a slide of its
+  // own, with words the teacher writes. It goes in after the card last touched, or at the end.
   function addCard(type) {
     const item = { id: uid(), type, text: "", notes: "" };
-    deck.items.push(item);
+    const at = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+    if (at >= 0) deck.items.splice(at + 1, 0, item); else deck.items.push(item);
+    selectedId = item.id;
     save();
     requestAnimationFrame(() => { const ta = ui && ui.cards.querySelector(`.bcard[data-id="${item.id}"] textarea`); if (ta) ta.focus(); });
     return item;
@@ -975,7 +992,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       const notes = it.notes && it.notes.trim() ? [`*Speaker notes: ${it.notes.trim().replace(/\n+/g, " ")}*`, ""] : [];
       if (it.type === "section") { out.push(`## ${it.title || "—"}`, "", ...notes); continue; }
       if (it.type === "question") { out.push(`### Question`, "", it.text || "", "", ...notes); continue; }
-      if (it.type === "note") { out.push(`### Note`, "", it.text || "", "", ...notes); continue; }
+      if (it.type === "note") { out.push(`### Slide text`, "", it.text || "", "", ...notes); continue; }
       if (it.type === "link") {
         const a = endOf(it.from), b = endOf(it.to);
         if (!a || !b) continue;
@@ -1057,7 +1074,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       lines.push(`[${i + 1}] ${p.citation}${p.where ? `, ${p.where}` : ""}${p.label ? `, ${p.label}` : ""}\n${p.verses ? p.verses.map((v) => `${v.n} ${v.text}`).join(" ") : p.text}\nHighlighted: ${hl.length ? hl.join("; ") : "nothing yet"}${around ? `\nAround it on the page (for its setting, not for the slide): ${around}` : ""}${p.notes ? `\nHis speaker notes: ${p.notes}` : ""}`);
     });
     const cards = deck.items.filter((i) => i.type === "question" || i.type === "note").filter((i) => (i.text || "").trim());
-    if (cards.length) lines.push("Question and note slides he has written, in order:\n" + cards.map((c) => `- ${c.type === "question" ? "Question" : "Note"}: ${c.text.trim()}`).join("\n"));
+    if (cards.length) lines.push("Question and slide-text slides he has written, in order:\n" + cards.map((c) => `- ${c.type === "question" ? "Question" : "Slide text"}: ${c.text.trim()}`).join("\n"));
     lines.push(deck.links.length ? "Arrows drawn so far:" : "No arrows drawn yet.");
     deck.links.forEach((l, i) => {
       const a = endOf(l.from), b = endOf(l.to);
@@ -1600,7 +1617,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         n++;
         const s = slide();
         report.slides++; report.boxes++;
-        kicker(s, it.type === "question" ? "Question" : "Note");
+        // A question says so over a rule; slide text is the teacher's own words and needs no label in front of the room.
+        if (it.type === "question") kicker(s, "Question");
         const question = it.type === "question";
         const f = fitSize({ text, font: question ? SERIF : SANS, boxW: inner - (question ? 0.6 : 0), boxH: 3.3, max: question ? 36 : 26, min: 16, lineSpacing: 1.15, paraSpace: 6 });
         if (!f.fits) report.tight.push(n);
