@@ -227,13 +227,15 @@ const methods = {
       if (!entry) throw new Error("no delta from this build");
       const url = new URL(entry.file + "?v=" + encodeURIComponent(manifest.version), manifestUrl).href;
       const sealed = await openSealed(url, passphrase, entry.size, progress, { kind: "delta", from: have, version: manifest.version });
-      const bytes = await sealed.all();
+      let bytes = await sealed.all();
+      const size = bytes.length;
       progress({ phase: "install", loaded: 0, total: 1 });
       db.exec("ATTACH DATABASE ':memory:' AS d");
       let attached = true;
       try {
         const p = sqlite3.wasm.allocFromTypedArray(bytes);
-        const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, "d", p, bytes.length, bytes.length,
+        bytes = null; // the copy in the wasm heap is the one used: one copy of the delta, not two, through the transaction
+        const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, "d", p, size, size,
           sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_RESIZEABLE);
         if (rc) throw new Error("the update could not be read");
         const info = Object.fromEntries(rows("SELECT key, value FROM d.delta_meta").map((r) => [r.key, JSON.parse(r.value)]));
@@ -282,7 +284,7 @@ const methods = {
         progress({ phase: "install", loaded: 1, total: 1 });
         current = { ...(current || {}), version: info.to, builtAt: manifest.built_at };
         setTimeout(buildVocabulary, 1500);
-        return { hasLibrary: true, mode, ...current, manifest, applied: { changed: info.documents_changed, removed: info.documents_removed, vectors: info.vecbits, bytes: bytes.length } };
+        return { hasLibrary: true, mode, ...current, manifest, applied: { changed: info.documents_changed, removed: info.documents_removed, vectors: info.vecbits, bytes: size } };
       } finally {
         if (attached) { try { db.exec("DETACH DATABASE d"); } catch (_) {} }
       }

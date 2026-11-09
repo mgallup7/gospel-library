@@ -2,6 +2,7 @@
    The library lives on this device; engine.js (a Web Worker) holds it and
    answers searches. This file is the interface. */
 import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
+import { pickDelta } from "./lib/checks.js";
 
 (() => {
   "use strict";
@@ -465,7 +466,7 @@ import { shortTitle as shortTitleOf, chapterOf } from "./lib/cite.js";
     let manifest;
     try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { return; }
     if (!active || manifest.version === active.version) return;
-    const delta = (manifest.deltas || []).find((d) => d.from === active.version && d.size < manifest.bundle_size * 0.6) || null;
+    const delta = pickDelta(manifest, active.version);
     const when = new Date(manifest.built_at).toLocaleDateString([], { month: "short", day: "numeric" });
     const banner = el("div", { class: "banner" }, [
       el("span", { text: delta
