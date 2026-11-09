@@ -206,6 +206,10 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
             from . import embed
             n = embed.pack_bits(cc)
             log.info("%d paragraph vectors packed as bits", n)
+        # the device's version check and launch stats read from these; a working database
+        # last opened before they were added to the schema would not have them yet, nor their statistics
+        from .delta import ensure_version_indexes
+        ensure_version_indexes(cc)
         cc.execute("VACUUM")
     finally:
         cc.close()

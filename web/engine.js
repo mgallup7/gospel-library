@@ -269,7 +269,9 @@ const methods = {
           db.exec(`INSERT INTO books(${bc}) SELECT ${bc} FROM d.books`);
           db.exec("INSERT OR REPLACE INTO meta(key, value) SELECT key, value FROM d.meta");
           const got = await libraryVersion();
-          const pars = value("SELECT COUNT(*) FROM paragraphs");
+          // the FTS index's size table has one row per paragraph: the same count as the index
+          // itself without reading all of its text (delta.py paragraph_count counts the same way)
+          const pars = value("SELECT COUNT(*) FROM paragraphs_docsize");
           if (got !== info.to || pars !== info.paragraphs_total) throw new Error(`the update did not reproduce the library (${got} vs ${info.to}, ${pars} vs ${info.paragraphs_total} paragraphs)`);
           db.exec("COMMIT");
         } catch (err) {
@@ -461,6 +463,7 @@ async function openSealed(url, passphrase, total, progress, expect = {}) {
 // The library's version, computed the way the nightly build computes it (delta.py library_version):
 // the text, then everything else a device holds that can change on its own.
 async function libraryVersion() {
+  versionIndexes();
   const lines = rows("SELECT uri, content_hash AS h FROM documents ORDER BY uri").map((r) => `${r.uri}:${r.h === null || r.h === undefined ? "None" : r.h}\n`).join("");
   const content = (await sha256hex(lines)).slice(0, 16);
   const table = ["vecbits", "vectors"].find((t) => value("SELECT COUNT(*) FROM sqlite_master WHERE name=?", [t]));
@@ -468,6 +471,19 @@ async function libraryVersion() {
   const model = (metaValue("embeddings") || {}).model || "";
   const originals = (metaValue("originals") || {}).format || "";
   return (await sha256hex(`${content}|vectors:${v.c}:${v.m}|model:${model}|originals:${originals}`)).slice(0, 16);
+}
+// The covering indexes behind libraryVersion and stats (db.py SCHEMA, delta.py VERSION_INDEXES).
+// content_hash and fetched_at sit after body_html, so without them both read every document's
+// overflow pages. A library built before they shipped gets them here, once; a library that
+// cannot be written to just goes on without. When the library carries planner statistics, a
+// new index needs its own, or the planner guesses it is huge and keeps the old plan.
+const VERSION_INDEXES = [["documents_version", "documents(uri, content_hash)"], ["documents_stats", "documents(collection_id, word_count, fetched_at)"]];
+function versionIndexes() {
+  if (value("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('documents_version', 'documents_stats')") === VERSION_INDEXES.length) return;
+  const analyzed = !!value("SELECT COUNT(*) FROM sqlite_master WHERE name='sqlite_stat1'");
+  for (const [name, on] of VERSION_INDEXES) {
+    try { db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${on}`); if (analyzed) db.exec(`ANALYZE ${name}`); } catch (_) {}
+  }
 }
 async function sha256hex(text) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -1192,6 +1208,7 @@ function speakers(prefix) {
 
 // ----------------------------------------------------------------- browse ----
 function stats() {
+  versionIndexes();
   const out = { collections: rows(`SELECT c.slug, c.title, c.kind, COUNT(d.id) AS docs, COALESCE(SUM(d.word_count), 0) AS words, MAX(d.fetched_at) AS last_fetched
                                      FROM collections c LEFT JOIN documents d ON d.collection_id=c.id GROUP BY c.id ORDER BY c.sort`) };
   out.documents = out.collections.reduce((n, c) => n + c.docs, 0);
