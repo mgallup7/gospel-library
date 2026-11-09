@@ -72,12 +72,14 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       await page.evaluate(() => window.Deck.present());
       await page.waitForSelector(".stage:not([hidden])", { timeout: 5000 });
       for (let i = 0; i < 12 && !(await page.evaluate(() => document.querySelector(".stage-body").classList.contains("is-question"))); i++) await page.keyboard.press("ArrowRight");
+      await page.waitForTimeout(2800); // the controls fade, as the room sees it
       check(await page.isVisible(".stage .stage-kicker"), `${tag}: the question slide should show its kicker`);
+      await page.screenshot({ path: `${OUT}${tag}-03-question.png` });
       await page.mouse.move(vp.width / 2, vp.height / 2);
       await page.waitForTimeout(250);
-      await page.screenshot({ path: `${OUT}${tag}-03-question.png` });
+      await page.screenshot({ path: `${OUT}${tag}-03-question-controls.png` });
       await page.keyboard.press("ArrowRight");
-      check(!(await page.isVisible(".stage .stage-kicker")), `${tag}: slide text should not show the Question kicker`);
+      check(await page.evaluate(() => document.querySelector(".stage .stage-kicker").hidden), `${tag}: slide text should not show the Question kicker`);
       await page.keyboard.press("Escape");
       await page.waitForTimeout(300);
     }
