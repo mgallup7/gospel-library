@@ -661,19 +661,29 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     return wrap;
   }
   // A passage as tappable words, with verse numbers, highlights and a port after each highlight.
+  // A highlighted phrase is one run (its words and the spaces between them in one span), so it
+  // reads as a phrase, not a row of boxes, and its active outline goes round the whole of it.
   function textEl(it) {
     const text = el("div", { class: "bc-text" });
     const words = wordsOf(it);
+    let host = text;
     words.forEach((x, i) => {
-      if (x.first && x.para > 0) text.append(el("br"), el("br"));
-      if (x.n !== null && x.n !== undefined) text.append(el("span", { class: "vn", text: String(x.n) }));
+      if (x.first && x.para > 0) host.append(el("br"), el("br"));
+      if (x.n !== null && x.n !== undefined) host.append(el("span", { class: "vn", text: String(x.n) }));
       const h = hlAt(it, i);
+      if (h && host === text) {
+        host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : ""), "data-hl": h.id });
+        text.append(host);
+      }
       const cls = ["w"];
-      if (h) { cls.push("hl"); if (h.s === i) cls.push("hl-s"); if (h.e === i) cls.push("hl-e"); if (active && active.id === it.id && active.hl === h.id) cls.push("active"); }
+      if (h) { cls.push("hl"); if (h.s === i) cls.push("hl-s"); if (h.e === i) cls.push("hl-e"); }
       if (pending && pending.id === it.id && pending.i === i) cls.push("first");
-      text.append(el("span", { class: cls.join(" "), "data-i": String(i), text: x.w }));
-      if (h && h.e === i) text.append(el("button", { type: "button", class: "port", "data-item": it.id, "data-hl": h.id, "aria-label": `Link “${phraseOf(it, h)}” to another passage`, title: "Drag onto a phrase in another passage to link them" }));
-      text.append(" ");
+      host.append(el("span", { class: cls.join(" "), "data-i": String(i), text: x.w }));
+      if (h && h.e === i) {
+        host = text;
+        text.append(el("button", { type: "button", class: "port", "data-item": it.id, "data-hl": h.id, "aria-label": `Link “${phraseOf(it, h)}” to another passage`, title: "Drag onto a phrase in another passage to link them" }));
+      }
+      host.append(" ");
     });
     return text;
   }
@@ -693,10 +703,11 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
     const item = byId(card.dataset.id);
     if (!item) return;
     const w = e.target.closest(".w");
+    const run = !w && e.target.closest(".hl-run"); // the space between two words of a phrase
     if (linking) {
       if (item.id === linking.id) return;
       const i = w ? Number(w.dataset.i) : null;
-      const h = port ? hlById(item, port.dataset.hl) : i !== null ? hlAt(item, i) : null;
+      const h = port ? hlById(item, port.dataset.hl) : i !== null ? hlAt(item, i) : run ? hlById(item, run.dataset.hl) : null;
       const from = linking; linking = null;
       finishLink(from, { item, hl: h ? h.id : null, word: !h && i !== null ? i : null });
       return;
@@ -705,6 +716,7 @@ import { talkCitation, chapterOf } from "./lib/cite.js";
       if (!hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
       return;
     }
+    if (run) { const h = hlById(item, run.dataset.hl); if (h) { active = active && active.hl === h.id ? null : { id: item.id, hl: h.id }; pending = null; draw(); } return; }
     if (!w) { if (pending || active) { pending = null; active = null; draw(); } return; }
     const i = Number(w.dataset.i);
     if (pending && pending.id === item.id) {

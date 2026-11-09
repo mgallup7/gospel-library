@@ -727,10 +727,10 @@ body.presenting { overflow: hidden; }
 .bcard .bc-tools button:disabled { opacity: .3; }
 .bcard .bc-text { font: var(--reading-size)/1.95 var(--serif); margin-top: 6px; }
 .bcard .w { padding: 1px 1px; border-radius: 3px; cursor: pointer; }
-.bcard .w.hl { background: var(--mark); color: var(--mark-ink); }
-.bcard .w.hl-s { border-radius: 4px 0 0 4px; padding-left: 3px; }
-.bcard .w.hl-e { border-radius: 0 4px 4px 0; padding-right: 3px; }
-.bcard .w.hl.active { box-shadow: 0 0 0 2px var(--accent); }
+/* A highlighted phrase is one run, spaces included; a line break gives each line its own rounded piece */
+.bcard .hl-run { background: var(--mark); color: var(--mark-ink); border-radius: 4px; padding: 1px 2px; cursor: pointer; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.bcard .hl-run .w { padding: 1px 0; }
+.bcard .hl-run.active { box-shadow: 0 0 0 2px var(--accent); }
 .bcard .w.first { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bcard .w.drop { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--target); }
 .bcard .vn { font: 600 .6em var(--sans); color: var(--ink-3); vertical-align: super; margin: 0 2px 0 6px; }
