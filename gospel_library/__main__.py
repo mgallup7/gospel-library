@@ -242,6 +242,15 @@ def cmd_seal(args) -> int:
     return 0
 
 
+def cmd_seal_skills(args) -> int:
+    """Seal the private skills file on the owner's machine; the sealed file is what he uploads."""
+    from . import bundle
+
+    h = bundle.seal_skills(Path(args.src), Path(args.out), _passphrase(args))
+    print(f"{args.out}: sealed, {h['bundle_size']:,} bytes. Upload it with: gh release upload state {args.out} --clobber")
+    return 0
+
+
 def cmd_unseal(args) -> int:
     from . import bundle
 
@@ -347,6 +356,12 @@ def main(argv=None) -> int:
     s.add_argument("--no-compress", action="store_true")
     s.add_argument("--passphrase-env", default="LIBRARY_PASSPHRASE")
     s.set_defaults(fn=cmd_seal, to_file=False)
+
+    s = sub.add_parser("seal-skills", help="seal your private skills file here, to upload as skills.bin (the build never sees the text)")
+    s.add_argument("src", help="skills.json")
+    s.add_argument("--out", default="skills.bin")
+    s.add_argument("--passphrase-env", default="LIBRARY_PASSPHRASE")
+    s.set_defaults(fn=cmd_seal_skills, to_file=False)
 
     s = sub.add_parser("unseal", help="decrypt a sealed file")
     s.add_argument("src")

@@ -10,8 +10,10 @@ if gh release download state --pattern 'library.bin' --pattern 'raw.bin' --patte
   if [ -f "$tmp/raw.bin" ]; then
     python -m gospel_library unseal "$tmp/raw.bin" "$GOSPEL_LIBRARY_DATA/raw.sqlite"
   fi
+  # The owner's skills arrive already sealed (python -m gospel_library seal-skills, on his own
+  # machine) and are published as they are: never unsealed here, so no log can hold them.
   if [ -f "$tmp/skills.bin" ]; then
-    python -m gospel_library unseal "$tmp/skills.bin" "$GOSPEL_LIBRARY_DATA/skills.json"
+    cp "$tmp/skills.bin" "$GOSPEL_LIBRARY_DATA/skills.bin"
   fi
   echo "Restored previous state."
 else

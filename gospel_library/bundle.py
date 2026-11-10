@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import struct
 import tempfile
@@ -165,17 +166,30 @@ def content_version(conn: sqlite3.Connection) -> str:
     return library_version(conn)
 
 
-def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, skills_path: Path | None = None) -> dict:
+def seal_skills(src: Path, dst: Path, passphrase: str) -> dict:
+    """Seal the owner's private skills file (JSON) as dst. Run on his own machine, never in the build."""
+    json.loads(src.read_text(encoding="utf-8"))  # must be valid JSON before it is sealed
+    return encrypt_file(src, dst, passphrase, extra={"kind": "skills"})
+
+
+def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, skills_path: Path | None = None,
+          sealed_skills_path: Path | None = None) -> dict:
     """Create out_dir/library.bin and out_dir/manifest.json from the library.
 
-    If a private skills file (data/skills.json: how Ask should write for its
-    owner) is present, it is sealed alongside as skills.bin and listed in the
-    manifest, so the app can fetch and unlock it with the same passphrase.
+    The owner's private skills (how Ask should write for him) are published
+    beside the library as skills.bin and listed in the manifest, so the app can
+    fetch and unlock them with the same passphrase. The nightly build is handed
+    a skills.bin that was sealed on the owner's machine (data/skills.bin,
+    brought back from the state release) and copies it out byte for byte: it
+    never opens it, so the plain text cannot reach a build log. A plain
+    data/skills.json is only for a build on the owner's own machine.
     """
     from .db import stats
 
     if skills_path is None:
         skills_path = config.DATA_DIR / "skills.json"
+    if sealed_skills_path is None:
+        sealed_skills_path = config.DATA_DIR / "skills.bin"
 
     out_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -249,9 +263,13 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
         manifest["embeddings"] = json.loads(emb_row[0])
     if deltas:
         manifest["deltas"] = [{"from": d["from"], "file": d["file"], "size": d["size"], "sha256": d["sha256"], "documents_changed": d["documents_changed"], "documents_removed": d["documents_removed"]} for d in deltas]
-    if skills_path.exists():
-        json.loads(skills_path.read_text(encoding="utf-8"))  # must be valid JSON before it is sealed
-        sh = encrypt_file(skills_path, out_dir / "skills.bin", passphrase, extra={"kind": "skills"})
+    if sealed_skills_path.exists():
+        sh = read_header(sealed_skills_path)  # the header is public: the hash of the text, not the text
+        if sealed_skills_path.resolve() != (out_dir / "skills.bin").resolve():
+            shutil.copyfile(sealed_skills_path, out_dir / "skills.bin")
+        manifest["skills"] = {"file": "skills.bin", "sha256": sh["sha256"], "size": (out_dir / "skills.bin").stat().st_size, "built_at": sh["built_at"]}
+    elif skills_path.exists():
+        sh = seal_skills(skills_path, out_dir / "skills.bin", passphrase)
         manifest["skills"] = {"file": "skills.bin", "sha256": sh["sha256"], "size": sh["bundle_size"], "built_at": sh["built_at"]}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     return manifest

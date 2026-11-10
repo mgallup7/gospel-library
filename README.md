@@ -255,9 +255,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   sound, a house style for answers, and whole pieces such as the weekly
   letter, which appears as its own mode beside Ask and Draft) travels sealed
   with the library, unlocked on the device with the same passphrase. It is
-  never committed to the repository: hand it to the nightly job once through
-  the workflow's `skills` input (a gzip, base64 blob), and it is kept
-  encrypted with the job's state from then on.
+  never committed to the repository and never passes through the build as
+  plain text: you seal it on your own machine and upload the sealed file,
+  and the nightly job publishes that file as it is.
 - The Joseph Smith Papers. The nightly job also brings in josephsmithpapers.org,
   a series at a time (journals, then revelations and translations, histories,
   documents, and the administrative, legal and financial records), about 75
@@ -335,12 +335,19 @@ parallel, and robots.txt is honored. Pages the site says it does not have are
 retried on a backing-off schedule.
 
 Between runs the job keeps its working state (the database, raw copies of
-every page, and the private skills file if one was handed in) as encrypted
-assets on a release named `state`.
+every page) as encrypted assets on a release named `state`. Your sealed
+skills file, `skills.bin`, sits on the same release; the job copies it into
+the published library byte for byte and never opens it.
 
-To hand in or replace the skills file: `gzip -9c skills.json | base64 -w0`,
-then run the workflow with that text as the `skills` input (from the Actions
-tab, or `gh api -X POST repos/OWNER/gospel-library/actions/workflows/sync.yml/dispatches -f ref=main -f "inputs[skills]=$(...)"`).
+To hand in or replace the skills file, on your own machine, in this folder:
+
+    read -rs LIBRARY_PASSPHRASE && export LIBRARY_PASSPHRASE   # type the library passphrase; it is not shown or kept in history
+    python -m gospel_library seal-skills skills.json --out skills.bin
+    gh release upload state skills.bin --clobber
+
+The next nightly run (or one you start from the Actions tab) publishes it.
+The workflow has no input for skills: anything typed into a workflow input
+is printed in the run's log, which anyone can read on a public repository.
 The file is JSON: `{"voice": "...", "style": "...", "skills": [{"id":
 "weekly-letter", "name": "Letter", "kind": "mode", "description": "...",
 "placeholder": "...", "week1": "2026-06-28", "text": "..."}]}`. `voice` is

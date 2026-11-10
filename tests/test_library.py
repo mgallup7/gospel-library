@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -266,6 +267,25 @@ def test_bundle_round_trip(tmp_path, monkeypatch):
     assert back.read_text(encoding="utf-8") == skills.read_text(encoding="utf-8")
     nos = bundle.build(tmp_path / "site2", "a long passphrase", db_path=config.DB_PATH, skills_path=tmp_path / "none.json")
     assert "skills" not in nos
+    # the way the nightly build gets them: sealed on the owner's machine with seal-skills, then
+    # published byte for byte, with a passphrase that could not open them (the build never does)
+    from gospel_library.__main__ import main as cli
+    sealed = tmp_path / "skills.bin"
+    os.environ["LIBRARY_PASSPHRASE"] = "a long passphrase"
+    try:
+        assert cli(["seal-skills", str(skills), "--out", str(sealed)]) == 0
+    finally:
+        del os.environ["LIBRARY_PASSPHRASE"]
+    assert skills.read_bytes() not in sealed.read_bytes() and b"warm" not in sealed.read_bytes()
+    pub = bundle.build(tmp_path / "site3", "not the passphrase", db_path=config.DB_PATH, skills_path=tmp_path / "none.json", sealed_skills_path=sealed)
+    assert (tmp_path / "site3" / "skills.bin").read_bytes() == sealed.read_bytes()
+    assert pub["skills"]["sha256"] == bundle.read_header(sealed)["sha256"] and pub["skills"]["size"] == sealed.stat().st_size
+    bundle.decrypt_file(tmp_path / "site3" / "skills.bin", back, "a long passphrase")
+    assert back.read_text(encoding="utf-8") == skills.read_text(encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        bundle.seal_skills(bad, tmp_path / "bad.bin", "pw")
     header = bundle.read_header(out / "library.bin")
     assert header["version"] == manifest["version"] and header["chunks"] >= 1
 
