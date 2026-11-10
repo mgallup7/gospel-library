@@ -215,7 +215,7 @@ import { esc } from "./lib/format.js";
     forgetPast(); // the deck that arrived is where the history starts
     if (writeWanted) writeCurrent();
     draw(); updateBadge();
-    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    announce();
   })().catch((err) => {
     // whatever went wrong on the way in, the deck in memory must still be written from here on
     console.warn("the deck did not load:", err?.message);
@@ -228,13 +228,26 @@ import { esc } from "./lib/format.js";
     try {
       if (e.data?.what === "current") {
         const other = await tx("current", "readonly", (s) => s.get("deck"));
-        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; forgetPast(); draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
+        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; forgetPast(); draw(); updateBadge(); announce(); }
       } else if (e.data?.what === "saved") {
         savedDecks = (await tx("saved", "readonly", (s) => s.getAll())) || [];
         sortSaved();
       }
     } catch (_) { /* the next save writes ours */ }
   };
+
+  // "deck:change" tells the rest of the app the deck is different (the + on every result, Ask's
+  // ticks). Once a frame is enough: a burst of saves, or a key typed in a note, used to send one
+  // each, and each made the results list look itself up against the deck again.
+  let changeQueued = false;
+  function announce() {
+    if (changeQueued) return;
+    changeQueued = true;
+    const fire = () => { changeQueued = false; try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {} };
+    // a page in the background gets no frames; a timer still runs there
+    if (typeof document !== "undefined" && document.visibilityState === "visible" && window.requestAnimationFrame) window.requestAnimationFrame(fire);
+    else setTimeout(fire, 0);
+  }
 
   function save({ redraw = true } = {}) {
     deck.updated = Date.now();
@@ -243,7 +256,7 @@ import { esc } from "./lib/format.js";
     updateBadge();
     if (redraw) draw();
     else if (ui) { syncDownloadButton(); syncUndo(); }
-    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    announce();
   }
 
   // ----------------------------------------------------------------- undo --
@@ -301,7 +314,7 @@ import { esc } from "./lib/format.js";
     lastJson = snap(); lastEntry = null;
     for (const u of undone) { try { u.extra?.(); } catch (_) {} }
     scheduleWrite(); updateBadge(); draw(); // written at once, like any other change
-    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    announce();
     return true;
   }
   // The toast after a change, with Undo for exactly that change (and whatever came after it).
@@ -412,7 +425,7 @@ import { esc } from "./lib/format.js";
       const text = verses ? verses.map((v) => v.text).join(" ") : r.units.map((u) => u.text).join("\n\n");
       if (has(doc.id, r.units[0].pid)) continue;
       const id = uid();
-      deck.items.push({
+      placePassage({
         id, type: "passage", kind: r.kind === "verse" ? "verse" : "para",
         text, verses, doc_id: doc.id, pid: r.units[0].pid, hl: [],
         ...citationFor(doc, verses),
@@ -459,12 +472,84 @@ import { esc } from "./lib/format.js";
     }).catch(() => {});
   }
 
-  /** A section heading at the end of the deck (what "Think it through" builds under). */
+  // ---- where a new card goes
+  // A passage goes to the end of the deck, as it always has. A section heading or a question
+  // from Think it through goes where the owner is working, after the selected card, and what
+  // that flow adds next follows it: the passages for the section under its heading and above
+  // the questions written about them, the next question after the last. That lasts until he
+  // touches another card on the board, or a quarter of an hour. Whenever a passage lands
+  // somewhere he might not expect (anywhere but the end; or at the end when that puts it
+  // under a section he is not working in) the toast says where, in place of the caller's
+  // plain "On the deck", with an Undo of its own.
+  let cursor = null;         // { id, at }: the card that flow put on last
+  const written = new Set(); // the question cards Ask wrote this session
+  const CURSOR_MS = 15 * 60 * 1000;
+  let placed = null;         // what this turn's passages will say, in one toast
+  const cardLabel = (it) => (it.type === "section" && (it.title || "").trim() ? `the section “${it.title.trim()}”` : cardName(it));
+  const follow = (id) => { cursor = { id, at: Date.now() }; };
+  const cursorAt = () => (cursor && Date.now() - cursor.at < CURSOR_MS ? deck.items.findIndex((i) => i.id === cursor.id) : -1);
+  function sayWhere(id, where) {
+    if (!placed) {
+      placed = { ids: [], where };
+      setTimeout(() => {
+        const { ids, where: w } = placed;
+        placed = null;
+        const on = ids.filter((x) => byId(x));
+        if (!on.length || !GL()) return;
+        GL().toast(on.length === 1 ? `Added ${w}.` : `${on.length} passages added ${w}.`, { action: "Undo", onAction: () => { removeIds(on); GL().toast(on.length === 1 ? "Taken off the deck." : `${on.length} passages taken off the deck.`); } });
+      }, 0);
+    }
+    placed.ids.push(id);
+  }
+  // A card that went in somewhere other than the end is brought into view, when the board is showing.
+  function reveal(id) {
+    if (!ui || !board.isConnected) return;
+    raf(() => { if (board.offsetParent !== null) ui.cards.querySelector(`.bcard[data-id="${id}"]`)?.scrollIntoView?.({ block: "nearest" }); });
+  }
+  function placePassage(item) {
+    let at = cursorAt();
+    if (at < 0) {
+      cursor = null;
+      // the end; under a section's heading it reads as part of that section, so unless he is working there, say so
+      let sec = -1;
+      deck.items.forEach((i, k) => { if (i.type === "section") sec = k; });
+      const working = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+      deck.items.push(item);
+      if (sec >= 0 && working < sec) sayWhere(item.id, `at the end, under ${cardLabel(deck.items[sec])}`);
+      return;
+    }
+    while (at >= 0 && written.has(deck.items[at].id)) at--; // above the questions written about it
+    const prev = deck.items[at];
+    deck.items.splice(at + 1, 0, item);
+    follow(item.id);
+    sayWhere(item.id, !prev ? "at the top" : prev.type === "section" ? `under ${cardLabel(prev)}` : `after ${cardLabel(prev)}`);
+    if (at + 2 < deck.items.length) reveal(item.id);
+  }
+  /** A section heading, after the selected card (what "Think it through" builds under), or at the end when none is. */
   function addSection(title) {
     const item = { id: uid(), type: "section", title: String(title || "").trim() };
-    deck.items.push(item);
+    const at = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+    if (at >= 0) deck.items.splice(at + 1, 0, item); else deck.items.push(item);
     selectedId = item.id; // a question added next (addCard goes after the selected card) lands under it
+    follow(item.id);      // and so do the passages
     save();
+    if (deck.items[deck.items.length - 1] !== item) reveal(item.id);
+    return item;
+  }
+  /** A question from Ask, its words written: after what that flow added last, and after the questions already there. */
+  function addQuestion(text) {
+    const item = { id: uid(), type: "question", text: String(text || "").trim(), notes: "" };
+    let at = cursorAt();
+    if (at < 0) at = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+    if (at < 0) at = deck.items.length - 1;
+    while (deck.items[at + 1] && written.has(deck.items[at + 1].id)) at++;
+    deck.items.splice(at + 1, 0, item);
+    written.add(item.id);
+    selectedId = item.id;
+    follow(item.id);
+    lastAddedIds = [item.id];
+    save();
+    if (deck.items[deck.items.length - 1] !== item) reveal(item.id);
     return item;
   }
 
@@ -493,7 +578,7 @@ import { esc } from "./lib/format.js";
         item.label = (m[2] || "").replace(/^(Apr|Oct) (\d{4})$/, (_, mo, y) => `${mo === "Apr" ? "April" : "October"} ${y} General Conference`);
       }
     }
-    deck.items.push(item);
+    placePassage(item);
     lastAddedIds = [item.id];
     save();
     if (show) showBoard();
@@ -600,6 +685,8 @@ import { esc } from "./lib/format.js";
   let active = null;    // {id, hl}: a highlight whose tools are showing
   let linking = null;   // {id, hl}: tap-to-link in progress
   let drag = null;      // a port being dragged
+  let reorder = null;   // a card being dragged by its handle to another place
+  let menuFor = null;   // the card whose "more" menu is open
   let editing = null;   // the link whose label editor is open
   let holding = false;  // a link just made: its label editor is about to open, so the marker below stays
   let hintShown = false;
@@ -647,7 +734,7 @@ import { esc } from "./lib/format.js";
   // linking, the citation is a place to tap like the rest of its card, so it does not open.
   // Whatever mode was up is left first, and its marker is out of history before the page goes in.
   async function openPassage(it) {
-    if (linking || swallowTap || drag) return;
+    if (linking || swallowTap || drag || reorder) return;
     leaveModes(); syncMarker();
     await settled();
     GL().openDoc(it.doc_id, it.pid);
@@ -667,11 +754,13 @@ import { esc } from "./lib/format.js";
     for (const h of ui.cards.querySelectorAll(".bc-hint.first-word")) h.remove();
   }
   document.addEventListener("click", (e) => { if (pending && !(e.target.closest && e.target.closest(".bcard[data-type='passage'] .bc-text"))) clearPending(); }, true);
-  // Escape leaves the innermost thing: a drag, the label editor, link mode, a first word, My decks.
+  // Escape leaves the innermost thing: a drag, a card's menu, the label editor, link mode, a first word, My decks.
   // (A sheet takes its own Escape.)
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.defaultPrevented || sheets.size) return;
-    if (drag) drag.end(null, true);
+    if (reorder) reorder.end(null, true);
+    else if (drag) drag.end(null, true);
+    else if (menuFor) closeMenu(true);
     else if (editing) { closeEditor(); draw(); }
     else if (linking) cancelLink();
     else if (pending) clearPending();
@@ -695,12 +784,11 @@ import { esc } from "./lib/format.js";
     return { top: r.top + stickyTop(), bottom: Math.min(r.bottom, window.innerHeight) };
   }
 
-  // The card tools, drawn as strokes in the app's icon style rather than text arrows,
-  // which sit at different heights in different fonts.
-  const toolIcon = (d) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
-  const TOOL_UP = toolIcon("M12 19V5M6 11l6-6 6 6");
-  const TOOL_DOWN = toolIcon("M12 5v14M6 13l6 6 6-6");
-  const TOOL_REMOVE = toolIcon("M6 6l12 12M18 6L6 18");
+  // The two marks in a card's head, drawn rather than typed, so they sit the same in every font:
+  // six dots for the handle, three for "more".
+  const dots = (pts) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">${pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.7"/>`).join("")}</svg>`;
+  const TOOL_GRIP = dots([[9, 6], [15, 6], [9, 12], [15, 12], [9, 18], [15, 18]]);
+  const TOOL_MORE = dots([[5, 12], [12, 12], [19, 12]]);
 
   function boardEl() { if (!board) buildBoard(); return board; }
   function showBoard() {
@@ -745,7 +833,7 @@ import { esc } from "./lib/format.js";
     for (const ev of ["pointerdown", "pointerenter", "focus"]) download.addEventListener(ev, () => prepareSoon());
     const moreRow = el("div", { class: "deck-actions secondary" }, [
       think, md,
-      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); did("Section added, at the end."); } }),
+      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { const it = addSection(""), at = deck.items.indexOf(it); did(at === deck.items.length - 1 ? "Section added, at the end." : `Section added after ${cardLabel(deck.items[at - 1])}.`); } }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn how-to", text: "How to highlight and link", "aria-expanded": "false", onclick: (e) => { howTo = !howTo; e.currentTarget.setAttribute("aria-expanded", String(howTo)); syncHead(); if (howTo) ui.hint.scrollIntoView({ block: "nearest" }); } }),
       el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => replaceDeck(blank(), { what: "Start a new deck", done: "A new, empty deck." }) }),
@@ -769,7 +857,7 @@ import { esc } from "./lib/format.js";
     const canvas = el("div", { class: "board-canvas" }, [cards, svg, labels]);
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
-    // the banner is a child of the board itself, so it can stick to the top of the pane while the cards scroll
+    // the banner is a child of the board itself, between the head and the cards, so it can stick to the top of the pane while the cards scroll
     board.append(head, banner, canvas, saved, status, hint);
     // While linking, a tap on the board that is not on a phrase or passage to link to cancels:
     // the source card, a section, a tool, the head, empty space. swallowTap keeps that same tap
@@ -781,10 +869,11 @@ import { esc } from "./lib/format.js";
       swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
       cancelLink();
     }, true);
-    ui = { title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow: moreBox, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { head, title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow: moreBox, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
+    cards.addEventListener("pointerdown", onGripDown);
     const touch = (e) => { const card = e.target.closest && e.target.closest(".bcard"); if (card) select(card.dataset.id); };
     cards.addEventListener("pointerdown", touch);
     cards.addEventListener("focusin", touch);
@@ -799,16 +888,29 @@ import { esc } from "./lib/format.js";
     // arriving, another tab), and its pointer events with it: the drag ends here, cancelled,
     // rather than leaving the board deaf to taps.
     if (drag) drag.end(null, true);
+    if (reorder) reorder.end(null, true);
+    syncBanner(); // first, while the page is still as it was laid out: it measures
     syncHead();
     drawCards();
     queueLines();
     syncMarker();
   }
-  // The banner for a link in progress, by tap or by drag. It takes no room in the page (so the
-  // cards do not jump when it comes and goes) and sticks under the bar at the top of the pane.
+  // The banner for a link in progress. By tap, it carries Cancel and has room of its own
+  // between the board's head and the cards, so it never lies over the first card's citation;
+  // it sticks under the bar at the top of the pane, so Cancel is in reach however far the cards
+  // have scrolled. As it comes and goes the pane is scrolled by its height, as far as the pane
+  // can be, so the phrase about to be tapped stays where it was (a board too short to scroll
+  // steps down instead). Where the cards began is read here, before anything changes, and how
+  // far they moved is read with the lines, in the same frame and before it is painted, so the
+  // board is laid out once for it, not twice more. By drag, the banner is only a line of help;
+  // it has the same room of its own, and the cards are put back where they were at once (the
+  // caller settles it), so the dot stays under the finger wherever the pane can scroll.
+  let bannerFrom = null; // the top of the cards on the screen before the banner came or went
   function syncBanner() {
     if (!ui) return;
     const b = ui.banner;
+    const room = !!(linking || drag), had = !b.hidden;
+    if (room !== had && board.isConnected && bannerFrom === null) bannerFrom = ui.canvas.getBoundingClientRect().top;
     if (linking) {
       const from = endOf(linking);
       b.replaceChildren(el("div", { class: "bb", role: "status" }, [
@@ -817,9 +919,16 @@ import { esc } from "./lib/format.js";
       ]));
     } else if (drag) {
       b.replaceChildren(el("div", { class: "bb", role: "status" }, [el("span", { text: "Let go on a phrase or a passage to link. To cancel, let go on empty space or on the card you started from, or press Esc." })]));
-    } else { b.hidden = true; b.replaceChildren(); return; }
-    b.hidden = false;
-    b.style.top = `${stickyTop() + 6}px`;
+    } else b.replaceChildren();
+    b.hidden = !(linking || drag);
+    if (!b.hidden) b.style.top = `${stickyTop() + 6}px`;
+  }
+  // Called as the lines are drawn: the cards go back to where they were on the screen.
+  function settleBanner() {
+    if (bannerFrom === null) return;
+    const moved = ui.canvas.getBoundingClientRect().top - bannerFrom;
+    bannerFrom = null;
+    if (moved) scrollerOf(ui.canvas).scrollBy(0, moved);
   }
   function syncHead() {
     if (document.activeElement !== ui.title) ui.title.value = deck.title || "";
@@ -843,7 +952,6 @@ import { esc } from "./lib/format.js";
     ui.think.disabled = count() < 2;
     ui.md.disabled = empty;
     syncDownloadButton();
-    syncBanner();
     // how to highlight and link is said in the empty state; after that it is under More, on request
     ui.hint.hidden = empty || !howTo;
     ui.hint.textContent = empty ? ""
@@ -853,90 +961,145 @@ import { esc } from "./lib/format.js";
 
   // The selected card wears a quiet outline, so it is plain where the next question will land.
   function select(id) {
+    if (cursor && cursor.id !== id) cursor = null; // he has moved on: what is added next goes to the end again
     if (selectedId === id || !ui) return;
     selectedId = id;
     for (const c of ui.cards.querySelectorAll(".bcard")) c.classList.toggle("selected", c.dataset.id === id);
   }
-  function drawCards() {
-    const cards = ui.cards;
-    cards.replaceChildren();
-    if (selectedId && !byId(selectedId)) selectedId = null;
-    deck.items.forEach((it, idx) => {
-      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : "") + (linking && linking.id === it.id ? " link-src" : ""), "data-id": it.id, "data-type": it.type });
-      const tools = el("div", { class: "bc-tools" }, [
-        el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
-        el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
-        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeCard(it); } }),
-      ]);
-      if (it.type === "section") {
-        const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
-        inp.addEventListener("input", () => { it.title = inp.value; save({ redraw: false }); });
-        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
-        card.append(notesEl(it));
-        cards.append(card);
-        return;
-      }
-      if (it.type === "question" || it.type === "note") {
-        card.classList.add(it.type);
-        const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "Words for the room to read: a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Slide text" });
-        ta.value = it.text || "";
-        const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
-        ta.addEventListener("input", () => { it.text = ta.value; grow(); save({ redraw: false }); });
-        requestAnimationFrame(grow);
-        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
-        card.append(ta);
-        card.append(notesEl(it));
-        cards.append(card);
-        return;
-      }
-      // the citation is the way back to the page: it opens the chapter or talk at this passage
-      const meta = el("div", { class: "bc-meta" }, [it.doc_id
-        ? el("button", { type: "button", class: "bc-cite", text: it.citation, title: "Open this page at the passage", "aria-label": `${it.citation}: open the page at this passage`, onclick: () => openPassage(it) })
-        : el("div", { class: "bc-cite", text: it.citation })]);
-      // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
-      if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
-      const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
-      card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
-      card.append(textEl(it));
-      // the talk and conference sit under the words, the way an attribution follows a quote
-      if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
+  function cardEl(it, idx) {
+    const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : "") + (linking && linking.id === it.id ? " link-src" : ""), "data-id": it.id, "data-type": it.type });
+    // The head of a card: a handle to drag it to another place (the up and down arrow keys move it
+    // too), and one "more" button whose menu holds the moves and Remove.
+    const name = cardName(it);
+    const grip = el("button", { type: "button", class: "bc-grip", html: TOOL_GRIP, title: "Drag to another place", "aria-label": `Move ${name}: drag, or press the up and down arrow keys` });
+    grip.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      move(deck.items.indexOf(it), e.key === "ArrowUp" ? -1 : 1);
+      refocus(it.id, ".bc-grip");
+    });
+    const open = menuFor === it.id;
+    const more = el("button", { type: "button", class: "bc-more", html: TOOL_MORE, title: "Move or remove", "aria-label": `More for ${name}`, "aria-haspopup": "menu", "aria-expanded": String(open), onclick: (e) => { e.stopPropagation(); if (open) closeMenu(true); else openMenu(it.id); } });
+    const tools = el("div", { class: "bc-tools" }, [more]);
+    if (open) card.append(menuEl(it, idx));
+    if (it.type === "section") {
+      const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
+      inp.addEventListener("input", () => { it.title = inp.value; stamp(it); save({ redraw: false }); });
+      card.append(el("div", { class: "bc-head" }, [grip, el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
       card.append(notesEl(it));
-      if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint first-word", text: "Now tap the last word of the phrase. Tap anywhere else to drop it." }));
-      if (linking && linking.id === it.id) card.append(el("div", { class: "bc-hint", text: "Linking from here. Tap this card, or Cancel, to stop." }));
-      if (active && active.id === it.id) {
-        const h = hlById(it, active.hl);
-        if (h) card.append(el("div", { class: "hl-tools" }, [
-          el("span", { class: "ph", text: `“${phraseOf(it, h)}”` }),
-          el("button", { type: "button", class: "chip small", text: "Link to…", onclick: (e) => { e.stopPropagation(); linking = { id: it.id, hl: h.id }; active = null; draw(); } }),
-          el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => {
-            e.stopPropagation();
-            const links = deck.links.filter((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)).length;
-            removeHighlight(it, h); active = null; save();
-            did(links ? `Highlight removed, with its ${plural(links, "connection")}.` : "Highlight removed.");
-          } }),
-          el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
+      return card;
+    }
+    if (it.type === "question" || it.type === "note") {
+      card.classList.add(it.type);
+      const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "Words for the room to read: a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Slide text" });
+      ta.value = it.text || "";
+      const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
+      ta.addEventListener("input", () => { it.text = ta.value; grow(); stamp(it); save({ redraw: false }); });
+      requestAnimationFrame(grow);
+      card.append(el("div", { class: "bc-head" }, [grip, el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
+      card.append(ta);
+      card.append(notesEl(it));
+      return card;
+    }
+    // the citation is the way back to the page: it opens the chapter or talk at this passage
+    const meta = el("div", { class: "bc-meta" }, [it.doc_id
+      ? el("button", { type: "button", class: "bc-cite", text: it.citation, title: "Open this page at the passage", "aria-label": `${it.citation}: open the page at this passage`, onclick: () => openPassage(it) })
+      : el("div", { class: "bc-cite", text: it.citation })]);
+    // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
+    if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
+    const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
+    card.append(el("div", { class: "bc-head" }, [grip, meta, tools, port]));
+    card.append(textEl(it));
+    // the talk and conference sit under the words, the way an attribution follows a quote
+    if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
+    card.append(notesEl(it));
+    if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint first-word", text: "Now tap the last word of the phrase. Tap anywhere else to drop it." }));
+    if (linking && linking.id === it.id) card.append(el("div", { class: "bc-hint", text: "Linking from here. Tap this card, or Cancel, to stop." }));
+    if (active && active.id === it.id) {
+      const h = hlById(it, active.hl);
+      if (h) card.append(el("div", { class: "hl-tools" }, [
+        el("span", { class: "ph", text: `“${phraseOf(it, h)}”` }),
+        el("button", { type: "button", class: "chip small", text: "Link to…", onclick: (e) => { e.stopPropagation(); linking = { id: it.id, hl: h.id }; active = null; draw(); } }),
+        el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => {
+          e.stopPropagation();
+          const links = deck.links.filter((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)).length;
+          removeHighlight(it, h); active = null; save();
+          did(links ? `Highlight removed, with its ${plural(links, "connection")}.` : "Highlight removed.");
+        } }),
+        el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
+      ]));
+    }
+    const mine = deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id);
+    if (mine.length) {
+      const row = el("div", { class: "bc-links" });
+      for (const l of mine) {
+        const out = l.from.id === it.id;
+        const other = endOf(out ? l.to : l.from);
+        if (!other) continue;
+        const otherText = other.hl ? `: “${phraseOf(other.item, other.hl)}”` : "";
+        row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this connection", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
+          el("b", { text: String(linkNumber(l)) }),
+          ` ${out ? "→" : "←"} ${cardCitation(other.item)}${otherText}`,
+          el("i", { text: l.label ? `, ${l.label}` : ", add a label" }),
         ]));
       }
-      const mine = deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id);
-      if (mine.length) {
-        const row = el("div", { class: "bc-links" });
-        for (const l of mine) {
-          const out = l.from.id === it.id;
-          const other = endOf(out ? l.to : l.from);
-          if (!other) continue;
-          const otherText = other.hl ? `: “${phraseOf(other.item, other.hl)}”` : "";
-          row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this connection", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
-            el("b", { text: String(linkNumber(l)) }),
-            ` ${out ? "→" : "←"} ${cardCitation(other.item)}${otherText}`,
-            el("i", { text: l.label ? `, ${l.label}` : ", add a label" }),
-          ]));
-        }
-        card.append(row);
-      }
-      cards.append(card);
+      card.append(row);
+    }
+    return card;
+  }
+  // The cards are patched, not rebuilt. Each card on the board is remembered with a signature:
+  // its item as text, and whatever the board is doing to it (a first word tapped, a highlight's
+  // tools showing, a link starting here, the connections its chips name). A redraw makes a new
+  // card only where the signature changed, and puts the cards in the deck's order by moving the
+  // ones out of place: a highlight, a note, a label or a move touches one card or two, where it
+  // used to rebuild every node of a long deck. The token says the item is the same object, so a
+  // deck put back by Undo (new objects) gets new cards and no card acts on an item that is gone.
+  const tokens = new WeakMap();
+  let tokenCount = 0;
+  const token = (o) => { let t = tokens.get(o); if (!t) { t = ++tokenCount; tokens.set(o, t); } return t; };
+  let drawn = new Map(); // item id: { sig, el }
+  let foot = null;       // "+ Question" and "+ Slide text", made once
+  function cardSig(it, idx) {
+    const parts = [token(it), JSON.stringify(it)];
+    if (menuFor === it.id) parts.push("menu", idx === 0 ? "first" : "", idx === deck.items.length - 1 ? "last" : "");
+    if (it.type !== "passage") return parts.join("\u0001");
+    if (pending && pending.id === it.id) parts.push(`pending ${pending.i}`);
+    if (active && active.id === it.id) parts.push(`active ${active.hl}`);
+    if (linking && linking.id === it.id) parts.push(`linking ${linking.hl || ""}`);
+    deck.links.forEach((l, n) => {
+      if (l.from.id !== it.id && l.to.id !== it.id) return;
+      const other = endOf(l.from.id === it.id ? l.to : l.from);
+      parts.push(n, token(l), l.from.id === it.id ? ">" : "<", l.label || "", other ? cardCitation(other.item) : "", other && other.hl ? `${other.hl.s}-${other.hl.e}` : "");
     });
+    return parts.join("\u0001");
+  }
+  // Typing in a card changes its item and nothing else on it: the card stands as drawn.
+  function stamp(it) {
+    const c = drawn.get(it.id);
+    if (c) c.sig = cardSig(it, deck.items.indexOf(it));
+  }
+  function drawCards() {
+    const cards = ui.cards;
+    if (selectedId && !byId(selectedId)) selectedId = null;
+    const want = [], live = new Map();
+    deck.items.forEach((it, idx) => {
+      const sig = cardSig(it, idx);
+      let c = drawn.get(it.id);
+      if (!c || c.sig !== sig) c = { sig, el: cardEl(it, idx) };
+      c.el.classList.toggle("selected", it.id === selectedId);
+      live.set(it.id, c);
+      want.push(c.el);
+    });
+    drawn = live;
+    // what is no longer wanted goes (old cards, the foot, the empty deck's message); then each
+    // card that is not where the deck has it is moved there
+    const keep = new Set(want);
+    if (foot && deck.items.length) keep.add(foot);
+    for (const n of [...cards.children]) if (!keep.has(n)) n.remove();
+    let ref = cards.firstChild;
+    for (const n of want) { if (n === ref) ref = ref.nextSibling; else cards.insertBefore(n, ref); }
     // A question or slide text is added from the foot of the list, after the selected card.
-    if (deck.items.length) cards.append(el("div", { class: "board-foot" }, [
+    if (deck.items.length && (!foot || cards.lastChild !== foot)) cards.append(foot ||= el("div", { class: "board-foot" }, [
       el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => { addCard("question"); did("Question added."); } }),
       el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => { addCard("note"); did("Slide text added."); } }),
     ]));
@@ -973,7 +1136,7 @@ import { esc } from "./lib/format.js";
     const ta = el("textarea", { class: "bc-notes-text", rows: 2, hidden: true, placeholder: "What to say when this slide is up (goes into the PowerPoint as speaker notes)", "aria-label": "Speaker notes" });
     ta.value = it.notes || "";
     const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight + 2) + "px"; };
-    ta.addEventListener("input", () => { it.notes = ta.value; wrap.classList.toggle("has", !!ta.value.trim()); toggle.textContent = ta.value.trim() ? "Speaker notes" : "Add speaker notes"; grow(); save({ redraw: false }); });
+    ta.addEventListener("input", () => { it.notes = ta.value; wrap.classList.toggle("has", !!ta.value.trim()); toggle.textContent = ta.value.trim() ? "Speaker notes" : "Add speaker notes"; grow(); stamp(it); save({ redraw: false }); });
     ta.addEventListener("click", (e) => e.stopPropagation());
     wrap.append(toggle, ta);
     return wrap;
@@ -1016,11 +1179,176 @@ import { esc } from "./lib/format.js";
   }
   function move(i, d) {
     const j = i + d;
-    if (j < 0 || j >= deck.items.length) return;
+    if (i < 0 || j < 0 || j >= deck.items.length) return;
     [deck.items[i], deck.items[j]] = [deck.items[j], deck.items[i]];
     save();
     did(d < 0 ? "Moved up." : "Moved down.");
   }
+  // A card put at another place in the order (by its handle, or to the top or the end from its
+  // menu). The toast says where it went, by the card now above it, and takes it back.
+  function moveTo(it, j) {
+    const i = deck.items.indexOf(it);
+    j = Math.max(0, Math.min(deck.items.length - 1, j));
+    if (i < 0 || i === j) return false;
+    deck.items.splice(i, 1);
+    deck.items.splice(j, 0, it);
+    save();
+    did(`Moved ${cardName(it)} ${j === 0 ? "to the top" : `after ${cardName(deck.items[j - 1])}`}.`);
+    return true;
+  }
+  // A card that was moved (or redrawn) loses the focus its button had: put it back, so the arrow
+  // keys or the menu can move the card again.
+  function refocus(id, sel) {
+    const n = ui && ui.cards.querySelector(`.bcard[data-id="${id}"] ${sel}`);
+    if (n) { try { n.focus({ preventScroll: true }); } catch (_) {} n.scrollIntoView?.({ block: "nearest" }); }
+  }
+
+  // The "more" menu of a card: the moves the handle makes, for the keyboard and for anyone who
+  // would rather tap, and Remove. A move leaves it open with the same choice in focus, so a card
+  // goes up five places with five presses. A tap outside, Escape, or its button closes it.
+  const MENU = [
+    ["Move up", (it) => move(deck.items.indexOf(it), -1), (idx) => idx === 0],
+    ["Move down", (it) => move(deck.items.indexOf(it), 1), (idx, n) => idx === n - 1],
+    ["Move to the top", (it) => moveTo(it, 0), (idx) => idx === 0],
+    ["Move to the end", (it) => moveTo(it, deck.items.length - 1), (idx, n) => idx === n - 1],
+  ];
+  function menuEl(it, idx) {
+    const menu = el("div", { class: "bc-menu", role: "menu", "aria-label": `Move or remove ${cardName(it)}` });
+    MENU.forEach(([text, act, off], k) => menu.append(el("button", { type: "button", role: "menuitem", text, "data-k": String(k), disabled: off(idx, deck.items.length), onclick: (e) => {
+      e.stopPropagation();
+      act(it);
+      const same = ui.cards.querySelector(`.bcard[data-id="${it.id}"] .bc-menu [data-k="${k}"]:not(:disabled)`);
+      refocus(it.id, same ? `.bc-menu [data-k="${k}"]` : ".bc-menu button:not(:disabled)");
+    } })));
+    menu.append(el("button", { type: "button", role: "menuitem", class: "danger", text: "Remove from the deck", onclick: (e) => { e.stopPropagation(); menuFor = null; removeCard(it); } }));
+    menu.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+      const items = [...menu.querySelectorAll("button:not(:disabled)")];
+      const at = items.indexOf(document.activeElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      e.preventDefault();
+      items[next]?.focus();
+    });
+    return menu;
+  }
+  let menuOutside = null;
+  function openMenu(id) {
+    closeEditor();
+    menuFor = id;
+    draw();
+    ui.cards.querySelector(`.bcard[data-id="${id}"] .bc-menu`)?.scrollIntoView?.({ block: "nearest" }); // the whole menu, when its card is at the foot of the pane
+    refocus(id, ".bc-menu button:not(:disabled)");
+    if (!menuOutside) {
+      menuOutside = (e) => { if (menuFor && !(e.target.closest && e.target.closest(".bc-menu, .bc-more"))) closeMenu(false); };
+      document.addEventListener("pointerdown", menuOutside, true);
+    }
+  }
+  function closeMenu(focus) {
+    if (menuOutside) { document.removeEventListener("pointerdown", menuOutside, true); menuOutside = null; }
+    if (!menuFor) return;
+    const id = menuFor;
+    menuFor = null;
+    draw();
+    if (focus) refocus(id, ".bc-more");
+  }
+
+  // Reorder by dragging a card's handle (mouse, finger or pen: pointer events, the handle takes
+  // no scroll gesture, so no long press is needed). The card follows the pointer, the cards it
+  // passes step aside to show where it would land, and the pane scrolls when the pointer nears
+  // its top or bottom. Letting go puts it there, with Undo in the toast; Escape, or letting go
+  // outside the board, puts everything back. Only the handle starts it: a touch on the words
+  // marks a phrase and a touch on a dot draws a link, as before. Nothing in the deck changes
+  // until the drop, so the cards are only shifted on screen meanwhile and the arrows, which
+  // would point at where things were, are hidden until it ends.
+  function onGripDown(e) {
+    const pressed = e.target.closest(".bc-grip");
+    if (!pressed || (e.button !== undefined && e.button > 0) || reorder || drag) return;
+    const it = byId(pressed.closest(".bcard")?.dataset.id);
+    if (!it) return;
+    e.preventDefault();
+    closeEditor();
+    if (menuFor) closeMenu(false); // which may redraw this very card: it and its handle are looked up after
+    const els = [...ui.cards.querySelectorAll(".bcard")];
+    const from = els.findIndex((c) => c.dataset.id === it.id);
+    if (from < 0) return;
+    const me = els[from], grip = me.querySelector(".bc-grip");
+    try { grip.focus({ preventScroll: true }); } catch (_) {}
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    const tops = els.map((c) => c.offsetTop), heights = els.map((c) => c.offsetHeight);
+    const span = heights[from] + (parseFloat(getComputedStyle(me).marginBottom) || 0); // the room the card takes in the list
+    const scroller = scrollerOf(ui.canvas);
+    const whole = scroller === document.scrollingElement || scroller === document.documentElement;
+    const last = els.length - 1;
+    reorder = { it, from, to: from, x: e.clientX, y: e.clientY, y0: e.clientY, s0: scroller.scrollTop, moved: false, out: false, loop: null, end: null };
+    board.classList.add("reordering");
+    me.classList.add("lifted");
+    // Outside: off the side of the cards, or well past the top or bottom of what shows of them.
+    const outside = (x, y) => {
+      const c = ui.canvas.getBoundingClientRect(), box = visibleBox();
+      return x < c.left - 24 || x > c.right + 24 || y < box.top - 48 || y > box.bottom + 48;
+    };
+    const update = () => {
+      if (!reorder) return;
+      const r = reorder;
+      const d = Math.max(tops[0] - tops[from], Math.min(tops[last] + heights[last] - tops[from] - heights[from], r.y - r.y0 + scroller.scrollTop - r.s0));
+      me.style.transform = `translateY(${d}px)`;
+      r.out = outside(r.x, r.y);
+      // the cards it has passed: one below counts when its middle is above the dragged card's foot, one above when its middle is below the dragged card's head
+      let to = from;
+      if (!r.out) els.forEach((c, i) => {
+        const mid = tops[i] + heights[i] / 2;
+        if (i > from && tops[from] + heights[from] + d > mid) to++;
+        if (i < from && tops[from] + d < mid) to--;
+      });
+      r.to = to;
+      me.classList.toggle("out", r.out);
+      els.forEach((c, i) => { if (i !== from) c.style.transform = i > from && i <= to ? `translateY(${-span}px)` : i < from && i >= to ? `translateY(${span}px)` : ""; });
+    };
+    const onMove = (ev) => {
+      if (!reorder) return;
+      reorder.x = ev.clientX; reorder.y = ev.clientY;
+      if (Math.abs(ev.clientY - reorder.y0) > 4) reorder.moved = true;
+      update();
+    };
+    const onEnd = (ev, cancelled = false) => {
+      if (!reorder || reorder.it !== it) return;
+      grip.removeEventListener("pointermove", onMove);
+      grip.removeEventListener("pointerup", onEnd);
+      grip.removeEventListener("pointercancel", onLost);
+      grip.removeEventListener("lostpointercapture", onLost);
+      try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (reorder.loop) cancelAnimationFrame(reorder.loop);
+      if (ev && ev.type === "pointerup") { reorder.x = ev.clientX; reorder.y = ev.clientY; update(); }
+      const { to, moved, out } = reorder;
+      reorder = null;
+      board.classList.remove("reordering");
+      me.classList.remove("lifted", "out");
+      for (const c of els) c.style.transform = "";
+      const dropped = !cancelled && !!ev && ev.type === "pointerup" && !out;
+      if (dropped && to !== from) { moveTo(it, to); refocus(it.id, ".bc-grip"); }
+      else if (moved && (cancelled || out)) GL().toast("Not moved.");
+      else if (!moved && !cancelled && !gripHintShown) { gripHintShown = true; GL().toast("Drag this handle to move the card, or press the up and down arrow keys."); }
+    };
+    reorder.end = onEnd;
+    const onLost = (ev) => onEnd(ev, true); // the browser took the pointer away
+    grip.addEventListener("pointermove", onMove);
+    grip.addEventListener("pointerup", onEnd);
+    grip.addEventListener("pointercancel", onLost);
+    grip.addEventListener("lostpointercapture", onLost);
+    // Scroll the pane when the pointer nears its top or bottom, so a card can go further than what shows.
+    const step = () => {
+      if (!reorder) return;
+      const r = whole ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      const top = r.top + stickyTop();
+      let dy = 0;
+      if (reorder.y < top + 60) dy = -Math.min(18, Math.ceil((top + 60 - reorder.y) / 3));
+      else if (reorder.y > r.bottom - 60) dy = Math.min(18, Math.ceil((reorder.y - (r.bottom - 60)) / 3));
+      if (dy && reorder.moved && scroller.scrollBy) { scroller.scrollBy(0, dy); update(); }
+      reorder.loop = requestAnimationFrame(step);
+    };
+    if (window.requestAnimationFrame) reorder.loop = requestAnimationFrame(step);
+  }
+  let gripHintShown = false;
   const cardName = (it) => (it.type === "passage" ? it.citation || "the passage" : it.type === "section" ? "the section" : it.type === "question" ? "the question" : "the slide text");
   // The card's own remove: its highlights, connections and speaker notes go with it, and come back with Undo.
   function removeCard(it) {
@@ -1087,7 +1415,7 @@ import { esc } from "./lib/format.js";
     const srcCard = port.closest(".bcard");
     if (srcCard) srcCard.classList.add("drag-src");
     drag = { from, port, temp, start, target: null, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false, loop: null, pointerId: e.pointerId, end: null };
-    syncBanner();
+    syncBanner(); settleBanner();
     const update = () => {
       if (!drag) return;
       const c = ui.canvas.getBoundingClientRect();
@@ -1121,7 +1449,7 @@ import { esc } from "./lib/format.js";
       const moved = drag.moved;
       if (moved) hintShown = true; // someone who has dragged the dot does not need telling how
       drag = null;
-      syncBanner();
+      syncBanner(); settleBanner();
       if (target) finishLink(from, target);
       else if (moved || cancelled) GL().toast("Nothing linked.");
       else if (!hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
@@ -1232,7 +1560,8 @@ import { esc } from "./lib/format.js";
     return d;
   }
   function drawLines() {
-    if (!ui || !board.isConnected) return;
+    if (!ui || !board.isConnected) { bannerFrom = null; return; }
+    settleBanner();
     // read: the canvas, every dot, every card
     const cr = ui.canvas.getBoundingClientRect();
     const W = Math.max(1, cr.width), H = Math.max(1, cr.height);
@@ -1801,8 +2130,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       if (it.type === "link") { const u = linkUnit(it); if (u) units.push(u); continue; }
       for (const chunk of pieces(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
     }
-    const map = mapUnit();
-    if (map) units.push(map);
+    units.push(...mapUnits());
     GL().startPresentingUnits(units, { theme: { bg: `#${t.bg}`, fg: `#${t.text}`, accent: `#${t.accent}`, muted: `#${t.muted}` } });
   }
   // The pieces a passage's slides show (chunksOf), each with the place of its words in the
@@ -1887,45 +2215,52 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       `<div class="side"><div class="x">${excerptHtml(b.item, b.hl)}</div><div class="ref">${esc(b.item.citation)}</div></div></div>`;
     return { kind: "link", html, where: "" };
   }
-  function mapUnit() {
-    const lay = mapLayout();
-    if (!lay) return null;
-    const S = 100; // slide inches to SVG units
+  // The chain on the stage: the same picture the PowerPoint draws, from the same layout, as SVG.
+  // Sizes are slide points, so what is 16pt in the file is the same share of the screen here.
+  function mapUnits() {
+    const lays = mapLayouts();
+    const S = 100, PT = S / 72; // slide inches, and points, to SVG units
     const f = (v) => (v * S).toFixed(1);
-    let svg = `<svg class="stage-map" viewBox="0 ${f(lay.top - 0.1)} ${f(lay.W)} ${f(lay.bottom - lay.top + 0.2)}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>`;
-    for (const l of lay.links) {
-      svg += `<polyline points="${l.points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#ah)" opacity=".85"/>`;
-      if (l.label) {
-        const { x, y, above } = l.labelAt;
-        const ty = y * S + (above === null ? 6 : above ? -7 : 19);
-        svg += `<text x="${f(x)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="16" fill="currentColor" opacity=".9">${esc(l.label)}</text>`;
-      }
-    }
     const accent = "var(--stage-accent, currentColor)";
-    for (const nd of lay.nodes) {
-      const bx = nd.x * S, by = nd.y * S, bw = nd.w * S, bh = nd.h * S;
-      svg += `<rect x="${(bx - bw / 2).toFixed(1)}" y="${(by - bh / 2).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="9" fill="rgba(127,127,127,.14)" stroke="currentColor" stroke-width="1.5" opacity=".9"/>`;
-      const refSize = Math.min(15, Math.max(10, (bw * 0.92) / Math.max(1, nd.label.length * 0.58)));
-      const top = by - bh / 2;
-      svg += `<text x="${bx.toFixed(1)}" y="${(top + 9 + refSize).toFixed(1)}" text-anchor="middle" font-size="${refSize.toFixed(1)}" font-weight="700" style="fill:${accent}">${esc(nd.label)}</text>`;
-      const size = nd.w >= 2 ? 13 : nd.w >= 1.7 ? 12 : 11;
-      const lines = wrapWords(nd.excerpt, Math.max(8, Math.floor((bw - 16) / (size * 0.5))), 3);
-      lines.forEach((line, i) => { svg += `<text x="${bx.toFixed(1)}" y="${(top + 9 + refSize + 7 + (i + 1) * size * 1.18).toFixed(1)}" text-anchor="middle" font-size="${size}" fill="currentColor" opacity=".92">${esc(line)}</text>`; });
-    }
-    svg += "</svg>";
-    const caption = deck.chain && deck.chain.caption ? `<div class="stage-caption">${esc(deck.chain.caption)}</div>` : "";
-    return { kind: "map", html: svg + caption, where: deck.title ? `${deck.title}: the chain` : "The chain" };
+    return lays.map((lay, k) => {
+      const x0 = lay.M - 0.15, w = lay.W - 2 * lay.M + 0.3;
+      let svg = `<svg class="stage-map" viewBox="${f(x0)} ${f(lay.top - 0.05)} ${f(w)} ${f(lay.bottom - lay.top + 0.1)}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ah${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>`;
+      for (const l of lay.links) svg += `<polyline points="${l.points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#ah${k})" opacity=".85"/>`;
+      for (const l of lay.links) {
+        if (!l.text) continue;
+        const { x, y, above } = l.labelAt, size = CHAIN.arrow * PT;
+        const ty = y * S + (above === null ? size * 0.35 : above ? -size * 0.4 : size * 1.05); // beside a drop, above a run, or under one
+        svg += `<text class="map-arrow-label" x="${f(x)}" y="${ty.toFixed(1)}" text-anchor="${above === null ? "start" : "middle"}" font-size="${size.toFixed(1)}" fill="currentColor">${esc(l.text)}</text>`;
+      }
+      for (const nd of lay.nodes) {
+        const bx = nd.x * S, by = nd.y * S, bw = nd.w * S, bh = nd.h * S, t = nd.fit;
+        svg += `<rect x="${(bx - bw / 2).toFixed(1)}" y="${(by - bh / 2).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="10" fill="rgba(127,127,127,.14)" stroke="currentColor" stroke-width="1.5" opacity=".9"/>`;
+        const ls = t.labelSize * PT, es = t.size * PT, lh = 1.22;
+        const blockH = t.labelLines.length * ls * lh + (t.lines.length ? 6 + t.lines.length * es * lh * 1.08 : 0);
+        let y = by - blockH / 2;
+        for (const line of t.labelLines) { y += ls * lh; svg += `<text class="map-label" x="${bx.toFixed(1)}" y="${(y - ls * 0.3).toFixed(1)}" text-anchor="middle" font-size="${ls.toFixed(1)}" font-weight="700" style="fill:${accent}">${esc(line)}</text>`; }
+        y += 6;
+        for (const line of t.lines) { y += es * lh * 1.08; svg += `<text class="map-excerpt" x="${bx.toFixed(1)}" y="${(y - es * 0.32).toFixed(1)}" text-anchor="middle" font-size="${es.toFixed(1)}" fill="currentColor" opacity=".92">${esc(line)}</text>`; }
+      }
+      svg += "</svg>";
+      const caption = lay.caption ? `<div class="stage-caption">${esc(lay.caption)}</div>` : "";
+      return { kind: "map", html: svg + caption, where: lay.title };
+    });
   }
-  // Greedy word wrap for SVG text, with an ellipsis when it runs past the lines allowed.
-  function wrapWords(text, perLine, maxLines) {
+  // The lines a text takes in a box of boxW inches at a size in points, measured the way
+  // countLines counts them; past maxLines the last line ends in an ellipsis.
+  function wrapLines(text, font, size, boxW, bold = false, maxLines = 99) {
+    const maxW = boxW * 72, space = textWidth(" ", font, size, false);
     const lines = [];
-    let cur = "";
-    for (const w of String(text || "").split(/\s+/).filter(Boolean)) {
-      if (cur && (cur + " " + w).length > perLine) { lines.push(cur); cur = w; if (lines.length === maxLines) break; } else cur = cur ? cur + " " + w : w;
+    let cur = "", w = 0, cut = false;
+    for (const word of String(text || "").split(/\s+/).filter(Boolean)) {
+      const ww = textWidth(word, font, size, bold);
+      if (cur && w + space + ww > maxW) {
+        if (lines.length === maxLines - 1) { cut = true; break; }
+        lines.push(cur); cur = word; w = ww;
+      } else { cur = cur ? `${cur} ${word}` : word; w += (w > 0 ? space : 0) + ww; }
     }
-    if (lines.length < maxLines && cur) lines.push(cur);
-    const used = lines.join(" ").split(/\s+/).length, all = String(text || "").split(/\s+/).filter(Boolean).length;
-    if (used < all && lines.length) lines[lines.length - 1] = lines[lines.length - 1].replace(/[,;:.]?$/, "") + " …";
+    if (cur) lines.push(cut ? cur.replace(/[,;:.]?$/, "") + " …" : cur);
     return lines;
   }
   // What a passage says, in a box: its highlighted phrases, or its opening words.
@@ -1941,65 +2276,140 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const ws = words.map((x) => x.w);
     return `“${ws.slice(0, maxWords).join(" ")}${ws.length > maxWords ? " …" : ""}”`;
   }
-  // The chain as one picture: passages in deck order, left to right (up to
-  // five a row), each arrow routed above the row (forward) or below it
-  // (back) on its own lane, with the label on the run. Positions are slide
-  // inches; the PowerPoint and the stage both draw from this.
-  function mapLayout() {
+  // The chain, drawn to be read from the back of a chapel. A slide holds at most six passages,
+  // three to a row in two rows, in boxes that take the room there is; the passage names and the
+  // names on the arrows are 16pt on a 10 inch slide (about 21pt on PowerPoint's wide one, 43px
+  // on a 1920 by 1080 screen) and never shrink, and the excerpts never go under 13pt: a long
+  // label is cut short and a long excerpt gives up words instead. A chain with more passages
+  // than a slide holds is split across slides, by its arrows: each slide takes the next arrows
+  // in deck order until its passages are full, so every arrow is drawn once, between two boxes
+  // on the same slide, and a passage that carries the chain on to the next slide opens it.
+  // An arrow between two boxes in one row runs above the row (below it when it points back, or
+  // in the lower row), each on its own lane with its name on the run; one between the rows
+  // runs along the gap between them, so no arrow crosses a box. Positions are slide inches;
+  // the PowerPoint and the stage both draw from this.
+  const CHAIN = { label: 16, arrow: 16, excerptMin: 13, lane: 0.36, perSlide: 6 };
+  function mapLayouts() {
     const g = graph();
-    if (!g) return null;
-    const W = 10, M = 0.75, inner = W - 2 * M, top = 0.98, bottom = deck.chain && deck.chain.caption ? 4.3 : 4.95;
+    if (!g) return [];
+    const caption = (deck.chain && deck.chain.caption) || "";
+    const title = deck.title ? `${deck.title}: the chain` : "The chain";
+    // two rows of three; a slide whose arrows (or the caption) leave its boxes under an inch of height is dealt again, three to a slide in one row
+    const pages = chainPages(g, CHAIN.perSlide).flatMap((page, i, all) => (mapLayout(page, i === all.length - 1 ? caption : "").nodes[0].h >= 1.0 ? [page] : chainPages(page, 3)));
+    const lays = pages.map((page, i) => mapLayout(page, i === pages.length - 1 ? caption : ""));
+    lays.forEach((lay, i) => { lay.title = lays.length > 1 ? `${title}, ${i + 1} of ${lays.length}` : title; });
+    return lays;
+  }
+  // The arrows in deck order (by the earlier of their two passages), dealt onto slides.
+  function chainPages(g, perSlide) {
+    const order = new Map(g.nodes.map((n, i) => [n.id, i]));
+    const edges = g.edges.map((e, i) => ({ e, i, lo: Math.min(order.get(e.from), order.get(e.to)), hi: Math.max(order.get(e.from), order.get(e.to)) }))
+      .sort((p, q) => p.lo - q.lo || p.hi - q.hi || p.i - q.i).map((x) => x.e);
+    const pages = [];
+    let ids = new Set(), list = [];
+    const close = () => { if (list.length) pages.push({ nodes: g.nodes.filter((n) => ids.has(n.id)), edges: list }); ids = new Set(); list = []; };
+    for (const e of edges) {
+      const more = [e.from, e.to].filter((id) => !ids.has(id)).length;
+      if (list.length && ids.size + more > perSlide) close();
+      ids.add(e.from); ids.add(e.to); list.push(e);
+    }
+    close();
+    return pages;
+  }
+  function mapLayout(g, caption = "") {
+    const W = 10, M = 0.75, inner = W - 2 * M, top = 1.0, bottom = caption ? 4.2 : 4.95;
     const n = g.nodes.length;
-    const perRow = Math.min(5, n);
+    const perRow = n <= 3 ? n : n === 4 ? 2 : 3;
     const rows = Math.ceil(n / perRow);
-    const gap = 0.3;
-    const bw = Math.min(2.4, (inner - (perRow - 1) * gap) / perRow), bh = rows <= 2 ? 1.0 : 0.8;
-    const x0 = M + (inner - (perRow * bw + (perRow - 1) * gap)) / 2 + bw / 2;
-    const rowY = rows === 1 ? [3.0] : rows === 2 ? [2.18, 3.68] : Array.from({ length: rows }, (_, r) => top + bh / 2 + 0.1 + r * ((bottom - top - bh - 0.2) / (rows - 1)));
-    const nodes = g.nodes.map((node, i) => ({ ...node, i, row: Math.floor(i / perRow), x: x0 + (i % perRow) * (bw + gap), y: rowY[Math.floor(i / perRow)], w: bw, h: bh, excerpt: nodeExcerpt(byId(node.id), perRow >= 5 ? 12 : perRow === 4 ? 14 : 18) }));
+    const bw = Math.min(perRow <= 2 ? 3.6 : 3.0, (inner - (perRow - 1) * 0.35) / perRow);
+    const gap = perRow > 1 ? Math.min(1.0, (inner - perRow * bw) / (perRow - 1)) : 0;
+    // each row is centered, so a second row of two sits under the gaps of the first three
+    const nodes = g.nodes.map((node, i) => {
+      const row = Math.floor(i / perRow), inRow = Math.min(perRow, n - row * perRow);
+      return { ...node, i, row, x: W / 2 + (i % perRow - (inRow - 1) / 2) * (bw + gap), y: 0, w: bw, h: 0 };
+    });
     const at = Object.fromEntries(nodes.map((nd) => [nd.id, nd]));
     const links = g.edges.map((e) => ({ label: e.label, a: at[e.from], b: at[e.to] }));
-    const useLanes = rows <= 2;
+    // Which side of its boxes an arrow runs on: above the row (below it when it points back, or
+    // in the lower of two rows), or, between two rows, in the gap between them.
     const slots = {};
     for (const l of links) {
-      l.bracket = useLanes && l.a.row === l.b.row;
-      if (!l.bracket) continue;
-      l.side = rows === 1 ? (l.a.i < l.b.i ? "top" : "bottom") : (l.a.row === 0 ? "top" : "bottom");
+      l.side = l.a.row !== l.b.row ? "gap" : rows === 1 ? (l.a.i < l.b.i ? "top" : "bottom") : (l.a.row === 0 ? "top" : "bottom");
       for (const nd of [l.a, l.b]) (slots[`${nd.id}|${l.side}`] ||= []).push(l);
     }
-    // Lanes: the shortest spans sit closest to the row; a lane is reused when the spans do not overlap.
+    // Lanes: the shortest spans sit closest to the row; a lane is reused when the spans do not
+    // overlap, and two arrows that meet at one box share a lane, since they attach side by side.
     const lanes = {};
-    for (const l of links.filter((x) => x.bracket).sort((p, q) => Math.abs(p.a.x - p.b.x) - Math.abs(q.a.x - q.b.x))) {
-      const list = (lanes[`${l.a.row}|${l.side}`] ||= []);
+    for (const l of links.slice().sort((p, q) => Math.abs(p.a.x - p.b.x) - Math.abs(q.a.x - q.b.x))) {
+      const list = (lanes[l.side] ||= []);
       const x1 = Math.min(l.a.x, l.b.x), x2 = Math.max(l.a.x, l.b.x);
       let lane = 0;
-      while ((list[lane] || []).some(([u1, u2]) => x1 < u2 + 0.15 && x2 > u1 - 0.15)) lane++;
+      while ((list[lane] || []).some(([u1, u2]) => x1 < u2 - 0.01 && x2 > u1 + 0.01)) lane++;
       (list[lane] ||= []).push([x1, x2]);
       l.lane = lane;
     }
+    // The boxes take what the lanes leave: the whole height in one row, half each in two.
+    const count = (side) => (lanes[side] || []).length;
+    const above = count("top") * CHAIN.lane + (count("top") ? 0.06 : 0);
+    const below = count("bottom") * CHAIN.lane + (count("bottom") ? 0.06 : 0);
+    const rowGap = rows > 1 ? Math.max(0.5, 0.14 + count("gap") * CHAIN.lane) : 0;
+    const room = bottom - top - above - below - rowGap;
+    const bh = rows === 1 ? Math.min(2.5, room - 0.1) : Math.min(1.9, room / 2);
+    const y0 = top + (bottom - top - (above + below + rows * bh + rowGap)) / 2 + above;
+    for (const nd of nodes) { nd.h = bh; nd.y = y0 + bh / 2 + nd.row * (bh + rowGap); }
+    for (const nd of nodes) { nd.excerpt = nodeExcerpt(byId(nd.id), bh >= 1.8 ? 26 : bh >= 1.2 ? 16 : 10); nd.fit = fitNode(nd); }
     // Where an arrow meets a box: spread the arrows on one side so they do not pile onto one point.
     const attach = (l, nd) => {
       const list = slots[`${nd.id}|${l.side}`].slice().sort((p, q) => (p.a === nd ? p.b.x : p.a.x) - (q.a === nd ? q.b.x : q.a.x));
       const k = list.indexOf(l), m = list.length;
-      return nd.x + (k - (m - 1) / 2) * Math.min(0.22, (nd.w - 0.3) / Math.max(1, m - 1));
+      return nd.x + (k - (m - 1) / 2) * Math.min(0.3, (nd.w - 0.4) / Math.max(1, m - 1));
     };
     for (const l of links) {
-      if (l.bracket) {
-        const up = l.side === "top";
-        const edge = (nd) => (up ? nd.y - nd.h / 2 : nd.y + nd.h / 2);
-        const laneY = Math.max(top, Math.min(bottom, up ? edge(l.a) - 0.22 - l.lane * 0.26 : edge(l.a) + 0.22 + l.lane * 0.26));
-        const ax = attach(l, l.a), bx = attach(l, l.b);
+      const ax = attach(l, l.a), bx = attach(l, l.b);
+      const up = l.side === "top" || l.side === "gap"; // the name sits above the run, or under it below the row
+      // the edge of each box the arrow leaves or enters, and the height of its run
+      const edge = (nd) => (l.side === "top" || (l.side === "gap" && nd.row === 1) ? nd.y - nd.h / 2 : nd.y + nd.h / 2);
+      const upper = l.a.row === 0 ? l.a : l.b;
+      const laneY = l.side === "top" ? edge(l.a) - 0.12 - l.lane * CHAIN.lane
+        : l.side === "bottom" ? edge(l.a) + 0.12 + l.lane * CHAIN.lane
+        : upper.y + upper.h / 2 + 0.34 + l.lane * CHAIN.lane;
+      let maxW;
+      if (l.side === "gap" && Math.abs(ax - bx) < 0.05) {
+        // one box straight under the other: a plain drop, its name beside it
+        l.points = [[ax, edge(l.a)], [ax, edge(l.b)]];
+        l.labelAt = { x: ax + 0.14, y: (edge(l.a) + edge(l.b)) / 2, above: null };
+        maxW = 2.2;
+      } else {
         l.points = [[ax, edge(l.a)], [ax, laneY], [bx, laneY], [bx, edge(l.b)]];
         l.labelAt = { x: (ax + bx) / 2, y: laneY, above: up };
-      } else {
-        const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
-        const trim = (nd) => Math.min(nd.w / 2 / Math.max(Math.abs(ux), 1e-6), nd.h / 2 / Math.max(Math.abs(uy), 1e-6)) + 0.04;
-        const x1 = l.a.x + ux * trim(l.a), y1 = l.a.y + uy * trim(l.a), x2 = l.b.x - ux * trim(l.b), y2 = l.b.y - uy * trim(l.b);
-        l.points = [[x1, y1], [x2, y2]];
-        l.labelAt = { x: (x1 + x2) / 2 - uy * 0.22, y: (y1 + y2) / 2 + ux * 0.22, above: null };
+        maxW = Math.max(1.6, Math.abs(bx - ax) - 0.3);
       }
+      // the name on the arrow, at its one size: cut short when the run cannot hold it
+      const fitted = l.label ? oneLine(l.label, { font: SANS, boxW: maxW, max: CHAIN.arrow, min: CHAIN.arrow }) : null;
+      l.text = fitted ? fitted.text : "";
+      l.cut = !!fitted && fitted.text !== l.label;
+      l.maxW = maxW;
     }
-    return { nodes, links, W, H: 5.625, top, bottom };
+    return { nodes, links, W, H: 5.625, M, top, bottom, caption };
+  }
+  // What a box holds: the passage's name at its one size, on two lines at most, and under it
+  // as much of the excerpt as fits at a size the room can read. A box too small for any of it
+  // keeps the name alone.
+  function fitNode(nd) {
+    const boxW = nd.w - 0.36, boxH = nd.h - 0.24;
+    const labelLines = wrapLines(nd.label, SANS, CHAIN.label, boxW * 0.94, true, 2);
+    const labelH = (labelLines.length * CHAIN.label * LINE_EM[SANS] + 5) / 72;
+    let text = nd.excerpt, fit = null, shortened = 0;
+    for (;;) {
+      fit = fitSize({ text, font: SERIF, boxW, boxH: Math.max(0.05, boxH - labelH), max: nd.h >= 1.8 ? 20 : 17, min: CHAIN.excerptMin, lineSpacing: 1.08 });
+      if (fit.fits) break;
+      const ws = text.replace(/[“”]/g, "").replace(/\s*…$/, "").split(/\s+/).filter(Boolean);
+      if (ws.length <= 4) { text = ""; break; }
+      text = `“${ws.slice(0, Math.max(4, Math.floor(ws.length * 0.75))).join(" ")} …”`;
+      shortened++;
+    }
+    const size = text ? fit.size : CHAIN.excerptMin;
+    return { labelSize: CHAIN.label, labelLines, excerpt: text, size, lines: text ? wrapLines(text, SERIF, size, boxW * 0.94) : [], shortened };
   }
   // Nodes and edges for the map: every passage that takes part in a connection.
   function graph() {
@@ -2321,52 +2731,46 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       });
     }
 
-    // The chain as one picture, one slide at the end.
-    const lay = mapLayout();
-    if (lay) {
+    // The chain as a picture, at the end: one slide, or as many as its passages need.
+    mapLayouts().forEach((lay, page) => {
       n++;
       const s = slide();
-      kicker(s, deck.title ? `${deck.title}: the chain` : "The chain");
+      kicker(s, lay.title);
       for (const l of lay.links) {
         for (let i = 1; i < l.points.length; i++) {
           const [x1, y1] = l.points[i - 1], [x2, y2] = l.points[i];
-          addSegment(pptx, s, x1, y1, x2, y2, { color: t.accent, width: 1.75, ...(i === l.points.length - 1 ? { endArrowType: "triangle" } : {}) });
-        }
-        if (l.label) {
-          const { x, y, above } = l.labelAt;
-          const ll = oneLine(l.label, { font: SANS, boxW: 2.0, max: 10, min: 7 });
-          report.boxes++;
-          s.addText(ll.text, { x: x - 1.0, y: above === null ? y - 0.14 : above ? y - 0.3 : y + 0.02, w: 2.0, h: 0.28, fontFace: SANS, fontSize: ll.size, color: t.accent, align: "center", valign: above === null ? "middle" : above ? "bottom" : "top", margin: 0 });
+          addSegment(pptx, s, x1, y1, x2, y2, { color: t.accent, width: 2.25, ...(i === l.points.length - 1 ? { endArrowType: "triangle" } : {}) });
         }
       }
-      if (deck.chain && deck.chain.caption) {
-        const cf = fitSize({ text: deck.chain.caption, font: SERIF, boxW: inner - 0.6, boxH: 0.62, max: 12, min: 8, lineSpacing: 1.1 });
+      for (const l of lay.links) {
+        if (!l.text) continue;
+        const { x, y, above } = l.labelAt;
+        if (l.cut) report.shortened++;
         report.boxes++;
-        s.addText(deck.chain.caption, { x: M + 0.3, y: 4.36, w: inner - 0.6, h: 0.62, fontFace: SERIF, italic: true, fontSize: cf.size, color: t.muted, align: "center", valign: "top", margin: 0, lineSpacingMultiple: 1.1 });
+        const w = l.maxW + 0.2;
+        // beside a straight drop; else above its run, or under it below the row
+        if (above === null) s.addText(l.text, { x, y: y - 0.15, w, h: 0.3, fontFace: SANS, fontSize: CHAIN.arrow, color: t.accent, align: "left", valign: "middle", margin: 0 });
+        else s.addText(l.text, { x: x - w / 2, y: above ? y - 0.32 : y + 0.02, w, h: 0.3, fontFace: SANS, fontSize: CHAIN.arrow, color: t.accent, align: "center", valign: above ? "bottom" : "top", margin: 0 });
       }
-      if (deck.chain && deck.chain.notes) s.addNotes(deck.chain.notes);
+      if (lay.caption) {
+        const cf = fitSize({ text: lay.caption, font: SERIF, boxW: inner - 0.4, boxH: 0.68, max: 16, min: 11, lineSpacing: 1.1 });
+        report.boxes++;
+        s.addText(lay.caption, { x: M + 0.2, y: 4.3, w: inner - 0.4, h: 0.68, fontFace: SERIF, italic: true, fontSize: cf.size, color: t.muted, align: "center", valign: "top", margin: 0, lineSpacingMultiple: 1.1 });
+      }
+      if (page === 0 && deck.chain && deck.chain.notes) s.addNotes(deck.chain.notes);
       report.slides++;
       for (const nd of lay.nodes) {
-        const big = nd.w >= 2;
-        // label and excerpt share the box; the excerpt gives way until both fit
-        const innerW = nd.w - 12 / 72, innerH = nd.h - 12 / 72;
-        let excerptText = nd.excerpt, size = big ? 11 : nd.w >= 1.7 ? 10 : 9, labelSize = big ? 11 : 10, ok = false;
-        for (let tries = 0; tries < 8 && !ok; tries++) {
-          const labelLines = countLines(nd.label, SANS, labelSize, innerW * 0.94, true);
-          const labelH = (labelLines * labelSize * LINE_EM[SANS] * 1.05 + 3) / 72;
-          const ef = fitSize({ text: excerptText, font: SERIF, boxW: innerW, boxH: Math.max(0.1, innerH - labelH), max: size, min: 7, lineSpacing: 1.05 });
-          size = ef.size; ok = ef.fits;
-          if (!ok) { const ws = excerptText.replace(/[“”]/g, "").replace(/\s*…$/, "").split(/\s+/); if (ws.length <= 4) break; excerptText = `“${ws.slice(0, Math.max(3, Math.floor(ws.length * 0.75))).join(" ")} …”`; report.shortened++; }
-        }
+        const f = nd.fit;
         report.boxes++;
+        report.shortened += f.shortened;
         s.addText([
-          { text: nd.label, options: { bold: true, fontSize: labelSize, color: t.accent, fontFace: SANS, breakLine: true, paraSpaceAfter: 3 } },
-          { text: excerptText, options: { fontSize: size, color: t.text, fontFace: SERIF } },
-        ], { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, align: "center", valign: "middle", margin: 6, lineSpacingMultiple: 1.05,
-          fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.08, shape: pptx.ShapeType.roundRect });
+          { text: f.labelLines.join(" "), options: { bold: true, fontSize: f.labelSize, color: t.accent, fontFace: SANS, ...(f.excerpt ? { breakLine: true, paraSpaceAfter: 5 } : {}) } },
+          ...(f.excerpt ? [{ text: f.excerpt, options: { fontSize: f.size, color: t.text, fontFace: SERIF } }] : []),
+        ], { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, align: "center", valign: "middle", margin: [6, 10, 6, 10], lineSpacingMultiple: 1.08,
+          fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.1, shape: pptx.ShapeType.roundRect });
       }
       footer(s, n);
-    }
+    });
     return pptx;
   }
   // What the last build measured: slides, boxes, what had to give way.
@@ -2541,8 +2945,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
-    // a question card with its words written (Ask's Think it through): addCard, then the text
-    addQuestion: (text) => { const it = addCard("question", { focus: false }); it.text = String(text || "").trim(); lastAddedIds = [it.id]; save(); return it; },
+    // a question card with its words written (Ask's Think it through)
+    addQuestion,
     // a note card with its words already written (a Hebrew or Greek word from its sheet); Undo takes it off by its id
     addNote: (text, notes = "") => { const it = addCard("note", { focus: false }); it.text = String(text || ""); it.notes = String(notes || ""); lastAddedIds = [it.id]; save(); return it; },
   };

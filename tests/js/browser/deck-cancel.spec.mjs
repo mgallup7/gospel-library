@@ -75,7 +75,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // and its badge takes a 44px tap
     const arrow = () => page.evaluate(() => {
       const c = document.querySelector(".board-canvas").getBoundingClientRect();
-      const boxes = [...document.querySelectorAll(".bcard .w, .bcard .bc-tools button, .bcard .vn")].map((n) => n.getBoundingClientRect());
+      const boxes = [...document.querySelectorAll(".bcard .w, .bcard .bc-tools button, .bcard .bc-grip, .bcard .vn")].map((n) => n.getBoundingClientRect());
       let over = 0, n = 0;
       for (const p of document.querySelectorAll(".board-lines path.blink")) {
         const len = p.getTotalLength();
@@ -100,7 +100,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // ---- a card removed: its speaker notes and its connection come back
     await page.click(".bcard[data-id='a'] .notes-toggle");
     await page.fill(".bcard[data-id='a'] .bc-notes-text", "Read slowly.");
-    await page.click(".bcard[data-id='a'] .bc-tools button[aria-label='Remove from the deck']");
+    await page.click(".bcard[data-id='a'] .bc-more");
+    await page.click(".bcard[data-id='a'] .bc-menu button:has-text('Remove from the deck')");
     await settle();
     s = await state();
     check(s.items.length === 2 && s.links.length === 0, "the card and its connection should go");
@@ -111,7 +112,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(s.items.length === 3 && s.items[0].id === "a" && s.items[0].notes === "Read slowly." && s.links.length === 1, "Undo should bring the card back in its place, with its notes and its connection");
 
     // ---- a move, and Cmd+Z once the toast has gone
-    await page.click(".bcard[data-id='b'] .bc-tools button[aria-label='Move down']");
+    await page.click(".bcard[data-id='b'] .bc-more");
+    await page.click(".bcard[data-id='b'] .bc-menu button:has-text('Move down')");
     await settle();
     check((await state()).items.map((i) => i.id).join("") === "acb" && /Moved down/.test(await toastText()), "Move down should move the card and say so");
     await page.evaluate(() => window.Deck.undo());
@@ -131,6 +133,42 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await startLink();
     check(await linking(), "Link to… should show the banner");
     check((await page.locator(".bcard[data-id='a'] .hl-run.src").count()) === 1 && (await page.locator(".bcard.link-src").count()) === 1, "the source phrase and its card should be marked while linking");
+    // the banner has room of its own: at the top of the board it lies over no card, and above all not the first card's citation
+    const overlap = () => page.evaluate(() => {
+      const b = document.querySelector(".board-banner .bb").getBoundingClientRect();
+      return [...document.querySelectorAll(".bcard")].filter((c) => { const r = c.getBoundingClientRect(); return r.top < b.bottom - 0.5 && r.bottom > b.top + 0.5; }).map((c) => c.dataset.id).join("");
+    });
+    const toTop = () => page.evaluate(() => { const b = document.querySelector(".board"); const sc = b.closest(".pane") && getComputedStyle(b.closest(".pane")).overflowY === "auto" ? b.closest(".pane") : document.scrollingElement; sc.scrollTop = 0; });
+    await toTop();
+    await settle();
+    check(await overlap() === "", `with the board at its top, the Cancel banner should cover no card (covers ${await overlap()})`);
+    check(await inView(".bcard[data-id='a'] .bc-cite"), "and the first card's citation should be in plain view under it");
+    await shot("05-linking-top");
+    // it comes and goes without moving the cards on the screen, when the pane has the room to scroll
+    await page.keyboard.press("Escape");
+    await settle();
+    if (!(await page.locator(".bcard[data-id='a'] .hl-tools").count())) await page.click(".bcard[data-id='a'] .hl-run .w");
+    // (three more cards, so the board is long enough to scroll by the banner's height wherever it stands)
+    await page.evaluate(() => { for (let i = 0; i < 3; i++) window.Deck.addPassage({ doc_id: 9100 + i, pid: "p1", kind: "verse", verse: 1, text: "Faith is things which are hoped for and not seen; wherefore, dispute not because ye see not.", citation: `Filler ${i + 1}` }); });
+    await settle();
+    await page.evaluate(() => document.querySelector(".bcard[data-id='b']").scrollIntoView({ block: "start" }));
+    // the browser's own scroll anchoring is turned off for this, as on an iPad before Safari had it: what keeps the cards still is the board
+    const still = await page.addStyleTag({ content: "* { overflow-anchor: none !important; }" });
+    await settle();
+    const topOf = (id) => page.evaluate((i) => Math.round(document.querySelector(`.bcard[data-id='${i}']`).getBoundingClientRect().top), id);
+    const y0 = await topOf("a"); // the card the link starts from: its own height changes, its top does not
+    await page.evaluate(() => [...document.querySelectorAll(".bcard[data-id='a'] .hl-tools button")].find((x) => /Link to/.test(x.textContent)).click()); // a click that does not scroll the page first
+    await settle();
+    const y1 = await topOf("a");
+    check(Math.abs(y1 - y0) <= 1, `the cards should stay where they were when the banner comes (moved ${y1 - y0}px)`);
+    await page.keyboard.press("Escape");
+    await settle();
+    const y2 = await topOf("a");
+    check(Math.abs(y2 - y0) <= 1, `and when it goes (moved ${y2 - y0}px)`);
+    await still.evaluate((n) => n.remove());
+    await page.evaluate(() => { const ids = window.Deck.state.items.filter((i) => /^Filler/.test(i.citation)).map((i) => i.id); window.Deck.removeIds(ids); });
+    await settle();
+    await startLink();
     await page.evaluate(() => document.querySelector(".bcard[data-id='c']").scrollIntoView({ block: "end" }));
     await page.evaluate(() => { const b = document.querySelector(".board"); const sc = b.closest(".pane") && getComputedStyle(b.closest(".pane")).overflowY === "auto" ? b.closest(".pane") : document.scrollingElement; sc.scrollTop = sc.scrollHeight; });
     await settle();

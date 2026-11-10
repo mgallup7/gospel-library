@@ -182,8 +182,15 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   between them, routed down the margin, with a numbered badge; name the
   connection ("fulfilled in", "same word", "defines", your own words) from
   the badge or the chip under the card. Arrows follow the cards as you scroll,
-  reorder and re-wrap. Tap a highlight for Link to… (without dragging) or
-  Remove. Under More, Add question and Add note put a slide of your own
+  reorder and re-wrap. To reorder, drag a card by the handle at its top left
+  (the other cards make room, the toast says where it went and has Undo;
+  Escape or letting go outside the board cancels); with a keyboard, the up
+  and down arrows on the handle, or the card's "more" menu, which also holds
+  Remove. A section or a question from Think it through goes after the
+  card you last touched, and the passages for it under its heading; a
+  passage that lands anywhere you might not expect says where in its toast
+  ("Added after Alma 32:21"). Tap a highlight for Link to… (without
+  dragging) or Remove. Under More, Add question and Add note put a slide of your own
   words on the deck (a question for the room, centered and bold; a thought
   or a line to say), and every card, passage or not, takes speaker notes,
   folded away until wanted, which go into the PowerPoint as the slide's
@@ -196,9 +203,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   One passage per slide, long passages split at verse or sentence breaks,
   speaker and talk under a quote; each connection becomes a slide with the
   two excerpts in panels and the arrow between them, and the deck ends with
-  the chain as one picture: the passages left to right in the order you
-  arranged them, each arrow routed above the row with its label (backward
-  links go under). "Think it through" on the deck sends the chain to Claude
+  the chain as a picture sized for a chapel: the passages in the order you
+  arranged them, in large boxes, six to a slide at most (a longer chain runs
+  on to further slides), each arrow routed above its row with its label
+  (backward links go under), and no name smaller than 16pt. "Think it through" on the deck sends the chain to Claude
   (your chosen model, thinking first): it comes back with labels for
   unlabeled arrows, connections worth drawing that you have not drawn (with
   the exact phrases), a key phrase for any passage you have not highlighted,
