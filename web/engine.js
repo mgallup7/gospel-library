@@ -160,13 +160,13 @@ function closeDb() {
 }
 // Everything computed from the library's contents, dropped when those contents change
 function forgetDerived() {
-  speakerIndex = null; vocab = null; vocabBuild = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
+  speakerIndex = null; vocab = null; vocabBuild = null; vocabMade = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
   lastRanked = null; originalsKnown = null; translitMap = null; lexiconAscii = null; concCache = new Map(); concDocsCache = new Map();
   bitIndex = null; bitIndexTried = false; docOfIndex = null; docOfRow = null; indexMade = null; scopeMasks = new Map(); building = null; libraryGen++;
   try { db && db.exec("DROP TABLE IF EXISTS temp.vocab"); } catch (_) {}
 }
 
-// Files of things worked out from the library (the meaning index), kept in the browser's private
+// Files of things worked out from the library (the meaning index, the vocabulary), kept in the browser's private
 // storage beside it so the next launch reads them instead of working them out again. Each is
 // named for the library's version; none is ever needed: a missing or unreadable one is rebuilt.
 const KEPT = "gl-kept-";
@@ -430,6 +430,8 @@ const methods = {
   async semanticStatus() { return semanticStatus(); },
   async loadSemantic({ base }, progress) { need(); return loadSemantic(base, progress); },
   async semanticEmbed({ text }) { return Array.from(await embedQuery(String(text || ""))); },
+  // How this session came by what it works out from the library (built, or read from its kept file), for the tests
+  async keptStatus() { return { meaning: indexMade ? { ...indexMade } : null, vocabulary: vocabMade ? { ...vocabMade } : null }; },
   // The paragraphs nearest a text by meaning alone, with their scores: the index's own ranking, for the tests
   async semanticNearest({ text, k = 50 }) { need(); const idx = semanticIndex(); return idx ? idx.topK(await embedQuery(String(text || "")), k) : null; },
   async doc({ id, uri }) { need(); return document(id, uri); },
@@ -934,12 +936,44 @@ function loadVocab() {
 }
 // The same list, built in slices between other work once the library is open, so the first
 // word typed never waits for a walk of the whole term index (seconds on the full library).
+// Like the meaning index it is kept in a file named for the library's version, and a later
+// launch reads that instead of walking the index again.
+let vocabMade = null; // { from: "file" | "library", ms, saved, terms }
+const VOCAB_HEAD = 128;
+function packVocab(key, list) {
+  const body = new TextEncoder().encode(list.map(([term, cnt]) => `${term}\t${cnt}\n`).join(""));
+  const head = new TextEncoder().encode(JSON.stringify({ kind: "vocab", key, terms: list.length, bytes: body.byteLength }).padEnd(VOCAB_HEAD));
+  if (head.byteLength !== VOCAB_HEAD) throw new Error("the vocabulary's head does not fit");
+  return [head, body];
+}
+function unpackVocab(buffer, key) {
+  try {
+    if (!buffer || buffer.byteLength < VOCAB_HEAD) return null;
+    const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 0, VOCAB_HEAD)));
+    if (h.kind !== "vocab" || h.key !== key || h.bytes !== buffer.byteLength - VOCAB_HEAD) return null;
+    const out = [];
+    for (const line of new TextDecoder().decode(new Uint8Array(buffer, VOCAB_HEAD)).split("\n")) {
+      const tab = line.indexOf("\t");
+      if (tab > 0) out.push([line.slice(0, tab), Number(line.slice(tab + 1))]);
+    }
+    return out.length === h.terms ? out : null;
+  } catch (_) { return null; }
+}
 function buildVocabulary() {
   if (vocab || vocabBuild || !db) return vocabBuild;
   const gen = libraryGen;
   vocabBuild = (async () => {
     const out = [];
     try {
+      const t0 = performance.now();
+      const name = keptName("vocab"), key = String(current && current.version);
+      const kept = name ? unpackVocab(await readKept(name), key) : null;
+      if (!db || gen !== libraryGen) return;
+      if (kept) {
+        if (!vocab) vocab = kept;
+        vocabMade = { from: "file", ms: Math.round(performance.now() - t0), saved: true, terms: kept.length };
+        return;
+      }
       db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab USING fts5vocab(main, 'paragraphs', 'row')");
       let after = "";
       for (;;) {
@@ -951,6 +985,10 @@ function buildVocabulary() {
         await new Promise((r) => setTimeout(r, 0));
       }
       if (db && gen === libraryGen && !vocab) vocab = out;
+      if (db && gen === libraryGen && name) {
+        const made = vocabMade = { from: "library", ms: Math.round(performance.now() - t0), saved: false, terms: out.length };
+        writeKept(name, packVocab(key, out), () => gen === libraryGen).then(() => { made.saved = true; return sweepKept("vocab", name); }).catch((err) => console.warn("vocabulary not kept:", err?.message));
+      }
     } catch (_) { /* the next search builds it the old way */ }
     finally { if (gen === libraryGen) vocabBuild = null; }
   })();
