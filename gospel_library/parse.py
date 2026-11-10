@@ -229,7 +229,7 @@ def _extract_footnotes(raw, root: Tag, paragraphs: list[Paragraph]) -> list[Foot
             Footnote(
                 note_id=note_id,
                 marker=_clean(v.get("marker") or v.get("label") or ""),
-                html=html,
+                html=scrub_html(html),
                 text=text,
                 pid=v.get("pid") or note_to_pid.get(note_id),
                 refs=refs,
@@ -245,14 +245,43 @@ def _extract_footnotes(raw, root: Tag, paragraphs: list[Paragraph]) -> list[Foot
 _DROP_ATTRS = ("srcset", "sizes", "thumbnail", "poster", "data-video-description")
 
 
-def _reader_html(root: Tag) -> str:
-    node = copy.copy(root)
-    for el in node.find_all(["video", "audio", "script", "style", "iframe"]):
+# What can run, post, load, or draw over the app has no place in a page of the library. The
+# reader cleans what it shows as well (sanitize in web/app.js keeps an allowlist); this is the
+# same care taken once, at the source, so nothing of the kind is ever stored or published.
+_DROP_TAGS = ["video", "audio", "script", "style", "iframe", "frame", "object", "applet", "base", "link", "meta",
+              "form", "input", "button", "select", "textarea", "option"]
+_SUSPECT = re.compile(r"<\s*(?:embed|%s)\b|\s(?:on\w+|style|target|formaction|srcset|poster)\s*=|(?:javascript|vbscript|data)\s*:" % "|".join(_DROP_TAGS), re.I)
+_BAD_URL = re.compile(r"^\s*(javascript|vbscript|data)\s*:", re.I)
+
+
+def scrub(node: Tag) -> Tag:
+    """Remove, in place, the tags and attributes above from node and everything under it."""
+    for el in node.find_all("embed"):
+        el.unwrap()  # the parser does not know embed is empty and puts what follows inside it
+    for el in node.find_all(_DROP_TAGS):
         el.decompose()
-    for el in node.find_all(True):
-        for attr in _DROP_ATTRS:
-            if attr in el.attrs:
+    for el in [node, *node.find_all(True)]:
+        for attr in list(el.attrs):
+            low = attr.lower()
+            if low in _DROP_ATTRS or low == "style" or low == "target" or low.startswith("on") or low == "formaction":
                 del el.attrs[attr]
+            elif low in ("href", "src", "xlink:href", "action") and _BAD_URL.match(str(el.attrs[attr]).replace("\t", "").replace("\n", "")):
+                del el.attrs[attr]
+    return node
+
+
+def scrub_html(html: str) -> str:
+    """The same for a fragment held as text (a footnote). One with nothing of the kind in it is
+    returned as it came, so the stored text of an ordinary note does not change."""
+    if not html or not _SUSPECT.search(html):
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+    scrub(soup)
+    return str(soup)
+
+
+def _reader_html(root: Tag) -> str:
+    node = scrub(copy.copy(root))
     if node.name == "body":
         return "".join(str(c) for c in node.contents)
     return str(node)

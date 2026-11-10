@@ -1235,6 +1235,7 @@ a.toast-action { display: inline-flex; align-items: center; }
 .stage-map { width: 100%; max-height: 72vh; display: block; }
 /* the chain's picture: the names of its passages and arrows in the app's sans */
 .stage-map .map-label, .stage-map .map-arrow-label { font-family: var(--sans); }
+.stage-map .map-label { fill: var(--stage-accent, currentColor); }
 .stage-text:has(.stage-map) { max-width: none; width: 100%; }
 .stage-body.is-wide .stage-text { max-width: none; width: 100%; }
 .smart-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 10px 16px 0; font-size: var(--ui-13); color: var(--ink-2); }

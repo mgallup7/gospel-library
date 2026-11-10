@@ -2204,7 +2204,6 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const lays = mapLayouts();
     const S = 100, PT = S / 72; // slide inches, and points, to SVG units
     const f = (v) => (v * S).toFixed(1);
-    const accent = "var(--stage-accent, currentColor)";
     return lays.map((lay, k) => {
       const x0 = lay.M - 0.15, w = lay.W - 2 * lay.M + 0.3;
       let svg = `<svg class="stage-map" viewBox="${f(x0)} ${f(lay.top - 0.05)} ${f(w)} ${f(lay.bottom - lay.top + 0.1)}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ah${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>`;
@@ -2221,7 +2220,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         const ls = t.labelSize * PT, es = t.size * PT, lh = 1.22;
         const blockH = t.labelLines.length * ls * lh + (t.lines.length ? 6 + t.lines.length * es * lh * 1.08 : 0);
         let y = by - blockH / 2;
-        for (const line of t.labelLines) { y += ls * lh; svg += `<text class="map-label" x="${bx.toFixed(1)}" y="${(y - ls * 0.3).toFixed(1)}" text-anchor="middle" font-size="${ls.toFixed(1)}" font-weight="700" style="fill:${accent}">${esc(line)}</text>`; }
+        for (const line of t.labelLines) { y += ls * lh; svg += `<text class="map-label" x="${bx.toFixed(1)}" y="${(y - ls * 0.3).toFixed(1)}" text-anchor="middle" font-size="${ls.toFixed(1)}" font-weight="700">${esc(line)}</text>`; }
         y += 6;
         for (const line of t.lines) { y += es * lh * 1.08; svg += `<text class="map-excerpt" x="${bx.toFixed(1)}" y="${(y - es * 0.32).toFixed(1)}" text-anchor="middle" font-size="${es.toFixed(1)}" fill="currentColor" opacity=".92">${esc(line)}</text>`; }
       }

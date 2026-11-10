@@ -1485,11 +1485,11 @@ import { esc, mb } from "./lib/format.js";
       el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => outside(e, doc.source_url), title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
       el("span", { class: "pane-switch-slot" }),
     ].filter(Boolean));
-    const body = sanitize(el("article", { class: "doc", html: doc.body_html || "" }));
+    const body = el("article", { class: "doc" }, [sanitize(doc.body_html || "")]);
     if (doc.footnotes && doc.footnotes.length) {
       const notes = el("section", { class: "notes" }, [el("h2", { text: "Footnotes" })]);
       const ol = el("ol");
-      for (const n of doc.footnotes) ol.append(el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), sanitize(el("span", { html: n.html || esc(n.text) }))]));
+      for (const n of doc.footnotes) ol.append(el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), el("span", {}, [sanitize(n.html || esc(n.text))])]));
       notes.append(ol);
       body.append(notes);
     }
@@ -2450,17 +2450,77 @@ import { esc, mb } from "./lib/format.js";
   }
   window.addEventListener("deck:change", syncHitButtons);
 
-  // The library's HTML is the Church's own and the scraper already drops scripts;
-  // this is cheap insurance against anything that could run or leave the app.
-  function sanitize(root) {
-    for (const bad of root.querySelectorAll("script, style, iframe, object, embed, link, meta, form")) bad.remove();
-    for (const n of root.querySelectorAll("*")) {
-      for (const a of [...n.attributes]) {
-        if (/^on/i.test(a.name)) n.removeAttribute(a.name);
-        else if (/^(href|src|xlink:href|formaction)$/i.test(a.name) && /^\s*(javascript|vbscript|data):/i.test(a.value)) n.removeAttribute(a.name);
+  // The library's HTML is the Church's own and the build already scrubs it (parse.py), but a
+  // page of it is still text from outside the app. It is read into a document of its own that
+  // runs nothing and loads nothing (DOMParser), and only what a page of reading is made of is
+  // carried over: the tags below, with their class, id, data- and aria- attributes, a link's
+  // address, a picture from the app's own files. Everything else is left behind: scripts and
+  // styles, forms and their controls, frames, video, a base, every handler, every style
+  // attribute (a page could draw itself over the app with one), a link's target. A tag that is
+  // not known is opened and its words kept. The result is new nodes of this page, so nothing
+  // from outside is ever parsed in it.
+  const SAFE_TAGS = new Set("p span a sup sub em i b strong u s del ins small mark abbr cite q br hr wbr div section article header footer aside h1 h2 h3 h4 h5 h6 ul ol li dl dt dd blockquote pre code table caption colgroup col thead tbody tfoot tr td th img figure figcaption ruby rt rp time bdi bdo".split(" "));
+  // these go with everything inside them; any other unknown tag is unwrapped
+  const DROPPED_WHOLE = new Set("script style iframe frame frameset object embed applet link meta base form input button select textarea option optgroup datalist output video audio source track canvas svg math template noscript title head dialog".split(" "));
+  const SAFE_ATTRS = { a: ["href"], img: ["src", "alt", "width", "height"], td: ["colspan", "rowspan"], th: ["colspan", "rowspan", "scope"], ol: ["start", "type"], li: ["value"], col: ["span"], colgroup: ["span"], time: ["datetime"] };
+  const SAFE_GLOBAL = /^(class|id|lang|dir|title|role|data-[\w.-]+|aria-[\w-]+)$/;
+  function safeHref(v) {
+    const t = String(v || "").replace(/[\u0000-\u0020]+/g, "");
+    return !/^[a-z][a-z0-9+.-]*:/i.test(t) || /^(https?|mailto|tel|sms):/i.test(t);
+  }
+  function safeSrc(v) {
+    const t = String(v || "").trim();
+    if (/^data:image\/(png|jpeg|gif|webp);base64,/i.test(t)) return true;
+    try { return new URL(t, BASE).origin === location.origin; } catch (_) { return false; }
+  }
+  // The chain on the stage is a drawing the deck makes itself (deck.js mapUnits). It is held to
+  // the same rule: these shapes, these attributes, numbers and plain words for values.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const DRAW_TAGS = new Set(["svg", "defs", "marker", "path", "polyline", "rect", "text"]);
+  const DRAW_ATTRS = new Set("class id viewBox x y width height rx points d fill stroke stroke-width stroke-linejoin marker-end opacity text-anchor font-size font-weight refX refY markerWidth markerHeight orient".split(" "));
+  function cleanDrawing(from, into) {
+    for (const c of from.childNodes) {
+      if (c.nodeType === 3) { into.append(document.createTextNode(c.nodeValue)); continue; }
+      if (c.nodeType !== 1 || c.namespaceURI !== SVG_NS || !DRAW_TAGS.has(c.localName)) continue;
+      const node = document.createElementNS(SVG_NS, c.localName);
+      for (const a of c.attributes) {
+        if (!DRAW_ATTRS.has(a.name)) continue;
+        if (a.name === "marker-end" ? !/^url\(#[\w-]+\)$/.test(a.value) : !/^[\w\s.,()%#-]*$/.test(a.value) || /url/i.test(a.value)) continue;
+        node.setAttribute(a.name, a.value);
       }
+      cleanDrawing(c, node);
+      into.append(node);
     }
-    return root;
+    return into;
+  }
+  function cleanInto(from, into, drawing = false) {
+    for (const c of from.childNodes) {
+      if (c.nodeType === 3) { into.append(document.createTextNode(c.nodeValue)); continue; }
+      if (c.nodeType !== 1) continue;
+      const tag = c.localName;
+      if (drawing && tag === "svg" && c.namespaceURI === SVG_NS) { cleanDrawing({ childNodes: [c] }, into); continue; }
+      if (c.namespaceURI !== "http://www.w3.org/1999/xhtml" || DROPPED_WHOLE.has(tag)) continue;
+      if (!SAFE_TAGS.has(tag)) { cleanInto(c, into, drawing); continue; }
+      if (tag === "img" && !safeSrc(c.getAttribute("src"))) continue;
+      const node = document.createElement(tag);
+      const own = SAFE_ATTRS[tag] || [];
+      for (const a of c.attributes) {
+        const name = a.name.toLowerCase();
+        if (!SAFE_GLOBAL.test(name) && !own.includes(name)) continue;
+        if (name === "href" && !safeHref(a.value)) continue;
+        node.setAttribute(name, a.value);
+      }
+      cleanInto(c, node, drawing);
+      into.append(node);
+    }
+    return into;
+  }
+  // sanitize(html) gives the cleaned page as a fragment, ready to be a child of el(); nothing
+  // made from library or study text goes through el({ html }).
+  function sanitize(html, { drawing = false } = {}) {
+    // (a base is renamed first: even in a document that shows nothing, the browser reports one against the app's policy)
+    const inert = new DOMParser().parseFromString(`<!doctype html><body>${String(html ?? "").replace(/<base(?=[\s>/])/gi, "<x-base")}`, "text/html");
+    return cleanInto(inert.body, document.createDocumentFragment(), drawing);
   }
 
   function crumbFor(doc) {
@@ -2778,7 +2838,7 @@ import { esc, mb } from "./lib/format.js";
   stage.append(stageKicker, stageSay);
 
   function presentUnits(doc) {
-    const scratch = sanitize(el("div", { html: doc.body_html || "" })); // the same cleaning renderDoc gives the page
+    const scratch = el("div", {}, [sanitize(doc.body_html || "")]); // the same cleaning renderDoc gives the page
     const units = [];
     const jsp = !!(doc.collection && doc.collection.startsWith("jsp-"));
     let page = jsp ? pageOf(doc) : null; // the manuscript page a paragraph is on, kept with it on the stage
@@ -2933,8 +2993,7 @@ import { esc, mb } from "./lib/format.js";
     body.classList.toggle("is-note", u.kind === "note");
     body.classList.toggle("is-wide", u.kind === "link" || u.kind === "map");
     // What goes on the stage is cleaned as renderDoc cleans the page: a deck card or an Ask passage is HTML too.
-    const clean = sanitize(el("div", { html: u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html }));
-    $(".stage-text", stage).replaceChildren(...clean.childNodes);
+    $(".stage-text", stage).replaceChildren(sanitize(u.kind === "verse" ? u.html.replace(/<span class="verse-number">[^<]*<\/span>/, "") : u.html, { drawing: u.kind === "map" }));
     // A question wears a small kicker and a rule, as its PowerPoint slide does, so it never reads as a title.
     stageKicker.hidden = u.kind !== "question";
     $(".stage-ref", stage).textContent = where;
@@ -3026,7 +3085,7 @@ import { esc, mb } from "./lib/format.js";
       if (inline) { inline.scrollIntoView({ block: "center" }); return; }
       bodyEl.replaceChildren(el("div", { text: "That note is not in the local copy." }));
     } else {
-      bodyEl.replaceChildren(...[n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, sanitize(el("div", { html: n.html || esc(n.text) }))].filter(Boolean));
+      bodyEl.replaceChildren(...[n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, el("div", {}, [sanitize(n.html || esc(n.text))])].filter(Boolean));
     }
     openSheet("Footnote");
   }
