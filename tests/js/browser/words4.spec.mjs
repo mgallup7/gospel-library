@@ -41,7 +41,16 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       let grammar = await page.textContent("#sheet .ow-section");
       check(/Noun Nominative Singular Feminine: a person or thing that is doing something \(feminine in grammar\)/.test(grammar), `hupostasis grammar: ${grammar}`);
       check(!/\b(fe)?male\b/i.test(grammar), `hupostasis is still called female: ${grammar}`);
+      // its glosses fold as the Hebrew ones do, and its lexicon entry is an outline with no raw marks
+      const counts = await page.textContent("#sheet .ow-counts");
+      check(/Rendered: confidence \(2\), assurance \(2\), substance \(1\)\./.test(counts), `hupostasis rendered: ${counts}`);
+      const def = await page.evaluate(() => ({ text: document.querySelector("#sheet .ow-def").textContent, marks: [...document.querySelectorAll("#sheet .ow-outline > li > .ow-mark")].map((b) => b.textContent),
+        refs: document.querySelectorAll("#sheet .ow-outline a.oref").length, tail: document.querySelector("#sheet .ow-def-tail")?.textContent }));
+      check(!def.text.includes("__"), `raw marks in the definition: ${def.text.slice(0, 200)}`);
+      check(def.marks.join(" ") === "1. 2. 3." && def.refs >= 3 && def.tail === "(AS)", `hupostasis outline: ${JSON.stringify(def.marks)} refs ${def.refs} tail ${def.tail}`);
       await page.screenshot({ path: `${OUT}${name}-01-hupostasis.png` });
+      await page.evaluate(() => document.querySelector("#sheet .ow-def").scrollIntoView({ block: "center" }));
+      await page.screenshot({ path: `${OUT}${name}-01b-outline.png` });
       await page.click("#sheet .close");
 
       // Habakkuk 2:4, emunah with its preposition and its suffix

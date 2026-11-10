@@ -2,7 +2,7 @@
    verses, each with its transliteration, meaning, grammar and Strong's number,
    and the lexicon behind the numbers. Data: STEP Bible, Tyndale House,
    Cambridge (CC BY 4.0), www.STEPBible.org. */
-import { foldGlosses, exampleOf, grammarMeaning } from "./lib/step.js";
+import { foldGlosses, exampleOf, grammarMeaning, outlineOf } from "./lib/step.js";
 
 (() => {
   "use strict";
@@ -226,7 +226,7 @@ import { foldGlosses, exampleOf, grammarMeaning } from "./lib/step.js";
         if (!sheet.contains(details)) return;
         const n = (x, one, many) => `${(x || 0).toLocaleString()} ${x === 1 ? one : many}`;
         const where = lex.books && lex.books.length ? `, in ${lex.books.length === 1 ? lex.books[0].name : `${lex.books.length} books`}` : "";
-        const top = (lang === "he" ? foldGlosses(lex.glosses) : lex.glosses || []).slice(0, 6).map((g) => `${g.gloss} (${g.n})`).join(", ");
+        const top = foldGlosses(lex.glosses).slice(0, 6).map((g) => `${g.gloss} (${g.n})`).join(", ");
         const counts = whole && whole.count
           ? `${n(lex.count, "occurrence", "occurrences")} of this sense (${lex.strongs}) in ${n(lex.verses_total, "verse", "verses")}; ${n(whole.count, "occurrence", "occurrences")} of ${base} in all its senses, in ${n(whole.verses_total, "verse", "verses")}${where}.`
           : `${n(lex.count, "occurrence", "occurrences")} in ${n(lex.verses_total, "verse", "verses")}${where}.`;
@@ -285,12 +285,16 @@ import { foldGlosses, exampleOf, grammarMeaning } from "./lib/step.js";
   // The brief lexicon's definition is small HTML with its own cross-reference
   // tag; references open the verse in the library.
   function definitionEl(html) {
-    let h = String(html || "").replace(/^\s*:\s*/, "").replace(/<ref='([^']*)'>/gi, (m, ref) => `<a class="oref" data-ref="${esc(ref)}" href="#">`).replace(/<\/ref>/gi, "</a>")
-      .replace(/<re>/gi, '<span class="ore">').replace(/<\/re>/gi, "</span>").replace(/<br\s*\/?>/gi, "<br>");
     const box = el("div", { class: "ow-def" });
-    const tpl = document.createElement("template");
-    tpl.innerHTML = h;
     const allowed = new Set(["B", "I", "BR", "SPAN", "A", "EM", "STRONG", "U", "SUP", "SUB", "P"]);
+    // one piece of STEP's HTML into a node, with only the tags above let through
+    const fill = (piece, into) => {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = String(piece || "").replace(/^\s*:\s*/, "").replace(/<ref='([^']*)'>/gi, (m, ref) => `<a class="oref" data-ref="${esc(ref)}" href="#">`).replace(/<\/ref>/gi, "</a>")
+        .replace(/<re>/gi, '<span class="ore">').replace(/<\/re>/gi, "</span>").replace(/<br\s*\/?>/gi, "<br>");
+      walk(tpl.content, into);
+      return into;
+    };
     const walk = (node, into) => {
       for (const c of [...node.childNodes]) {
         if (c.nodeType === 3) { into.append(document.createTextNode(c.nodeValue)); continue; }
@@ -303,7 +307,17 @@ import { foldGlosses, exampleOf, grammarMeaning } from "./lib/step.js";
         into.append(n);
       }
     };
-    walk(tpl.content, box);
+    // the numbered senses ("__1.", "__(a)" in the data) as an outline: each on its own line under
+    // its mark, set in by its depth; the marks are the lexicon's own, so the list draws none
+    const { lead, items, tail } = outlineOf(html);
+    if (lead) fill(lead, box);
+    if (items.length) {
+      box.append(el("ol", { class: "ow-outline", style: "list-style:none;margin:.45em 0;padding:0" }, items.map((it) =>
+        fill(it.html, el("li", { style: `margin:.3em 0 .3em ${(it.level * 1.15).toFixed(2)}em;padding-left:2.1em;text-indent:-2.1em` }, [
+          el("b", { class: "ow-mark", style: "display:inline-block;min-width:2.1em;text-indent:0", text: it.mark }),
+        ])))));
+      if (tail) box.append(fill(tail, el("div", { class: "ow-def-tail" })));
+    }
     box.addEventListener("click", async (e) => {
       const a = e.target.closest("a.oref");
       if (!a) return;
