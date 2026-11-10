@@ -22,12 +22,12 @@ const source = fs.readFileSync(path.join(here, "..", "..", "web", "ask.js"), "ut
     return `const {${names.replace(/\bas\b/g, ":")}} = __lib[${JSON.stringify(from)}];`;
   });
 
-function load(fetchImpl, saved = {}) {
+function load(fetchImpl, saved = {}, gl = {}, win = {}) {
   const data = { apiKey: "test-key", ...saved };
   const store = { get: (k, d) => (k in data ? data[k] : d), set: (k, v) => { data[k] = v; }, del: (k) => { delete data[k]; } };
   const calls = [];
   const fetch = (url, opts) => { calls.push({ url, body: JSON.parse(opts.body), signal: opts.signal }); return fetchImpl(opts); };
-  const window = { GL: { el: () => ({}), esc: (s) => s, store }, addEventListener() {} };
+  const window = { GL: { el: () => ({}), esc: (s) => s, store, ...gl }, addEventListener() {}, ...win };
   const ctx = {
     window, document: { addEventListener() {} }, navigator: { onLine: true }, fetch, console, __lib: LIB,
     setTimeout: (fn, ms) => setTimeout(fn, ms / 1000), clearTimeout,
@@ -144,4 +144,198 @@ test("the questions of a Think it through are read back by kind, without their c
   const old = Ask.thinkQuestions("## Questions\nA few to ask.\n- Who planted the seed?\n- What grew there?\n\n## For the deck\nx");
   assert.deepEqual(JSON.parse(JSON.stringify(old)).map((x) => [x.kind, x.text]), [[null, "Who planted the seed?"], [null, "What grew there?"]]);
   assert.deepEqual(JSON.parse(JSON.stringify(Ask.thinkQuestions("No headings at all."))), []);
+});
+
+// ---- what is sent: the system blocks, the same assembly for every mode ----
+// The test library: the scriptures with Hebrew and Greek, a few pages of the Papers, no talks.
+const STATS = {
+  collections: [
+    { slug: "scriptures", title: "Scriptures", docs: 1582 },
+    { slug: "general-conference", title: "General Conference", docs: 0 },
+    { slug: "jsp-journals", title: "Joseph Smith Papers: Journals", docs: 8 },
+  ],
+  talks: 0, latest_conference: null, originals: { verses: 31218, lexicon: 22717 },
+};
+const libraryApi = (stats = STATS, books = []) => async (method) => (method === "stats" ? stats : method === "browse" ? { books } : null);
+const textOf = (blocks) => blocks.map((b) => b.text).join("\n\n");
+
+test("the inventory says what this device holds, and names what it does not", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const inv = Ask.inventoryText(STATS);
+  assert.match(inv, /^On this device/);
+  assert.match(inv, /the standard works[^\n]*: 1,582 chapters\. Search scope: scriptures\./);
+  assert.match(inv, /Joseph Smith Papers[^\n]*Journals: 8 pages/);
+  assert.match(inv, /Hebrew and Greek text word by word[^\n]*31,218 verses/);
+  const missing = inv.slice(inv.indexOf("Not on this device"));
+  for (const shelf of ["general conference talks", "Preach My Gospel", "Missionary Standards", "Come, Follow Me", "the General Handbook", "the study helps"]) assert.ok(missing.includes(shelf), `${shelf} is named as not here`);
+  assert.doesNotMatch(inv, /1971/, "no claim about talks this device does not hold");
+  assert.doesNotMatch(inv.slice(0, inv.indexOf("Not on this device")), /conference/, "talks are not listed as held");
+  // with talks, the span comes from the conferences held, not from a constant
+  const full = Ask.inventoryText({ ...STATS, talks: 70, collections: [...STATS.collections.filter((c) => c.slug !== "general-conference"), { slug: "general-conference", title: "General Conference", docs: 70 }], originals: null },
+    [{ year: 2024, month: 10, docs: 35 }, { year: 2024, month: 4, docs: 35 }, { year: 2025, month: 4, docs: 0 }]);
+  assert.match(full, /general conference talks: 70 talks from 2 conferences, April 2024 to October 2024/);
+  assert.match(full, /Not on this device:[^\n]*the Hebrew and Greek text under the Bible/);
+  // a library that cannot be read claims nothing
+  assert.match(Ask.inventoryText(null), /could not be read/);
+});
+
+test("every mode sends the same core, his standing instructions and his notes, with one cache marker", async () => {
+  const skills = { style: "STYLE-MARK", voice: "VOICE-MARK", skills: [{ kind: "mode", id: "letter", name: "Letter", text: "LETTER-MARK" }] };
+  const { Ask } = load(() => { throw new Error("no call"); }, { askNotes: "2026-11-01: The zone conference theme is covenants." }, { api: libraryApi(), skills });
+  const per = {};
+  for (const mode of ["ask", "draft", "think", "skill:letter", "chain"]) per[mode] = JSON.parse(JSON.stringify(await Ask.system(mode, mode === "chain" ? "CHAIN-PARAGRAPH" : "")));
+  for (const [mode, blocks] of Object.entries(per)) {
+    const all = textOf(blocks);
+    assert.equal(blocks[0].text, Ask.core, `${mode}: the core comes first`);
+    assert.match(all, /My standing instructions[^\n]*\n\nNo em dashes, and nothing that sounds written by an AI\.\nStart from the Hebrew, Greek or Aramaic before Latter-day Saint canon\./, `${mode}: the starter instructions are sent`);
+    assert.match(all, /What he has asked you to remember[^\n]*\n\n2026-11-01: The zone conference theme is covenants\./, `${mode}: the notes are sent`);
+    assert.equal(blocks.filter((b) => b.cache_control).length, 1, `${mode}: one cache marker`);
+    assert.doesNotMatch(all, /\u2014/, `${mode}: no em dash in what is sent`);
+    assert.doesNotMatch(all, /1971/, `${mode}: no shelf claimed that is not here`);
+  }
+  for (const mode of ["ask", "draft", "think", "skill:letter"]) {
+    const blocks = per[mode];
+    assert.ok(blocks.at(-1).cache_control, `${mode}: the marker is on the last block`);
+    assert.match(blocks[2].text, /^On this device[\s\S]*Not on this device: general conference talks[\s\S]*\n\nTools:/, `${mode}: the inventory, then the tools`);
+    assert.match(blocks[2].text, /When a Bible verse or word is in view, the first calls are original and lexicon/, `${mode}: original text first, in the tools guide`);
+  }
+  assert.match(per.ask[1].text, /^This turn is a question/);
+  assert.match(per.draft[1].text, /read its Hebrew or Greek first/);
+  assert.match(per.think[1].text, /read its key verses in the Hebrew or Greek first/);
+  assert.match(textOf(per.ask), /STYLE-MARK/); assert.doesNotMatch(textOf(per.ask), /VOICE-MARK/);
+  assert.match(textOf(per.draft), /VOICE-MARK/); assert.doesNotMatch(textOf(per.draft), /LETTER-MARK/);
+  assert.match(textOf(per["skill:letter"]), /VOICE-MARK[\s\S]*LETTER-MARK/);
+  // the deck's chain: its own paragraph, no tools guide, the date after the marker
+  const chain = per.chain;
+  assert.match(chain[1].text, /^CHAIN-PARAGRAPH\n\nThis call has no tools/);
+  assert.doesNotMatch(textOf(chain), /\nTools:/);
+  assert.match(textOf(chain), /STYLE-MARK/);
+  assert.match(chain.at(-1).text, /^Today is \w+ \d+, \d{4}\.$/);
+  assert.ok(chain.at(-2).cache_control && !chain.at(-1).cache_control);
+});
+
+test("standing instructions he has emptied are not sent, and his own replace the starter", async () => {
+  const empty = load(() => { throw new Error("no call"); }, { askInstructions: "" }, { api: libraryApi() });
+  assert.doesNotMatch(textOf(await empty.Ask.system("ask")), /My standing instructions \(/);
+  const own = load(() => { throw new Error("no call"); }, { askInstructions: "Answer in outline form." }, { api: libraryApi() });
+  const all = textOf(await own.Ask.system("draft"));
+  assert.match(all, /My standing instructions[^\n]*\n\nAnswer in outline form\./);
+  assert.doesNotMatch(all, /Talk to me as a peer/);
+});
+
+test("an answer joins the thread with each [n] replaced by the passage it meant", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const passages = [{ n: 1, citation: "Hebrews 11:1", label: "Hebrews 11:1", collection: "scriptures" }, { n: 2, label: "Russell M. Nelson, \u201cChrist Is Risen\u201d, April 2021 General Conference", author: "Russell M. Nelson", collection: "general-conference" }];
+  const out = Ask.withLabels('Faith is "the substance of things hoped for" [1]. A prophet said so too [2][7].\n[1] The definition.', passages);
+  assert.equal(out, 'Faith is "the substance of things hoped for" (Hebrews 11:1). A prophet said so too (Russell M. Nelson, \u201cChrist Is Risen\u201d, April 2021 General Conference).\n(Hebrews 11:1) The definition.');
+});
+
+test("my_notes finds his notes and study pages by words, and gives the marked passage its number", async () => {
+  const marks = [
+    { uri: "/a", pid: "p21", doc_id: 5, kind: "verse", verse: 21, color: "y", note: "Faith is not a perfect knowledge: open the zone conference with this.", text: "And now as I said concerning faith", citation: "Alma 32:21", updated: Date.UTC(2026, 9, 1, 12) },
+    { uri: "/b", pid: "p46", doc_id: null, kind: "verse", color: "g", note: null, text: "charity never faileth", citation: "Moroni 7:46", updated: Date.UTC(2026, 9, 2, 12) },
+  ];
+  const pages = { s1: { id: "s1", kind: "md", text: "# Covenant path\n" + "Filler sentence. ".repeat(60) + "The knowledge of a covenant comes by keeping it, and faith follows." } };
+  const Marks = { all: async () => marks, COLOR_NAME: { y: "yellow", g: "green" } };
+  const Studies = { list: async () => [{ id: "s1", title: "Covenant path", added: Date.UTC(2026, 8, 1, 12) }], get: async (id) => pages[id], plainText: (r) => r.text };
+  const api = async (method) => (method === "context" ? { citation: "Alma 32:21", collection: "scriptures", paragraphs: [{ kind: "verse", verse: 21, pid: "p21", text: "And now as I said concerning faith, faith is not to have a perfect knowledge of things." }] } : null);
+  const { Ask } = load(() => { throw new Error("no call"); }, {}, { api }, { Marks, Studies });
+  const reg = new Ask.Registry();
+  const r = await reg.myNotes({ query: "faith knowledge" });
+  assert.equal(r.count, 2, "the note and the study page, not the unrelated highlight");
+  assert.match(r.text, /His note on \[1\] Alma 32:21, 2026-10-01 \(highlighted yellow\)\nThe passage: And now as I said concerning faith, faith is not to have a perfect knowledge of things\.\nHis note: Faith is not a perfect knowledge/);
+  assert.match(r.text, /His study page \u201cCovenant path\u201d, added 2026-09-01 \(from the middle\)\n\u2026 [\s\S]*The knowledge of a covenant comes by keeping it/);
+  assert.equal(reg.list.length, 1, "the marked passage is a numbered passage");
+  // his own words can be quoted without being flagged; the check runs against them too
+  assert.equal(reg.checkable().length, 3);
+  // no query: the most recent first
+  const recent = await reg.myNotes({});
+  assert.match(recent.text, /His highlight on Moroni 7:46[\s\S]*His note on \[1\] Alma 32:21/);
+  // nothing matching says so, and names how much there is
+  assert.match((await reg.myNotes({ query: "zebra" })).text, /Nothing in his 2 highlights and notes or his 1 study pages/);
+});
+
+// ---- when Claude is busy, when he presses Stop, and what the errors say ----
+const busy = (status = 529, type = "overloaded_error") => new Response(JSON.stringify({ type: "error", error: { type, message: "Overloaded" } }), { status });
+
+test("a busy server (529, 5xx) is tried twice more, then the error says the question is kept", async () => {
+  let n = 0;
+  const twice = load((opts) => (++n <= 2 ? Promise.resolve(busy()) : sse(textEvents(["ok"]))(opts)));
+  const told = [];
+  const res = await twice.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, onRetry: (k) => told.push(k) });
+  assert.equal(res, "ok");
+  assert.equal(twice.calls.length, 3);
+  assert.deepEqual(told, [1, 2]);
+  const always = load(() => Promise.resolve(busy(503, "api_error")));
+  await assert.rejects(always.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true }), (err) => {
+    assert.equal(err.status, 503);
+    assert.equal(always.Ask.friendlyError(err), "Claude is busy right now. Your question is kept; try again in a minute.");
+    return true;
+  });
+  assert.equal(always.calls.length, 3, "one try and two more");
+  // an error that is not the server's load is not tried again
+  const bad = load(() => Promise.resolve(new Response(JSON.stringify({ error: { type: "invalid_request_error", message: "max_tokens: too large" } }), { status: 400 })));
+  await assert.rejects(bad.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true }), /400 max_tokens/);
+  assert.equal(bad.calls.length, 1);
+});
+
+test("an overload sent down the stream is tried again, unless words had already reached the page", async () => {
+  const overloaded = { type: "error", error: { type: "overloaded_error", message: "Overloaded" } };
+  let n = 0;
+  const early = load((opts) => (++n === 1 ? sse([{ type: "message_start" }, overloaded])(opts) : sse(textEvents(["ok"]))(opts)));
+  assert.equal(await early.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true }), "ok");
+  assert.equal(early.calls.length, 2);
+  const late = load(sse([...textEvents(["Faith "]).slice(0, 3), overloaded]));
+  let got = "";
+  await assert.rejects(late.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, onDelta: (t) => { got += t; } }), (err) => err.status === 529 && /busy right now/.test(late.Ask.friendlyError(err)));
+  assert.equal(got, "Faith ");
+  assert.equal(late.calls.length, 1, "not run again over words already shown");
+});
+
+test("the planner does not wait on a busy server, and names every shelf and what is here", async () => {
+  const stats = { collections: [{ slug: "scriptures", docs: 1582 }, { slug: "jsp-journals", docs: 8 }, { slug: "general-conference", docs: 0 }] };
+  const { Ask, calls } = load(() => Promise.resolve(busy()), {}, { api: async () => stats });
+  await assert.rejects(Ask.plan("faith and works"), /529/);
+  assert.equal(calls.length, 1);
+  const sys = calls[0].body.system;
+  assert.match(sys, /standards \(Missionary Standards for Disciples of Jesus Christ/);
+  assert.match(sys, /jsp \(the Joseph Smith Papers/);
+  assert.match(sys, /scope is one of: all, scriptures, conference, pmg, standards, handbook, cfm, helps, jsp\./);
+  assert.match(sys, /The original text comes first/);
+  assert.match(sys, /\n\nOn this device: scriptures, jsp\. Not on this device: conference, pmg, standards, cfm, handbook, helps\.$/);
+  assert.doesNotMatch(sys, /1971/);
+});
+
+test("Stop ends a call at once, and ends the wait before another try", async () => {
+  const hung = load(never);
+  const ctl = new AbortController();
+  const p = hung.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, signal: ctl.signal });
+  setTimeout(() => ctl.abort(), 5);
+  await assert.rejects(p, { name: "StopError" });
+  const waiting = load(() => Promise.resolve(busy()));
+  const ctl2 = new AbortController();
+  const p2 = waiting.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, signal: ctl2.signal, onRetry: () => ctl2.abort() });
+  await assert.rejects(p2, { name: "StopError" });
+  assert.equal(waiting.calls.length, 1);
+});
+
+test("errors are named by their status number, in plain words", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const err = (status, message, extra = {}) => Object.assign(new Error(`${status} ${message}`.trim()), { status }, extra);
+  assert.equal(Ask.friendlyError(err(404, "model: claude-old-1")), "That model is no longer offered. Pick another in settings.");
+  assert.match(Ask.friendlyError(err(429, "Too many requests")), /rate-limited/);
+  // words that merely contain "rate" or the digits 429 are not a rate limit
+  assert.equal(Ask.friendlyError(new Error("could not generate request 4290")), "Something went wrong: could not generate request 4290");
+  assert.match(Ask.friendlyError(err(401, "invalid x-api-key")), /key was not accepted/);
+  assert.match(Ask.friendlyError(err(400, "Your credit balance is too low")), /no credit/);
+  assert.match(Ask.friendlyError(err(500, "Internal server error")), /busy right now\. Your question is kept/);
+});
+
+test("the lexicon's lines reach the model without an em dash", async () => {
+  const api = async (method) => (method === "lexicon" ? { strongs: "H2617", entry: { lemma: "\u05d7\u05e1\u05d3", translit: "chesed", gloss: "kindness" }, count: 1, verses_total: 1, books: [], glosses: [], credit: "STEP Bible",
+    verses: [{ citation: "Genesis 19:19", verse: 19, text: "thou hast magnified thy mercy", doc_id: 3, pid: "p19", words: [{ word: "\u05d7\u05e1\u05d3", translit: "chesed", gloss: "kindness" }] }] } : null);
+  const { Ask } = load(() => { throw new Error("no call"); }, {}, { api });
+  const r = await new Ask.Registry().lexicon({ strongs: "H2617" });
+  assert.match(r.text, /\[1\] Genesis 19:19: \S+ chesed \[kindness\] \(KJV: thou hast magnified thy mercy\)/);
+  assert.doesNotMatch(r.text, /\u2014/);
 });

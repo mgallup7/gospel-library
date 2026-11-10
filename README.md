@@ -212,6 +212,15 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   library. Pick the model in settings: Fable 5.1, Opus 5.5, Sonnet 5.5 or
   Haiku 5.5. Runs on your own Claude API key (from console.anthropic.com),
   stored on the device and sent only to Anthropic.
+- Ask answers the way you have told it to. Settings (the gear) hold "How I
+  want Claude to answer", your standing instructions in your own words, and
+  "What Claude should remember", dated notes you can edit; both are kept on
+  the device and go with every question, draft, Think it through and deck
+  chain. Claude can propose a note under an answer ("Remember this?"), saved
+  only if you tap Save. Each request also says what this device holds and
+  what it does not, the page you have open and the deck in progress; your
+  study pages, highlights and notes can be searched; the thread survives a
+  reload; the Ask button is Stop while an answer is on its way.
 - Your own voice and skills, kept private. A skills file (how drafts should
   sound, a house style for answers, and whole pieces such as the weekly
   letter, which appears as its own mode beside Ask and Draft) travels sealed
