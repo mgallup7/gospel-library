@@ -22,12 +22,12 @@ const source = fs.readFileSync(path.join(here, "..", "..", "web", "ask.js"), "ut
     return `const {${names.replace(/\bas\b/g, ":")}} = __lib[${JSON.stringify(from)}];`;
   });
 
-function load(fetchImpl, saved = {}, gl = {}) {
+function load(fetchImpl, saved = {}, gl = {}, win = {}) {
   const data = { apiKey: "test-key", ...saved };
   const store = { get: (k, d) => (k in data ? data[k] : d), set: (k, v) => { data[k] = v; }, del: (k) => { delete data[k]; } };
   const calls = [];
   const fetch = (url, opts) => { calls.push({ url, body: JSON.parse(opts.body), signal: opts.signal }); return fetchImpl(opts); };
-  const window = { GL: { el: () => ({}), esc: (s) => s, store, ...gl }, addEventListener() {} };
+  const window = { GL: { el: () => ({}), esc: (s) => s, store, ...gl }, addEventListener() {}, ...win };
   const ctx = {
     window, document: { addEventListener() {} }, navigator: { onLine: true }, fetch, console, __lib: LIB,
     setTimeout: (fn, ms) => setTimeout(fn, ms / 1000), clearTimeout,
@@ -221,4 +221,36 @@ test("standing instructions he has emptied are not sent, and his own replace the
   const all = textOf(await own.Ask.system("draft"));
   assert.match(all, /My standing instructions[^\n]*\n\nAnswer in outline form\./);
   assert.doesNotMatch(all, /Talk to me as a peer/);
+});
+
+test("an answer joins the thread with each [n] replaced by the passage it meant", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const passages = [{ n: 1, citation: "Hebrews 11:1", label: "Hebrews 11:1", collection: "scriptures" }, { n: 2, label: "Russell M. Nelson, \u201cChrist Is Risen\u201d, April 2021 General Conference", author: "Russell M. Nelson", collection: "general-conference" }];
+  const out = Ask.withLabels('Faith is "the substance of things hoped for" [1]. A prophet said so too [2][7].\n[1] The definition.', passages);
+  assert.equal(out, 'Faith is "the substance of things hoped for" (Hebrews 11:1). A prophet said so too (Russell M. Nelson, \u201cChrist Is Risen\u201d, April 2021 General Conference).\n(Hebrews 11:1) The definition.');
+});
+
+test("my_notes finds his notes and study pages by words, and gives the marked passage its number", async () => {
+  const marks = [
+    { uri: "/a", pid: "p21", doc_id: 5, kind: "verse", verse: 21, color: "y", note: "Faith is not a perfect knowledge: open the zone conference with this.", text: "And now as I said concerning faith", citation: "Alma 32:21", updated: Date.UTC(2026, 9, 1, 12) },
+    { uri: "/b", pid: "p46", doc_id: null, kind: "verse", color: "g", note: null, text: "charity never faileth", citation: "Moroni 7:46", updated: Date.UTC(2026, 9, 2, 12) },
+  ];
+  const pages = { s1: { id: "s1", kind: "md", text: "# Covenant path\n" + "Filler sentence. ".repeat(60) + "The knowledge of a covenant comes by keeping it, and faith follows." } };
+  const Marks = { all: async () => marks, COLOR_NAME: { y: "yellow", g: "green" } };
+  const Studies = { list: async () => [{ id: "s1", title: "Covenant path", added: Date.UTC(2026, 8, 1, 12) }], get: async (id) => pages[id], plainText: (r) => r.text };
+  const api = async (method) => (method === "context" ? { citation: "Alma 32:21", collection: "scriptures", paragraphs: [{ kind: "verse", verse: 21, pid: "p21", text: "And now as I said concerning faith, faith is not to have a perfect knowledge of things." }] } : null);
+  const { Ask } = load(() => { throw new Error("no call"); }, {}, { api }, { Marks, Studies });
+  const reg = new Ask.Registry();
+  const r = await reg.myNotes({ query: "faith knowledge" });
+  assert.equal(r.count, 2, "the note and the study page, not the unrelated highlight");
+  assert.match(r.text, /His note on \[1\] Alma 32:21, 2026-10-01 \(highlighted yellow\)\nThe passage: And now as I said concerning faith, faith is not to have a perfect knowledge of things\.\nHis note: Faith is not a perfect knowledge/);
+  assert.match(r.text, /His study page \u201cCovenant path\u201d, added 2026-09-01 \(from the middle\)\n\u2026 [\s\S]*The knowledge of a covenant comes by keeping it/);
+  assert.equal(reg.list.length, 1, "the marked passage is a numbered passage");
+  // his own words can be quoted without being flagged; the check runs against them too
+  assert.equal(reg.checkable().length, 3);
+  // no query: the most recent first
+  const recent = await reg.myNotes({});
+  assert.match(recent.text, /His highlight on Moroni 7:46[\s\S]*His note on \[1\] Alma 32:21/);
+  // nothing matching says so, and names how much there is
+  assert.match((await reg.myNotes({ query: "zebra" })).text, /Nothing in his 2 highlights and notes or his 1 study pages/);
 });

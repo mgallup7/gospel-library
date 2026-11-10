@@ -2682,6 +2682,7 @@ import { esc, mb } from "./lib/format.js";
     get ready() { return state.ready; },
     get skills() { return store.get("skills")?.data || null; },
     get wide() { return wide(); },
+    get reading() { return currentDoc ? { doc: currentDoc, open: state.docId === currentDoc.id, selection: state.docId === currentDoc.id ? selectedUnits() : [] } : null; }, // for Ask: the page open (or read last) and what is selected in it
   };
 
   // ------------------------------------------------------------- start ----

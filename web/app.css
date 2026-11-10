@@ -715,6 +715,7 @@ body.presenting { overflow: hidden; }
 .ask-settings textarea { width: 100%; box-sizing: border-box; min-height: 96px; padding: 10px 12px; font: 16px/1.45 var(--sans); color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; resize: vertical; -webkit-appearance: none; }
 .ask-settings .ask-actions { flex-wrap: wrap; position: sticky; bottom: calc(-18px - var(--safe-bottom)); margin: 4px 0 calc(-18px - var(--safe-bottom)); padding: 10px 0 calc(12px + var(--safe-bottom)); background: var(--chrome); }
 .ask-settings .primary { height: 44px; padding: 0 18px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.ask-kept { font: 13px/1.4 var(--sans); color: var(--ink-3); margin: 6px 0 2px; }
 /* a note Claude proposed: his to save or dismiss */
 .remember { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 8px 0 2px; padding: 8px 10px; border-radius: 10px; background: var(--chrome); font: 14px/1.4 var(--sans); color: var(--ink-2); }
 .remember .what { flex: 1 1 240px; min-width: 0; }

@@ -59,6 +59,7 @@ Editions. Some shelves hold several editions or volumes, and every passage's lab
 - read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11", a talk title).
 - original: the Hebrew or Greek of a Bible verse or short passage, word by word, each word with its transliteration, English gloss, Strong's number and grammar, beside the KJV. This is the first tool to reach for whenever the Bible is in view, in an answer, a draft or a page being thought through; Psalm titles are verse 0.
 - lexicon: a Strong's number's dictionary entry (lemma, gloss, definition), the senses the data tells apart, how often it occurs and in which books, with its first occurrences and the KJV's verses. For the meaning of a word across the Bible, not just in one verse. The search tool also takes Hebrew or Greek letters, a Strong's number ("H2617", "G26") or "translit: chesed", and returns every verse with that word.
+- my_notes: his own study pages, and the passages he has highlighted or written a note on, searched by words (no query: the most recent). Use it when he refers to his notes, his study or his highlights, and when the question is one he has likely worked on before. What it returns is his own writing: quote it as his, never as scripture or as a prophet's words.
 - remember: propose a note for later conversations when he states a lasting preference, settles something about work in progress, or asks you to keep a fact. It is only a proposal: it appears under the answer and is saved only if he taps Save, so never say that something has been saved or remembered. Use it rarely, one note at a time, never for passages, and never for anything he did not say himself.
 
 How to search. Work the way a careful researcher works in a library, not the way a search box works:
@@ -206,6 +207,11 @@ When I ask for a draft, write it in my voice, not yours.`;
         strongs: { type: "string", description: "A Strong's number such as H2617, G26 or H7307G (a letter suffix picks one sense)." },
         limit: { type: "integer", description: "How many occurrences to list, default 40, up to 200." },
       }, required: ["strongs"] } },
+    { name: "my_notes", description: "His own study pages, and the passages he has highlighted or written a note on, on this device, searched by words. Returns each with its title or citation and its text.",
+      input_schema: { type: "object", properties: {
+        query: { type: "string", description: "Words to look for in his study pages, his notes and the passages he marked. Leave it out for the most recent." },
+        limit: { type: "integer", description: "How many, 1 to 20. Default 8." },
+      } } },
     { name: "remember", description: "Propose one short note to keep for later conversations. He sees it under the answer with Save and Dismiss; it is kept only if he taps Save.",
       input_schema: { type: "object", properties: {
         note: { type: "string", description: "One sentence in plain words, as he would write it himself: a preference he stated, a decision about work in progress, a fact about his work he asked you to keep." },
@@ -224,7 +230,14 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   const { el, esc, store } = window.GL || {};
   const $ = (sel, root = document) => root.querySelector(sel);
 
-  let thread = [];     // [{role, content}] for the model, text only
+  // The conversation, text only, as [{role, content}]: the last eight exchanges, kept on the
+  // device so a reload (iOS reloads a home-screen app freely) does not lose it.
+  let thread = [];
+  try { const t = store.get("askThread", []); if (Array.isArray(t)) thread = t.filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string"); } catch (_) {}
+  function setThread(list) {
+    thread = list.length > MAX_TURNS * 2 ? list.slice(-MAX_TURNS * 2) : list;
+    try { thread.length ? store.set("askThread", thread.map((m) => ({ role: m.role, content: m.content.slice(0, 60000) }))) : store.del("askThread"); } catch (_) {}
+  }
   let view = null;     // container element
   let busy = false;
   let lastPassages = []; // passages shown with the latest answer
@@ -257,6 +270,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   let handedPage = null; // a page to think through, from the floating button
   function render(container, { question = null, think = null } = {}) {
     view = container;
+    // a redraw (his skills arriving a moment after the tab opens) keeps what he has typed and
+    // the mode he chose
+    const typed = container.querySelector(".ask-input")?.value || "";
+    const modeWas = container.querySelector(".ask-mode button.on")?.dataset.mode || "";
     container.replaceChildren();
     if (question) handed = question;
     if (think) handedPage = think;
@@ -272,7 +289,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const go = el("button", { type: "button", class: "primary ask-go", text: "Ask" });
     const gear = el("button", { type: "button", class: "icon-btn", "aria-label": "Settings", title: "Settings", html: "&#9881;" });
     const hint = el("div", { class: "ask-hint", text: hintText() });
-    if (!log) log = el("div", { class: "ask-log" });
+    if (!log) { log = el("div", { class: "ask-log" }); restoreLog(log); }
     for (const b of modes.querySelectorAll("button")) {
       b.addEventListener("click", () => {
         for (const x of modes.querySelectorAll("button")) x.classList.toggle("on", x === b);
@@ -285,11 +302,75 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     go.addEventListener("click", () => submit(input, modes, log));
     input.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(input, modes, log); } });
     gear.addEventListener("click", () => openSettings(container, hint));
-    box.append(el("div", { class: "ask-top" }, [modes, gear]), input, el("div", { class: "ask-actions" }, [go, el("button", { type: "button", class: "text-btn", text: "New thread", onclick: () => { thread = []; log.replaceChildren(); } })]), hint, log);
+    box.append(el("div", { class: "ask-top" }, [modes, gear]), input, el("div", { class: "ask-actions" }, [go, el("button", { type: "button", class: "text-btn", text: "New thread", onclick: () => newThread(log) })]), hint, log);
     container.append(box);
     if (handed) { input.value = handed; handed = null; submit(input, modes, log); return; }
     if (handedPage) { const page = handedPage; handedPage = null; submit(input, modes, log, page); return; }
+    if (modeWas && modeWas !== "ask") [...modes.querySelectorAll("button")].find((b) => b.dataset.mode === modeWas)?.click();
+    if (typed) input.value = typed;
     if (GL().wide) input.focus();
+  }
+
+  // New thread clears the conversation and the answers on the screen; Undo puts both back.
+  function newThread(log) {
+    if (busy) return;
+    const was = { thread, cards: [...log.children] };
+    if (!was.thread.length && !was.cards.length) return;
+    setThread([]);
+    log.replaceChildren();
+    GL().toast("New thread. The earlier answers are cleared.", { action: "Undo", onAction: () => { setThread(was.thread); log.replaceChildren(...was.cards); } });
+  }
+  // After a reload the thread is still here but its passage cards are not: each exchange comes
+  // back as its question and its answer, so he can read on and ask a follow-up.
+  function restoreLog(log) {
+    for (let i = 0; i + 1 < thread.length; i += 2) {
+      const q = thread[i], a = thread[i + 1];
+      if (q.role !== "user" || a.role !== "assistant") continue;
+      log.prepend(el("article", { class: "ask-card kept" }, [
+        el("div", { class: "ask-q", text: q.content.replace(/^\(I thought this page through with you: (.*)\.\)$/, "Thinking it through: $1") }),
+        el("div", { class: "ask-a", html: renderMarkdown(a.content, {}) }),
+        el("div", { class: "ask-kept", text: "Kept from earlier. Its passage cards are not kept; ask again to bring them back." }),
+      ]));
+    }
+  }
+  // An answer goes into the thread with each [n] replaced by the passage it meant: the next
+  // question numbers its passages afresh, and an old [3] would point at a different verse.
+  function withLabels(reply, passages) {
+    return String(reply).replace(/[ \t]*\[(\d+)\]/g, (m, n) => { const p = passages[Number(n) - 1]; return p ? ` (${p.collection === "general-conference" ? p.label : p.citation || p.label})` : ""; }).replace(/^ \(/gm, "(");
+  }
+
+  // What the Claude app would know without being told: the page he has open, anything he has
+  // selected in it, and the deck in progress. One short block at the top of an Ask or Draft turn.
+  function contextLine() {
+    const parts = [];
+    const r = GL().reading;
+    if (r && r.doc) {
+      const d = r.doc;
+      const name = d.collection === "general-conference" ? `${d.title} (${[d.author, d.label].filter(Boolean).join(", ")})` : d.citation || d.title;
+      const sel = (r.selection || []).slice(0, 12);
+      parts.push(`${r.open ? "He has this page open" : "The page he was reading last"}: ${name}${d.collection_title ? ` (${d.collection_title})` : ""}.` + (sel.length ? ` Selected in it: ${sel.map((u) => `${u.verse ? `verse ${u.verse}: ` : ""}${String(u.text || "").slice(0, 300)}`).join(" | ")}` : ""));
+    }
+    const deck = deckHint().trim();
+    if (deck) parts.push(deck);
+    return parts.length ? `Context, for reference only (what is on his screen, not part of the request): ${parts.join(" ")}` : "";
+  }
+
+  // The page as Claude reads it: one verse or paragraph to a line, a verse's number set apart
+  // from its words ("21: And now..."), so a question can cite the right verse. DOMParser builds
+  // an inert document: nothing in library HTML can run or load from it.
+  function pageLines(html) {
+    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+    for (const junk of doc.querySelectorAll("sup.marker, .page-break, .notes, .note-mark, script, style, noscript, template")) junk.remove();
+    const lines = [];
+    for (const n of doc.body.querySelectorAll("h1, h2, h3, h4, p, li, blockquote")) {
+      if (n.querySelector("p, li, blockquote")) continue; // its own paragraphs come next
+      const num = n.querySelector(".verse-number");
+      const verse = num ? parseInt(num.textContent, 10) : NaN;
+      if (num) num.remove();
+      const t = n.textContent.replace(/\s+/g, " ").trim();
+      if (t) lines.push(Number.isFinite(verse) ? `${verse}: ${t}` : t);
+    }
+    return lines.length ? lines.join("\n") : doc.body.textContent.replace(/\s+/g, " ").trim();
   }
 
   // The floating button's work: the page (or the search) as Claude will see it.
@@ -297,15 +378,13 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   function subjectFor({ doc = null, selection = [], marks = [], query = null, hits = [] } = {}) {
     if (doc) {
       const label = doc.collection === "general-conference" ? `${doc.title} (${[doc.author, doc.label].filter(Boolean).join(", ")})` : doc.citation || doc.title;
-      const plain = el("div", { html: doc.body_html || "" });
-      for (const junk of plain.querySelectorAll("sup.marker, .page-break, .notes, .note-mark, script, style")) junk.remove();
-      let body = plain.textContent.replace(/\s+/g, " ").trim();
-      if (body.length > 24000) body = body.slice(0, 24000) + " …(the page continues)";
-      const sel = selection.length ? "\n\nHe has selected these, so think about them first:\n" + selection.map((u) => `${u.verse ? `${u.verse} ` : ""}${u.text}`).join("\n") : "";
+      let body = pageLines(doc.body_html);
+      if (body.length > 24000) body = body.slice(0, 24000) + "\n…(the page continues)";
+      const sel = selection.length ? "\n\nHe has selected these, so think about them first:\n" + selection.map((u) => `${u.verse ? `${u.verse}: ` : ""}${u.text}`).join("\n") : "";
       const marked = marks.filter((m) => m.color || m.note);
-      const his = marked.length ? "\n\nHis own marks on this page (earlier study; build on them, and answer his notes where they ask something):\n" + marked.map((m) => `${m.verse ? `${m.verse} ` : ""}${m.color ? `[highlighted] ` : ""}${(m.text || "").slice(0, 200)}${m.note ? `\n  His note: ${m.note}` : ""}`).join("\n") : "";
+      const his = marked.length ? "\n\nHis own marks on this page (earlier study; build on them, and answer his notes where they ask something):\n" + marked.map((m) => `${m.verse ? `${m.verse}: ` : ""}${m.color ? `[highlighted] ` : ""}${(m.text || "").slice(0, 200)}${m.note ? `\n  His note: ${m.note}` : ""}`).join("\n") : "";
       const deck = deckHint();
-      return { label, content: `The page: ${label}${doc.author && doc.collection !== "general-conference" ? `, ${doc.author}` : ""}${doc.collection ? ` (${doc.collection_title || doc.collection})` : ""}.\n\n${body}${sel}${his}${deck}` };
+      return { label, content: `The page: ${label}${doc.author && doc.collection !== "general-conference" ? `, ${doc.author}` : ""}${doc.collection ? ` (${doc.collection_title || doc.collection})` : ""}. It follows one verse or paragraph to a line; a verse begins with its number and a colon.\n\n${body}${sel}${his}${deck}` };
     }
     const label = `the search “${query}”`;
     const top = hits.slice(0, 8).map((h) => `${h.citation}: ${(h.text || "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
@@ -394,6 +473,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => {
           const was = settings.key;
           settings.key = "";
+          setThread([]);
           close();
           render(container);
           GL().toast("The key is off this device.", { action: "Undo", onAction: () => { settings.key = was; if (view === container && container.isConnected) render(container); } });
@@ -463,16 +543,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       const trail = [], proposals = [];
       const reply = await agent(text, mode, registry, findings, status, answer, trail, proposals);
       lastPassages = registry.list;
-      if (!subject) {
-        thread.push({ role: "user", content: text }, { role: "assistant", content: reply });
-        if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
-      } else {
-        // the page is now part of the conversation, so a follow-up question can refer to it
-        thread.push({ role: "user", content: `(I thought this page through with you: ${subject.label}.)` }, { role: "assistant", content: reply });
-        if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
-      }
+      // thinking a page through joins the conversation too, so a follow-up question can refer to it
+      setThread([...thread, { role: "user", content: subject ? `(I thought this page through with you: ${subject.label}.)` : text }, { role: "assistant", content: withLabels(reply, registry.list) }]);
       status.remove();
-      finish(answer, sources, tools, reply, registry.list, input, modes, log, trail, proposals);
+      finish(answer, sources, tools, reply, registry.list, input, modes, log, trail, proposals, registry.checkable());
       findings.setCited([...new Set([...reply.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]);
       if (subject) offerSection(tools, reply, registry.list, findings);
     } catch (err) {
@@ -581,7 +655,9 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   // ------------------------------------------------------------- registry --
   // Every passage any tool returns gets a stable number; citations use them.
   class Registry {
-    constructor() { this.list = []; this.byKey = new Map(); }
+    constructor() { this.list = []; this.byKey = new Map(); this.own = []; }
+    // what a quotation may be checked against: the passages, and his own notes and study pages
+    checkable() { return this.own.length ? [...this.list, ...this.own] : this.list; }
     add(p) {
       const key = `${p.doc_id}:${p.pid}`;
       const prev = this.byKey.get(key);
@@ -709,6 +785,52 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return { text: lines.join("\n"), count: r.count };
   };
 
+  // His own study pages (IndexedDB, through window.Studies) and his highlights and notes
+  // (window.Marks), searched by words on the main thread: the engine holds neither.
+  Registry.prototype.myNotes = async function ({ query = "", limit = 8 } = {}) {
+    const words = String(query || "").toLowerCase().split(/[^\p{L}\p{N}']+/u).filter((w) => w.length >= 2);
+    const max = Math.max(1, Math.min(20, limit || 8));
+    const score = (hay) => { const h = hay.toLowerCase(); return words.reduce((n, w) => n + (h.includes(w) ? 1 : 0), 0); };
+    const day = (ms) => (ms ? isoDay(new Date(ms)) : "");
+    const found = [];
+    let marks = [], studies = [];
+    try { marks = (await window.Marks?.all()) || []; } catch (_) {}
+    try { studies = ((await window.Studies?.list()) || []).slice(0, 40); } catch (_) {}
+    for (const m of marks) {
+      const sc = words.length ? score(`${m.citation || ""} ${m.title || ""} ${m.text || ""} ${m.note || ""}`) : 1;
+      if (sc) found.push({ sc, at: m.updated || 0, mark: m });
+    }
+    for (const meta of studies) {
+      let text = "";
+      try { text = window.Studies.plainText(await window.Studies.get(meta.id)) || ""; } catch (_) { continue; }
+      const sc = words.length ? score(`${meta.title || ""} ${text}`) : 1;
+      if (sc) found.push({ sc, at: meta.added || 0, study: meta, text });
+    }
+    // every word first, then the most words, then the newest
+    found.sort((a, b) => b.sc - a.sc || b.at - a.at);
+    const top = found.slice(0, max);
+    if (!top.length) return { text: marks.length || studies.length ? `Nothing in his ${marks.length} highlights and notes or his ${studies.length} study pages has those words. Try other words, or leave the query out for the most recent.` : "He has no study pages, highlights or notes on this device yet.", count: 0 };
+    const lines = [`His own study pages, highlights and notes (${found.length} matched; ${top.length} shown). These are his words and his marks, not scripture.`];
+    for (const f of top) {
+      if (f.mark) {
+        const m = f.mark;
+        let cite = m.citation || m.title || "a passage";
+        let text = m.text || "";
+        if (m.doc_id && m.pid) { try { const p = await this.fromHit({ doc_id: m.doc_id, pid: m.pid, kind: m.kind }); if (p) { cite = `[${p.n}] ${p.citation || cite}`; text = p.plain || text; } } catch (_) {} }
+        if (m.note) this.own.push({ plain: m.note });
+        lines.push(`\n${m.note ? "His note" : "His highlight"} on ${cite}${day(m.updated) ? `, ${day(m.updated)}` : ""}${m.color && window.Marks?.COLOR_NAME?.[m.color] ? ` (highlighted ${window.Marks.COLOR_NAME[m.color]})` : ""}\nThe passage: ${text}${m.note ? `\nHis note: ${m.note}` : ""}`);
+      } else {
+        const t = f.text;
+        const at = words.length ? Math.max(0, Math.min(...words.map((w) => t.toLowerCase().indexOf(w)).filter((i) => i >= 0), t.length)) : 0;
+        const from = Math.max(0, at - 400);
+        const part = t.slice(from, from + 1600);
+        this.own.push({ plain: part });
+        lines.push(`\nHis study page “${f.study.title}”${day(f.study.added) ? `, added ${day(f.study.added)}` : ""}${from > 0 ? " (from the middle)" : ""}\n${from > 0 ? "… " : ""}${part}${from + 1600 < t.length ? " …" : ""}`);
+      }
+    }
+    return { text: lines.join("\n"), count: top.length };
+  };
+
   function sourceLabel(d) {
     if (d.collection === "general-conference") return [d.author, `“${d.title}”`, d.label].filter(Boolean).join(", ");
     if (d.collection === "scriptures") return d.citation;
@@ -774,14 +896,14 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const lead = [todayLine(), weekLine(k)].filter(Boolean).join(" ");
     const first = mode === "think"
       ? `${lead}\n\n${text}`
-      : `${lead}\n\n${mode === "ask" ? "Question" : "Request"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
+      : `${[lead, contextLine()].filter(Boolean).join("\n")}\n\n${mode === "ask" ? "Question" : "Request"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
     // thinking a page through starts fresh: the page is the whole context
     const messages = [...(mode === "think" ? [] : thread).map((m) => ({ role: m.role, content: m.content })), { role: "user", content: first }];
     let calls = 0, finalText = "";
     const system = await systemFor(mode);
     const ask = (tool_choice) => {
       let buffer = "", pending = false, thought = "";
-      const flush = () => { pending = false; answerEl.innerHTML = markdown(buffer, registry.list); };
+      const flush = () => { pending = false; answerEl.innerHTML = markdown(buffer, registry.list, registry.own); };
       return complete({
         // The tools list must be the same on every request of a turn: a thinking
         // block is bound to the tools it was made with, and a changed list is a 400.
@@ -842,6 +964,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
             const r = await registry.lexicon(tu.input);
             step.found = r.count ?? null;
             content = r.text;
+          } else if (tu.name === "my_notes") {
+            step.what = tu.input.query ? String(tu.input.query) : "the most recent";
+            statusEl.textContent = "Looking in your notes and study pages…";
+            const r = await registry.myNotes(tu.input);
+            step.found = r.count;
+            content = r.text;
           } else if (tu.name === "remember") {
             const note = String(tu.input.note || "").replace(/\s+/g, " ").trim().slice(0, 400);
             step.what = note;
@@ -879,15 +1007,15 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return messages;
   }
 
-  function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log, trail = [], proposals = []) {
+  function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log, trail = [], proposals = [], checkable = passages) {
     // The trail: what was searched, read, and counted, so the work can be checked.
     const model = MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model;
     const trailEl = el("details", { class: "ask-trail" }, [
       el("summary", { text: `${trail.length ? `${trail.length} ${trail.length === 1 ? "search" : "searches"}, ${passages.length} passages` : `${passages.length} passages`} · ${model}${settings.think ? ", thinking" : ""}` }),
-      trail.length ? el("ol", {}, trail.map((t) => el("li", { text: `${t.tool === "search" ? "Searched: " : t.tool === "read" ? "" : t.tool === "original" ? "Read " : t.tool === "lexicon" ? "Looked up " : t.tool === "remember" ? "Proposed a note: " : "Counted: "}${t.what.replace(/^read /, "Read ").replace(/^lexicon /, "")}${t.found !== null && t.found !== undefined ? ` (${t.found})` : ""}` }))) : null,
+      trail.length ? el("ol", {}, trail.map((t) => el("li", { text: `${t.tool === "search" ? "Searched: " : t.tool === "read" ? "" : t.tool === "original" ? "Read " : t.tool === "lexicon" ? "Looked up " : t.tool === "remember" ? "Proposed a note: " : t.tool === "my_notes" ? "Looked in your notes: " : "Counted: "}${t.what.replace(/^read /, "Read ").replace(/^lexicon /, "")}${t.found !== null && t.found !== undefined ? ` (${t.found})` : ""}` }))) : null,
     ]);
     sourcesEl.append(trailEl);
-    const bad = unverifiedQuotes(reply, passages);
+    const bad = unverifiedQuotes(reply, checkable);
     if (bad.length) {
       sourcesEl.append(el("div", { class: "quote-note" }, [
         el("span", { text: `${bad.length === 1 ? "One quotation is" : `${bad.length} quotations are`} not word for word in any passage found (underlined). ` }),
@@ -1024,12 +1152,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   // Answers are rendered by lib/markdown.js, which also checks every quotation word for
   // word against the passages (QUOTE_RE, quoteFound, unverifiedQuotes); here a citation [n]
   // becomes a button that opens the passage.
-  function markdown(src, passages) {
+  function markdown(src, passages, own = []) {
     const cite = (n) => {
       const p = passages.find((x) => x.n === Number(n));
       return p ? `<button type="button" class="cite" data-doc="${p.doc_id}" data-pid="${esc(p.pid || "")}" title="${esc(p.label)}">${esc(shortCitation(p))}</button>` : `[${n}]`;
     };
-    return renderMarkdown(src, { passages, cite });
+    return renderMarkdown(src, { passages: own.length ? [...passages, ...own] : passages, cite });
   }
 
   document.addEventListener("click", (e) => {
@@ -1145,5 +1273,5 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     // the system blocks for a mode; the deck's chain calls it with its own paragraph
     system: systemFor,
     // for tests: the Think it through prompt, how its questions are read back, the inventory
-    thinkPrompt: MODE_THINK, thinkQuestions, inventoryText, core: CORE, tools: TOOLS };
+    thinkPrompt: MODE_THINK, thinkQuestions, inventoryText, core: CORE, tools: TOOLS, withLabels, Registry };
 })();

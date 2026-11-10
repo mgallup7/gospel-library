@@ -3,7 +3,9 @@
 // one last request goes out with tools off. And with "propose extra searches" off, Return in
 // the search box asks Claude nothing. Settings open over Ask as a sheet (Back and Escape close
 // them, the typed question stays), hold his standing instructions and his notes, and a note
-// Claude proposes is saved only when he taps Save.
+// Claude proposes is saved only when he taps Save. Ask and Draft carry one line of context (the
+// page open, what is selected, the deck); his own notes are reachable with a tool; the thread
+// survives a reload, and New thread can be undone.
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const check = (c, m) => { if (!c) errors.push(m); };
@@ -23,6 +25,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const text = (t) => [{ type: "message_start" }, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }, { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } }, { type: "content_block_stop", index: 0 }, { type: "message_delta", delta: { stop_reason: "end_turn" } }, { type: "message_stop" }];
     const tool = (name, input) => [{ type: "message_start" }, { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: `tu_${requests.length}`, name, input: {} } }, { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } }, { type: "content_block_stop", index: 0 }, { type: "message_delta", delta: { stop_reason: "tool_use" } }, { type: "message_stop" }];
     const stream = (events) => route.fulfill({ status: 200, headers: { ...cors, "content-type": "text/event-stream" }, body: sse(events) });
+    // a question about his own notes: Claude looks in them, then quotes one
+    if (/NOTES-TEST/.test(said)) return stream(/tool_result/.test(said) ? text('Your note says "NOTE-MARK faith is not a perfect knowledge of things".') : tool("my_notes", { query: "faith knowledge" }));
     // a question that states a preference: Claude proposes a note, then answers
     if (/REMEMBER-TEST/.test(said)) return stream(/tool_result/.test(said) ? text("Noted for this answer.") : tool("remember", { note: "Zone conference talks run twelve minutes." }));
     // Think it through: the answer at once, under its headings, with the three kinds of question
@@ -134,6 +138,40 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check(await page.evaluate(() => /^\d{4}-\d\d-\d\d: Zone conference talks run twelve minutes\.$/.test(JSON.parse(localStorage.getItem("gospel.askNotes") || '""'))), "Save keeps the note, dated");
   await page.evaluate(() => { localStorage.removeItem("gospel.askInstructions"); });
 
+  // the page he has open, what he selected in it and his own note on it go along
+  await page.evaluate(async () => { const s = await GL.api("search", { q: "Alma 32" }); GL.openDoc(s.jump.doc_id, "p21"); });
+  await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
+  await page.evaluate(async () => { const d = GL.reading.doc; await window.Marks.set({ uri: d.uri, doc_id: d.id, pid: "p21", verse: 21, kind: "verse", note: "NOTE-MARK faith is not a perfect knowledge of things", text: "And now as I said concerning faith", citation: "Alma 32:21", title: d.title }); });
+  await page.click("#reader .doc #p21");
+  await page.fill(".ask-input", "NOTES-TEST what did I note about faith");
+  await page.click(".ask-go");
+  await page.waitForFunction(() => /Your note says/.test(document.querySelector(".ask-log")?.textContent || ""), null, { timeout: 30000 }).catch(() => null);
+  const notesReqs = requests.filter((b) => b.stream && /NOTES-TEST/.test(JSON.stringify(b.messages)));
+  const firstTurn = String(notesReqs[0]?.messages?.at(-1)?.content || "");
+  check(/^Today is [^\n]+\nContext, for reference only[^\n]*He has this page open: Alma 32 \(Scriptures\)\./.test(firstTurn), `Ask sends what he is reading: ${firstTurn.slice(0, 200)}`);
+  check(/Selected in it: verse 21: And now as I said concerning faith/.test(firstTurn), `and what he selected: ${firstTurn.slice(0, 260)}`);
+  const noteResult = JSON.stringify(notesReqs.at(-1)?.messages?.at(-1)?.content || "");
+  check(/His note on \[\d+\] Alma 32:21/.test(noteResult) && /NOTE-MARK faith is not a perfect knowledge/.test(noteResult), `my_notes returns his note with its passage: ${noteResult.slice(0, 200)}`);
+  check(!(await page.evaluate(() => [...document.querySelectorAll(".ask-card")].find((c) => /NOTES-TEST/.test(c.textContent))?.querySelector(".quote-note"))), "a quotation from his own note is not flagged");
+  await page.click("#reader .doc #p21"); // unselect
+
+  // the thread is kept on the device with each [n] replaced by its passage, and comes back after a reload
+  const kept = await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.askThread") || "[]"));
+  check(kept.length === 6 && kept[0].content === "What is faith?", `three exchanges kept (got ${kept.length})`);
+  check(!/\[\d+\]/.test(kept[1]?.content || "") && /true \([^)]+\d\)\.$/.test(kept[1]?.content || ""), `the old [n] became its passage: ${kept[1]?.content}`);
+  await page.goto(BASE + "#");
+  await page.reload();
+  await page.waitForSelector("#homeBody .shelf-grid", { timeout: 60000 });
+  await page.click("#askBtn");
+  await page.waitForSelector(".ask-input", { timeout: 10000 });
+  check((await page.$$(".ask-card.kept")).length === 3, `the answers are back after a reload (got ${(await page.$$(".ask-card.kept")).length})`);
+  check(/What is faith\?/.test(await page.textContent(".ask-log")), "with their questions");
+  // New thread clears them, and Undo brings them back
+  await page.click(".ask .text-btn:has-text('New thread')");
+  check((await page.$$(".ask-card")).length === 0 && await page.evaluate(() => !localStorage.getItem("gospel.askThread")), "New thread clears the answers and the stored thread");
+  await page.click(".toast .toast-action");
+  check((await page.$$(".ask-card")).length === 3 && await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.askThread") || "[]").length === 6), "Undo brings the thread back");
+
   // with it on (the default), Return in the search box asks for more searches; off, it sends nothing
   let before = requests.length;
   await page.fill("#q", "what did the prophets teach about faith and hope");
@@ -163,6 +201,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const sys = JSON.stringify(requests.filter((b) => b.stream).at(-1)?.system || "");
   check(/What you will do:/.test(sys) && /Preach My Gospel/.test(sys), "the think prompt asks for the three kinds");
   const thinkReq = requests.filter((b) => b.stream).at(-1) || {};
+  const thinkTurn = String(thinkReq.messages?.[0]?.content || "");
+  check(/^Today is /.test(thinkTurn) && /\n20: [^\n]+\n21: And now as I said concerning faith[^\n]+\n22: /.test(thinkTurn), `the page goes one verse to a line, its number apart: ${thinkTurn.slice(0, 120)}`);
+  check(/His note: NOTE-MARK/.test(thinkTurn), "with his note on it");
   check(/My standing instructions/.test(sysOf(thinkReq)) && /What he has asked you to remember[^\n]*\n\n\d{4}-\d\d-\d\d: Zone conference talks/.test(sysOf(thinkReq)), "Think it through sends the standing instructions and the saved note");
   await page.screenshot({ path: SHOTS + "ask-think-questions.png" });
   if (tq.length) {
