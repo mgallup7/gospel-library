@@ -185,9 +185,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   One passage per slide, long passages split at verse or sentence breaks,
   speaker and talk under a quote; each connection becomes a slide with the
   two excerpts in panels and the arrow between them, and the deck ends with
-  the chain as one picture: the passages left to right in the order you
-  arranged them, each arrow routed above the row with its label (backward
-  links go under). "Think it through" on the deck sends the chain to Claude
+  the chain as a picture sized for a chapel: the passages in the order you
+  arranged them, in large boxes, six to a slide at most (a longer chain runs
+  on to further slides), each arrow routed above its row with its label
+  (backward links go under), and no name smaller than 16pt. "Think it through" on the deck sends the chain to Claude
   (your chosen model, thinking first): it comes back with labels for
   unlabeled arrows, connections worth drawing that you have not drawn (with
   the exact phrases), a key phrase for any passage you have not highlighted,

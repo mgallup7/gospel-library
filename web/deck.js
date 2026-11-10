@@ -2036,8 +2036,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       if (it.type === "link") { const u = linkUnit(it); if (u) units.push(u); continue; }
       for (const chunk of pieces(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
     }
-    const map = mapUnit();
-    if (map) units.push(map);
+    units.push(...mapUnits());
     GL().startPresentingUnits(units, { theme: { bg: `#${t.bg}`, fg: `#${t.text}`, accent: `#${t.accent}`, muted: `#${t.muted}` } });
   }
   // The pieces a passage's slides show (chunksOf), each with the place of its words in the
@@ -2122,45 +2121,52 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       `<div class="side"><div class="x">${excerptHtml(b.item, b.hl)}</div><div class="ref">${esc(b.item.citation)}</div></div></div>`;
     return { kind: "link", html, where: "" };
   }
-  function mapUnit() {
-    const lay = mapLayout();
-    if (!lay) return null;
-    const S = 100; // slide inches to SVG units
+  // The chain on the stage: the same picture the PowerPoint draws, from the same layout, as SVG.
+  // Sizes are slide points, so what is 16pt in the file is the same share of the screen here.
+  function mapUnits() {
+    const lays = mapLayouts();
+    const S = 100, PT = S / 72; // slide inches, and points, to SVG units
     const f = (v) => (v * S).toFixed(1);
-    let svg = `<svg class="stage-map" viewBox="0 ${f(lay.top - 0.1)} ${f(lay.W)} ${f(lay.bottom - lay.top + 0.2)}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>`;
-    for (const l of lay.links) {
-      svg += `<polyline points="${l.points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#ah)" opacity=".85"/>`;
-      if (l.label) {
-        const { x, y, above } = l.labelAt;
-        const ty = y * S + (above === null ? 6 : above ? -7 : 19);
-        svg += `<text x="${f(x)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="16" fill="currentColor" opacity=".9">${esc(l.label)}</text>`;
-      }
-    }
     const accent = "var(--stage-accent, currentColor)";
-    for (const nd of lay.nodes) {
-      const bx = nd.x * S, by = nd.y * S, bw = nd.w * S, bh = nd.h * S;
-      svg += `<rect x="${(bx - bw / 2).toFixed(1)}" y="${(by - bh / 2).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="9" fill="rgba(127,127,127,.14)" stroke="currentColor" stroke-width="1.5" opacity=".9"/>`;
-      const refSize = Math.min(15, Math.max(10, (bw * 0.92) / Math.max(1, nd.label.length * 0.58)));
-      const top = by - bh / 2;
-      svg += `<text x="${bx.toFixed(1)}" y="${(top + 9 + refSize).toFixed(1)}" text-anchor="middle" font-size="${refSize.toFixed(1)}" font-weight="700" style="fill:${accent}">${esc(nd.label)}</text>`;
-      const size = nd.w >= 2 ? 13 : nd.w >= 1.7 ? 12 : 11;
-      const lines = wrapWords(nd.excerpt, Math.max(8, Math.floor((bw - 16) / (size * 0.5))), 3);
-      lines.forEach((line, i) => { svg += `<text x="${bx.toFixed(1)}" y="${(top + 9 + refSize + 7 + (i + 1) * size * 1.18).toFixed(1)}" text-anchor="middle" font-size="${size}" fill="currentColor" opacity=".92">${esc(line)}</text>`; });
-    }
-    svg += "</svg>";
-    const caption = deck.chain && deck.chain.caption ? `<div class="stage-caption">${esc(deck.chain.caption)}</div>` : "";
-    return { kind: "map", html: svg + caption, where: deck.title ? `${deck.title}: the chain` : "The chain" };
+    return lays.map((lay, k) => {
+      const x0 = lay.M - 0.15, w = lay.W - 2 * lay.M + 0.3;
+      let svg = `<svg class="stage-map" viewBox="${f(x0)} ${f(lay.top - 0.05)} ${f(w)} ${f(lay.bottom - lay.top + 0.1)}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ah${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>`;
+      for (const l of lay.links) svg += `<polyline points="${l.points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#ah${k})" opacity=".85"/>`;
+      for (const l of lay.links) {
+        if (!l.text) continue;
+        const { x, y, above } = l.labelAt, size = CHAIN.arrow * PT;
+        const ty = y * S + (above === null ? size * 0.35 : above ? -size * 0.4 : size * 1.05); // beside a drop, above a run, or under one
+        svg += `<text class="map-arrow-label" x="${f(x)}" y="${ty.toFixed(1)}" text-anchor="${above === null ? "start" : "middle"}" font-size="${size.toFixed(1)}" fill="currentColor">${esc(l.text)}</text>`;
+      }
+      for (const nd of lay.nodes) {
+        const bx = nd.x * S, by = nd.y * S, bw = nd.w * S, bh = nd.h * S, t = nd.fit;
+        svg += `<rect x="${(bx - bw / 2).toFixed(1)}" y="${(by - bh / 2).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="10" fill="rgba(127,127,127,.14)" stroke="currentColor" stroke-width="1.5" opacity=".9"/>`;
+        const ls = t.labelSize * PT, es = t.size * PT, lh = 1.22;
+        const blockH = t.labelLines.length * ls * lh + (t.lines.length ? 6 + t.lines.length * es * lh * 1.08 : 0);
+        let y = by - blockH / 2;
+        for (const line of t.labelLines) { y += ls * lh; svg += `<text class="map-label" x="${bx.toFixed(1)}" y="${(y - ls * 0.3).toFixed(1)}" text-anchor="middle" font-size="${ls.toFixed(1)}" font-weight="700" style="fill:${accent}">${esc(line)}</text>`; }
+        y += 6;
+        for (const line of t.lines) { y += es * lh * 1.08; svg += `<text class="map-excerpt" x="${bx.toFixed(1)}" y="${(y - es * 0.32).toFixed(1)}" text-anchor="middle" font-size="${es.toFixed(1)}" fill="currentColor" opacity=".92">${esc(line)}</text>`; }
+      }
+      svg += "</svg>";
+      const caption = lay.caption ? `<div class="stage-caption">${esc(lay.caption)}</div>` : "";
+      return { kind: "map", html: svg + caption, where: lay.title };
+    });
   }
-  // Greedy word wrap for SVG text, with an ellipsis when it runs past the lines allowed.
-  function wrapWords(text, perLine, maxLines) {
+  // The lines a text takes in a box of boxW inches at a size in points, measured the way
+  // countLines counts them; past maxLines the last line ends in an ellipsis.
+  function wrapLines(text, font, size, boxW, bold = false, maxLines = 99) {
+    const maxW = boxW * 72, space = textWidth(" ", font, size, false);
     const lines = [];
-    let cur = "";
-    for (const w of String(text || "").split(/\s+/).filter(Boolean)) {
-      if (cur && (cur + " " + w).length > perLine) { lines.push(cur); cur = w; if (lines.length === maxLines) break; } else cur = cur ? cur + " " + w : w;
+    let cur = "", w = 0, cut = false;
+    for (const word of String(text || "").split(/\s+/).filter(Boolean)) {
+      const ww = textWidth(word, font, size, bold);
+      if (cur && w + space + ww > maxW) {
+        if (lines.length === maxLines - 1) { cut = true; break; }
+        lines.push(cur); cur = word; w = ww;
+      } else { cur = cur ? `${cur} ${word}` : word; w += (w > 0 ? space : 0) + ww; }
     }
-    if (lines.length < maxLines && cur) lines.push(cur);
-    const used = lines.join(" ").split(/\s+/).length, all = String(text || "").split(/\s+/).filter(Boolean).length;
-    if (used < all && lines.length) lines[lines.length - 1] = lines[lines.length - 1].replace(/[,;:.]?$/, "") + " …";
+    if (cur) lines.push(cut ? cur.replace(/[,;:.]?$/, "") + " …" : cur);
     return lines;
   }
   // What a passage says, in a box: its highlighted phrases, or its opening words.
@@ -2176,65 +2182,140 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const ws = words.map((x) => x.w);
     return `“${ws.slice(0, maxWords).join(" ")}${ws.length > maxWords ? " …" : ""}”`;
   }
-  // The chain as one picture: passages in deck order, left to right (up to
-  // five a row), each arrow routed above the row (forward) or below it
-  // (back) on its own lane, with the label on the run. Positions are slide
-  // inches; the PowerPoint and the stage both draw from this.
-  function mapLayout() {
+  // The chain, drawn to be read from the back of a chapel. A slide holds at most six passages,
+  // three to a row in two rows, in boxes that take the room there is; the passage names and the
+  // names on the arrows are 16pt on a 10 inch slide (about 21pt on PowerPoint's wide one, 43px
+  // on a 1920 by 1080 screen) and never shrink, and the excerpts never go under 13pt: a long
+  // label is cut short and a long excerpt gives up words instead. A chain with more passages
+  // than a slide holds is split across slides, by its arrows: each slide takes the next arrows
+  // in deck order until its passages are full, so every arrow is drawn once, between two boxes
+  // on the same slide, and a passage that carries the chain on to the next slide opens it.
+  // An arrow between two boxes in one row runs above the row (below it when it points back, or
+  // in the lower row), each on its own lane with its name on the run; one between the rows
+  // runs along the gap between them, so no arrow crosses a box. Positions are slide inches;
+  // the PowerPoint and the stage both draw from this.
+  const CHAIN = { label: 16, arrow: 16, excerptMin: 13, lane: 0.36, perSlide: 6 };
+  function mapLayouts() {
     const g = graph();
-    if (!g) return null;
-    const W = 10, M = 0.75, inner = W - 2 * M, top = 0.98, bottom = deck.chain && deck.chain.caption ? 4.3 : 4.95;
+    if (!g) return [];
+    const caption = (deck.chain && deck.chain.caption) || "";
+    const title = deck.title ? `${deck.title}: the chain` : "The chain";
+    // two rows of three; a slide whose arrows (or the caption) leave its boxes under an inch of height is dealt again, three to a slide in one row
+    const pages = chainPages(g, CHAIN.perSlide).flatMap((page, i, all) => (mapLayout(page, i === all.length - 1 ? caption : "").nodes[0].h >= 1.0 ? [page] : chainPages(page, 3)));
+    const lays = pages.map((page, i) => mapLayout(page, i === pages.length - 1 ? caption : ""));
+    lays.forEach((lay, i) => { lay.title = lays.length > 1 ? `${title}, ${i + 1} of ${lays.length}` : title; });
+    return lays;
+  }
+  // The arrows in deck order (by the earlier of their two passages), dealt onto slides.
+  function chainPages(g, perSlide) {
+    const order = new Map(g.nodes.map((n, i) => [n.id, i]));
+    const edges = g.edges.map((e, i) => ({ e, i, lo: Math.min(order.get(e.from), order.get(e.to)), hi: Math.max(order.get(e.from), order.get(e.to)) }))
+      .sort((p, q) => p.lo - q.lo || p.hi - q.hi || p.i - q.i).map((x) => x.e);
+    const pages = [];
+    let ids = new Set(), list = [];
+    const close = () => { if (list.length) pages.push({ nodes: g.nodes.filter((n) => ids.has(n.id)), edges: list }); ids = new Set(); list = []; };
+    for (const e of edges) {
+      const more = [e.from, e.to].filter((id) => !ids.has(id)).length;
+      if (list.length && ids.size + more > perSlide) close();
+      ids.add(e.from); ids.add(e.to); list.push(e);
+    }
+    close();
+    return pages;
+  }
+  function mapLayout(g, caption = "") {
+    const W = 10, M = 0.75, inner = W - 2 * M, top = 1.0, bottom = caption ? 4.2 : 4.95;
     const n = g.nodes.length;
-    const perRow = Math.min(5, n);
+    const perRow = n <= 3 ? n : n === 4 ? 2 : 3;
     const rows = Math.ceil(n / perRow);
-    const gap = 0.3;
-    const bw = Math.min(2.4, (inner - (perRow - 1) * gap) / perRow), bh = rows <= 2 ? 1.0 : 0.8;
-    const x0 = M + (inner - (perRow * bw + (perRow - 1) * gap)) / 2 + bw / 2;
-    const rowY = rows === 1 ? [3.0] : rows === 2 ? [2.18, 3.68] : Array.from({ length: rows }, (_, r) => top + bh / 2 + 0.1 + r * ((bottom - top - bh - 0.2) / (rows - 1)));
-    const nodes = g.nodes.map((node, i) => ({ ...node, i, row: Math.floor(i / perRow), x: x0 + (i % perRow) * (bw + gap), y: rowY[Math.floor(i / perRow)], w: bw, h: bh, excerpt: nodeExcerpt(byId(node.id), perRow >= 5 ? 12 : perRow === 4 ? 14 : 18) }));
+    const bw = Math.min(perRow <= 2 ? 3.6 : 3.0, (inner - (perRow - 1) * 0.35) / perRow);
+    const gap = perRow > 1 ? Math.min(1.0, (inner - perRow * bw) / (perRow - 1)) : 0;
+    // each row is centered, so a second row of two sits under the gaps of the first three
+    const nodes = g.nodes.map((node, i) => {
+      const row = Math.floor(i / perRow), inRow = Math.min(perRow, n - row * perRow);
+      return { ...node, i, row, x: W / 2 + (i % perRow - (inRow - 1) / 2) * (bw + gap), y: 0, w: bw, h: 0 };
+    });
     const at = Object.fromEntries(nodes.map((nd) => [nd.id, nd]));
     const links = g.edges.map((e) => ({ label: e.label, a: at[e.from], b: at[e.to] }));
-    const useLanes = rows <= 2;
+    // Which side of its boxes an arrow runs on: above the row (below it when it points back, or
+    // in the lower of two rows), or, between two rows, in the gap between them.
     const slots = {};
     for (const l of links) {
-      l.bracket = useLanes && l.a.row === l.b.row;
-      if (!l.bracket) continue;
-      l.side = rows === 1 ? (l.a.i < l.b.i ? "top" : "bottom") : (l.a.row === 0 ? "top" : "bottom");
+      l.side = l.a.row !== l.b.row ? "gap" : rows === 1 ? (l.a.i < l.b.i ? "top" : "bottom") : (l.a.row === 0 ? "top" : "bottom");
       for (const nd of [l.a, l.b]) (slots[`${nd.id}|${l.side}`] ||= []).push(l);
     }
-    // Lanes: the shortest spans sit closest to the row; a lane is reused when the spans do not overlap.
+    // Lanes: the shortest spans sit closest to the row; a lane is reused when the spans do not
+    // overlap, and two arrows that meet at one box share a lane, since they attach side by side.
     const lanes = {};
-    for (const l of links.filter((x) => x.bracket).sort((p, q) => Math.abs(p.a.x - p.b.x) - Math.abs(q.a.x - q.b.x))) {
-      const list = (lanes[`${l.a.row}|${l.side}`] ||= []);
+    for (const l of links.slice().sort((p, q) => Math.abs(p.a.x - p.b.x) - Math.abs(q.a.x - q.b.x))) {
+      const list = (lanes[l.side] ||= []);
       const x1 = Math.min(l.a.x, l.b.x), x2 = Math.max(l.a.x, l.b.x);
       let lane = 0;
-      while ((list[lane] || []).some(([u1, u2]) => x1 < u2 + 0.15 && x2 > u1 - 0.15)) lane++;
+      while ((list[lane] || []).some(([u1, u2]) => x1 < u2 - 0.01 && x2 > u1 + 0.01)) lane++;
       (list[lane] ||= []).push([x1, x2]);
       l.lane = lane;
     }
+    // The boxes take what the lanes leave: the whole height in one row, half each in two.
+    const count = (side) => (lanes[side] || []).length;
+    const above = count("top") * CHAIN.lane + (count("top") ? 0.06 : 0);
+    const below = count("bottom") * CHAIN.lane + (count("bottom") ? 0.06 : 0);
+    const rowGap = rows > 1 ? Math.max(0.5, 0.14 + count("gap") * CHAIN.lane) : 0;
+    const room = bottom - top - above - below - rowGap;
+    const bh = rows === 1 ? Math.min(2.5, room - 0.1) : Math.min(1.9, room / 2);
+    const y0 = top + (bottom - top - (above + below + rows * bh + rowGap)) / 2 + above;
+    for (const nd of nodes) { nd.h = bh; nd.y = y0 + bh / 2 + nd.row * (bh + rowGap); }
+    for (const nd of nodes) { nd.excerpt = nodeExcerpt(byId(nd.id), bh >= 1.8 ? 26 : bh >= 1.2 ? 16 : 10); nd.fit = fitNode(nd); }
     // Where an arrow meets a box: spread the arrows on one side so they do not pile onto one point.
     const attach = (l, nd) => {
       const list = slots[`${nd.id}|${l.side}`].slice().sort((p, q) => (p.a === nd ? p.b.x : p.a.x) - (q.a === nd ? q.b.x : q.a.x));
       const k = list.indexOf(l), m = list.length;
-      return nd.x + (k - (m - 1) / 2) * Math.min(0.22, (nd.w - 0.3) / Math.max(1, m - 1));
+      return nd.x + (k - (m - 1) / 2) * Math.min(0.3, (nd.w - 0.4) / Math.max(1, m - 1));
     };
     for (const l of links) {
-      if (l.bracket) {
-        const up = l.side === "top";
-        const edge = (nd) => (up ? nd.y - nd.h / 2 : nd.y + nd.h / 2);
-        const laneY = Math.max(top, Math.min(bottom, up ? edge(l.a) - 0.22 - l.lane * 0.26 : edge(l.a) + 0.22 + l.lane * 0.26));
-        const ax = attach(l, l.a), bx = attach(l, l.b);
+      const ax = attach(l, l.a), bx = attach(l, l.b);
+      const up = l.side === "top" || l.side === "gap"; // the name sits above the run, or under it below the row
+      // the edge of each box the arrow leaves or enters, and the height of its run
+      const edge = (nd) => (l.side === "top" || (l.side === "gap" && nd.row === 1) ? nd.y - nd.h / 2 : nd.y + nd.h / 2);
+      const upper = l.a.row === 0 ? l.a : l.b;
+      const laneY = l.side === "top" ? edge(l.a) - 0.12 - l.lane * CHAIN.lane
+        : l.side === "bottom" ? edge(l.a) + 0.12 + l.lane * CHAIN.lane
+        : upper.y + upper.h / 2 + 0.34 + l.lane * CHAIN.lane;
+      let maxW;
+      if (l.side === "gap" && Math.abs(ax - bx) < 0.05) {
+        // one box straight under the other: a plain drop, its name beside it
+        l.points = [[ax, edge(l.a)], [ax, edge(l.b)]];
+        l.labelAt = { x: ax + 0.14, y: (edge(l.a) + edge(l.b)) / 2, above: null };
+        maxW = 2.2;
+      } else {
         l.points = [[ax, edge(l.a)], [ax, laneY], [bx, laneY], [bx, edge(l.b)]];
         l.labelAt = { x: (ax + bx) / 2, y: laneY, above: up };
-      } else {
-        const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
-        const trim = (nd) => Math.min(nd.w / 2 / Math.max(Math.abs(ux), 1e-6), nd.h / 2 / Math.max(Math.abs(uy), 1e-6)) + 0.04;
-        const x1 = l.a.x + ux * trim(l.a), y1 = l.a.y + uy * trim(l.a), x2 = l.b.x - ux * trim(l.b), y2 = l.b.y - uy * trim(l.b);
-        l.points = [[x1, y1], [x2, y2]];
-        l.labelAt = { x: (x1 + x2) / 2 - uy * 0.22, y: (y1 + y2) / 2 + ux * 0.22, above: null };
+        maxW = Math.max(1.6, Math.abs(bx - ax) - 0.3);
       }
+      // the name on the arrow, at its one size: cut short when the run cannot hold it
+      const fitted = l.label ? oneLine(l.label, { font: SANS, boxW: maxW, max: CHAIN.arrow, min: CHAIN.arrow }) : null;
+      l.text = fitted ? fitted.text : "";
+      l.cut = !!fitted && fitted.text !== l.label;
+      l.maxW = maxW;
     }
-    return { nodes, links, W, H: 5.625, top, bottom };
+    return { nodes, links, W, H: 5.625, M, top, bottom, caption };
+  }
+  // What a box holds: the passage's name at its one size, on two lines at most, and under it
+  // as much of the excerpt as fits at a size the room can read. A box too small for any of it
+  // keeps the name alone.
+  function fitNode(nd) {
+    const boxW = nd.w - 0.36, boxH = nd.h - 0.24;
+    const labelLines = wrapLines(nd.label, SANS, CHAIN.label, boxW * 0.94, true, 2);
+    const labelH = (labelLines.length * CHAIN.label * LINE_EM[SANS] + 5) / 72;
+    let text = nd.excerpt, fit = null, shortened = 0;
+    for (;;) {
+      fit = fitSize({ text, font: SERIF, boxW, boxH: Math.max(0.05, boxH - labelH), max: nd.h >= 1.8 ? 20 : 17, min: CHAIN.excerptMin, lineSpacing: 1.08 });
+      if (fit.fits) break;
+      const ws = text.replace(/[“”]/g, "").replace(/\s*…$/, "").split(/\s+/).filter(Boolean);
+      if (ws.length <= 4) { text = ""; break; }
+      text = `“${ws.slice(0, Math.max(4, Math.floor(ws.length * 0.75))).join(" ")} …”`;
+      shortened++;
+    }
+    const size = text ? fit.size : CHAIN.excerptMin;
+    return { labelSize: CHAIN.label, labelLines, excerpt: text, size, lines: text ? wrapLines(text, SERIF, size, boxW * 0.94) : [], shortened };
   }
   // Nodes and edges for the map: every passage that takes part in a connection.
   function graph() {
@@ -2556,52 +2637,46 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       });
     }
 
-    // The chain as one picture, one slide at the end.
-    const lay = mapLayout();
-    if (lay) {
+    // The chain as a picture, at the end: one slide, or as many as its passages need.
+    mapLayouts().forEach((lay, page) => {
       n++;
       const s = slide();
-      kicker(s, deck.title ? `${deck.title}: the chain` : "The chain");
+      kicker(s, lay.title);
       for (const l of lay.links) {
         for (let i = 1; i < l.points.length; i++) {
           const [x1, y1] = l.points[i - 1], [x2, y2] = l.points[i];
-          addSegment(pptx, s, x1, y1, x2, y2, { color: t.accent, width: 1.75, ...(i === l.points.length - 1 ? { endArrowType: "triangle" } : {}) });
-        }
-        if (l.label) {
-          const { x, y, above } = l.labelAt;
-          const ll = oneLine(l.label, { font: SANS, boxW: 2.0, max: 10, min: 7 });
-          report.boxes++;
-          s.addText(ll.text, { x: x - 1.0, y: above === null ? y - 0.14 : above ? y - 0.3 : y + 0.02, w: 2.0, h: 0.28, fontFace: SANS, fontSize: ll.size, color: t.accent, align: "center", valign: above === null ? "middle" : above ? "bottom" : "top", margin: 0 });
+          addSegment(pptx, s, x1, y1, x2, y2, { color: t.accent, width: 2.25, ...(i === l.points.length - 1 ? { endArrowType: "triangle" } : {}) });
         }
       }
-      if (deck.chain && deck.chain.caption) {
-        const cf = fitSize({ text: deck.chain.caption, font: SERIF, boxW: inner - 0.6, boxH: 0.62, max: 12, min: 8, lineSpacing: 1.1 });
+      for (const l of lay.links) {
+        if (!l.text) continue;
+        const { x, y, above } = l.labelAt;
+        if (l.cut) report.shortened++;
         report.boxes++;
-        s.addText(deck.chain.caption, { x: M + 0.3, y: 4.36, w: inner - 0.6, h: 0.62, fontFace: SERIF, italic: true, fontSize: cf.size, color: t.muted, align: "center", valign: "top", margin: 0, lineSpacingMultiple: 1.1 });
+        const w = l.maxW + 0.2;
+        // beside a straight drop; else above its run, or under it below the row
+        if (above === null) s.addText(l.text, { x, y: y - 0.15, w, h: 0.3, fontFace: SANS, fontSize: CHAIN.arrow, color: t.accent, align: "left", valign: "middle", margin: 0 });
+        else s.addText(l.text, { x: x - w / 2, y: above ? y - 0.32 : y + 0.02, w, h: 0.3, fontFace: SANS, fontSize: CHAIN.arrow, color: t.accent, align: "center", valign: above ? "bottom" : "top", margin: 0 });
       }
-      if (deck.chain && deck.chain.notes) s.addNotes(deck.chain.notes);
+      if (lay.caption) {
+        const cf = fitSize({ text: lay.caption, font: SERIF, boxW: inner - 0.4, boxH: 0.68, max: 16, min: 11, lineSpacing: 1.1 });
+        report.boxes++;
+        s.addText(lay.caption, { x: M + 0.2, y: 4.3, w: inner - 0.4, h: 0.68, fontFace: SERIF, italic: true, fontSize: cf.size, color: t.muted, align: "center", valign: "top", margin: 0, lineSpacingMultiple: 1.1 });
+      }
+      if (page === 0 && deck.chain && deck.chain.notes) s.addNotes(deck.chain.notes);
       report.slides++;
       for (const nd of lay.nodes) {
-        const big = nd.w >= 2;
-        // label and excerpt share the box; the excerpt gives way until both fit
-        const innerW = nd.w - 12 / 72, innerH = nd.h - 12 / 72;
-        let excerptText = nd.excerpt, size = big ? 11 : nd.w >= 1.7 ? 10 : 9, labelSize = big ? 11 : 10, ok = false;
-        for (let tries = 0; tries < 8 && !ok; tries++) {
-          const labelLines = countLines(nd.label, SANS, labelSize, innerW * 0.94, true);
-          const labelH = (labelLines * labelSize * LINE_EM[SANS] * 1.05 + 3) / 72;
-          const ef = fitSize({ text: excerptText, font: SERIF, boxW: innerW, boxH: Math.max(0.1, innerH - labelH), max: size, min: 7, lineSpacing: 1.05 });
-          size = ef.size; ok = ef.fits;
-          if (!ok) { const ws = excerptText.replace(/[“”]/g, "").replace(/\s*…$/, "").split(/\s+/); if (ws.length <= 4) break; excerptText = `“${ws.slice(0, Math.max(3, Math.floor(ws.length * 0.75))).join(" ")} …”`; report.shortened++; }
-        }
+        const f = nd.fit;
         report.boxes++;
+        report.shortened += f.shortened;
         s.addText([
-          { text: nd.label, options: { bold: true, fontSize: labelSize, color: t.accent, fontFace: SANS, breakLine: true, paraSpaceAfter: 3 } },
-          { text: excerptText, options: { fontSize: size, color: t.text, fontFace: SERIF } },
-        ], { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, align: "center", valign: "middle", margin: 6, lineSpacingMultiple: 1.05,
-          fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.08, shape: pptx.ShapeType.roundRect });
+          { text: f.labelLines.join(" "), options: { bold: true, fontSize: f.labelSize, color: t.accent, fontFace: SANS, ...(f.excerpt ? { breakLine: true, paraSpaceAfter: 5 } : {}) } },
+          ...(f.excerpt ? [{ text: f.excerpt, options: { fontSize: f.size, color: t.text, fontFace: SERIF } }] : []),
+        ], { x: nd.x - nd.w / 2, y: nd.y - nd.h / 2, w: nd.w, h: nd.h, align: "center", valign: "middle", margin: [6, 10, 6, 10], lineSpacingMultiple: 1.08,
+          fill: { color: t.panel }, line: { color: t.accent, width: 1 }, rectRadius: 0.1, shape: pptx.ShapeType.roundRect });
       }
       footer(s, n);
-    }
+    });
     return pptx;
   }
   // What the last build measured: slides, boxes, what had to give way.
