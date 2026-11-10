@@ -291,6 +291,17 @@ import { esc, mb } from "./lib/format.js";
   // calls this first; push() then keeps that reading instead of measuring the new view.
   let leavingScroll = null;
   function rememberScroll() { leavingScroll = { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY, study: studyScroll, at: Date.now() }; setEntry({ scroll: leavingScroll }); }
+  // A reload (or the system putting the app away and starting it again) comes back to the same
+  // address; the place on the page is written into the entry as the page is hidden, and which of
+  // the page and the board was showing beside the Deck when the switch changes (refreshSwitches),
+  // and the start reads them back.
+  const keepPlace = () => { if (!state.ready || history.state?.overlay || switching) return; const was = leavingScroll; rememberScroll(); leavingScroll = was; };
+  window.addEventListener("pagehide", keepPlace);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") keepPlace(); });
+  // (a browser may not keep what is written while the page is going away, so the place is also
+  // written a moment after each scroll comes to rest)
+  let placeTimer = 0;
+  document.addEventListener("scroll", () => { clearTimeout(placeTimer); placeTimer = setTimeout(keepPlace, 400); }, { capture: true, passive: true });
   // place: the kind of entry, so typing in the same place refines it instead of stacking entries
   function placeNow() { return state.q.trim() ? (state.view === "all" ? "concordance" : "search") : state.browse?.tab || "home"; }
   function push(replace = false) {
@@ -3621,7 +3632,7 @@ import { esc, mb } from "./lib/format.js";
     state.ready = true;
     try { navigator.storage?.persist?.().catch(() => {}); } catch (_) {} // 150 MB that should not be evicted
     api("speakers", {}).then((rows) => { const dl = $("#speakerList"); for (const r of rows) dl.append(el("option", { value: r.name })); }).catch(() => {});
-    await render();
+    await render({ restore: history.state?.scroll || null, boot: true }); // where the page was when the app was last hidden, if this is a reload
     setTimeout(checkForUpdate, 1500);
     setTimeout(loadSkills, 400);
     setTimeout(loadSemantic, 2500);
