@@ -847,10 +847,16 @@ import { database } from "./lib/idb.js";
     // While linking, a tap on the board that is not on a phrase or passage to link to cancels:
     // the source card, a section, a tool, the head, empty space. swallowTap keeps that same tap
     // from starting a highlight.
+    // A finger that comes down just outside a card (the gap between two, the margin beside one)
+    // is handed to the nearest card by the browser, click and all. Where it really came down is
+    // kept, and a tap that began outside the card it was given to does not link: it cancels.
+    let downAt = null;
+    board.addEventListener("pointerdown", (e) => { downAt = { x: e.clientX, y: e.clientY }; }, true);
+    const landedOn = (card, e) => { if (!downAt || e.detail === 0) return true; const r = card.getBoundingClientRect(); return downAt.x >= r.left && downAt.x <= r.right && downAt.y >= r.top && downAt.y <= r.bottom; };
     board.addEventListener("click", (e) => {
       if (!linking || e.target.closest(".board-banner, .bpop")) return;
       const card = e.target.closest(".bcard");
-      if (card && card.dataset.type === "passage" && card.dataset.id !== linking.id && !e.target.closest("button:not(.port):not(.bc-cite), textarea, input")) return;
+      if (card && card.dataset.type === "passage" && card.dataset.id !== linking.id && !e.target.closest("button:not(.port):not(.bc-cite), textarea, input") && landedOn(card, e)) return; // (a click from the keyboard came down nowhere)
       swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
       cancelLink();
     }, true);
