@@ -22,12 +22,12 @@ const source = fs.readFileSync(path.join(here, "..", "..", "web", "ask.js"), "ut
     return `const {${names.replace(/\bas\b/g, ":")}} = __lib[${JSON.stringify(from)}];`;
   });
 
-function load(fetchImpl, saved = {}) {
+function load(fetchImpl, saved = {}, gl = {}) {
   const data = { apiKey: "test-key", ...saved };
   const store = { get: (k, d) => (k in data ? data[k] : d), set: (k, v) => { data[k] = v; }, del: (k) => { delete data[k]; } };
   const calls = [];
   const fetch = (url, opts) => { calls.push({ url, body: JSON.parse(opts.body), signal: opts.signal }); return fetchImpl(opts); };
-  const window = { GL: { el: () => ({}), esc: (s) => s, store }, addEventListener() {} };
+  const window = { GL: { el: () => ({}), esc: (s) => s, store, ...gl }, addEventListener() {} };
   const ctx = {
     window, document: { addEventListener() {} }, navigator: { onLine: true }, fetch, console, __lib: LIB,
     setTimeout: (fn, ms) => setTimeout(fn, ms / 1000), clearTimeout,
@@ -144,4 +144,81 @@ test("the questions of a Think it through are read back by kind, without their c
   const old = Ask.thinkQuestions("## Questions\nA few to ask.\n- Who planted the seed?\n- What grew there?\n\n## For the deck\nx");
   assert.deepEqual(JSON.parse(JSON.stringify(old)).map((x) => [x.kind, x.text]), [[null, "Who planted the seed?"], [null, "What grew there?"]]);
   assert.deepEqual(JSON.parse(JSON.stringify(Ask.thinkQuestions("No headings at all."))), []);
+});
+
+// ---- what is sent: the system blocks, the same assembly for every mode ----
+// The test library: the scriptures with Hebrew and Greek, a few pages of the Papers, no talks.
+const STATS = {
+  collections: [
+    { slug: "scriptures", title: "Scriptures", docs: 1582 },
+    { slug: "general-conference", title: "General Conference", docs: 0 },
+    { slug: "jsp-journals", title: "Joseph Smith Papers: Journals", docs: 8 },
+  ],
+  talks: 0, latest_conference: null, originals: { verses: 31218, lexicon: 22717 },
+};
+const libraryApi = (stats = STATS, books = []) => async (method) => (method === "stats" ? stats : method === "browse" ? { books } : null);
+const textOf = (blocks) => blocks.map((b) => b.text).join("\n\n");
+
+test("the inventory says what this device holds, and names what it does not", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const inv = Ask.inventoryText(STATS);
+  assert.match(inv, /^On this device/);
+  assert.match(inv, /the standard works[^\n]*: 1,582 chapters\. Search scope: scriptures\./);
+  assert.match(inv, /Joseph Smith Papers[^\n]*Journals: 8 pages/);
+  assert.match(inv, /Hebrew and Greek text word by word[^\n]*31,218 verses/);
+  const missing = inv.slice(inv.indexOf("Not on this device"));
+  for (const shelf of ["general conference talks", "Preach My Gospel", "Missionary Standards", "Come, Follow Me", "the General Handbook", "the study helps"]) assert.ok(missing.includes(shelf), `${shelf} is named as not here`);
+  assert.doesNotMatch(inv, /1971/, "no claim about talks this device does not hold");
+  assert.doesNotMatch(inv.slice(0, inv.indexOf("Not on this device")), /conference/, "talks are not listed as held");
+  // with talks, the span comes from the conferences held, not from a constant
+  const full = Ask.inventoryText({ ...STATS, talks: 70, collections: [...STATS.collections.filter((c) => c.slug !== "general-conference"), { slug: "general-conference", title: "General Conference", docs: 70 }], originals: null },
+    [{ year: 2024, month: 10, docs: 35 }, { year: 2024, month: 4, docs: 35 }, { year: 2025, month: 4, docs: 0 }]);
+  assert.match(full, /general conference talks: 70 talks from 2 conferences, April 2024 to October 2024/);
+  assert.match(full, /Not on this device:[^\n]*the Hebrew and Greek text under the Bible/);
+  // a library that cannot be read claims nothing
+  assert.match(Ask.inventoryText(null), /could not be read/);
+});
+
+test("every mode sends the same core, his standing instructions and his notes, with one cache marker", async () => {
+  const skills = { style: "STYLE-MARK", voice: "VOICE-MARK", skills: [{ kind: "mode", id: "letter", name: "Letter", text: "LETTER-MARK" }] };
+  const { Ask } = load(() => { throw new Error("no call"); }, { askNotes: "2026-11-01: The zone conference theme is covenants." }, { api: libraryApi(), skills });
+  const per = {};
+  for (const mode of ["ask", "draft", "think", "skill:letter", "chain"]) per[mode] = JSON.parse(JSON.stringify(await Ask.system(mode, mode === "chain" ? "CHAIN-PARAGRAPH" : "")));
+  for (const [mode, blocks] of Object.entries(per)) {
+    const all = textOf(blocks);
+    assert.equal(blocks[0].text, Ask.core, `${mode}: the core comes first`);
+    assert.match(all, /My standing instructions[^\n]*\n\nNo em dashes, and nothing that sounds written by an AI\.\nStart from the Hebrew, Greek or Aramaic before Latter-day Saint canon\./, `${mode}: the starter instructions are sent`);
+    assert.match(all, /What he has asked you to remember[^\n]*\n\n2026-11-01: The zone conference theme is covenants\./, `${mode}: the notes are sent`);
+    assert.equal(blocks.filter((b) => b.cache_control).length, 1, `${mode}: one cache marker`);
+    assert.doesNotMatch(all, /\u2014/, `${mode}: no em dash in what is sent`);
+    assert.doesNotMatch(all, /1971/, `${mode}: no shelf claimed that is not here`);
+  }
+  for (const mode of ["ask", "draft", "think", "skill:letter"]) {
+    const blocks = per[mode];
+    assert.ok(blocks.at(-1).cache_control, `${mode}: the marker is on the last block`);
+    assert.match(blocks[2].text, /^On this device[\s\S]*Not on this device: general conference talks[\s\S]*\n\nTools:/, `${mode}: the inventory, then the tools`);
+    assert.match(blocks[2].text, /When a Bible verse or word is in view, the first calls are original and lexicon/, `${mode}: original text first, in the tools guide`);
+  }
+  assert.match(per.ask[1].text, /^This turn is a question/);
+  assert.match(per.draft[1].text, /read its Hebrew or Greek first/);
+  assert.match(per.think[1].text, /read its key verses in the Hebrew or Greek first/);
+  assert.match(textOf(per.ask), /STYLE-MARK/); assert.doesNotMatch(textOf(per.ask), /VOICE-MARK/);
+  assert.match(textOf(per.draft), /VOICE-MARK/); assert.doesNotMatch(textOf(per.draft), /LETTER-MARK/);
+  assert.match(textOf(per["skill:letter"]), /VOICE-MARK[\s\S]*LETTER-MARK/);
+  // the deck's chain: its own paragraph, no tools guide, the date after the marker
+  const chain = per.chain;
+  assert.match(chain[1].text, /^CHAIN-PARAGRAPH\n\nThis call has no tools/);
+  assert.doesNotMatch(textOf(chain), /\nTools:/);
+  assert.match(textOf(chain), /STYLE-MARK/);
+  assert.match(chain.at(-1).text, /^Today is \w+ \d+, \d{4}\.$/);
+  assert.ok(chain.at(-2).cache_control && !chain.at(-1).cache_control);
+});
+
+test("standing instructions he has emptied are not sent, and his own replace the starter", async () => {
+  const empty = load(() => { throw new Error("no call"); }, { askInstructions: "" }, { api: libraryApi() });
+  assert.doesNotMatch(textOf(await empty.Ask.system("ask")), /My standing instructions \(/);
+  const own = load(() => { throw new Error("no call"); }, { askInstructions: "Answer in outline form." }, { api: libraryApi() });
+  const all = textOf(await own.Ask.system("draft"));
+  assert.match(all, /My standing instructions[^\n]*\n\nAnswer in outline form\./);
+  assert.doesNotMatch(all, /Talk to me as a peer/);
 });

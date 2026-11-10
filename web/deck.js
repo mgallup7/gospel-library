@@ -1166,8 +1166,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     box.replaceChildren(el("div", { class: "think-head" }, [el("b", { text: "Thinking it through" }), el("button", { type: "button", class: "text-btn small", text: "Close", onclick: () => { box.hidden = true; box.replaceChildren(); } })]), status);
     ui.think.disabled = true;
     try {
-      const sk = GL().skills || {};
-      const system = [{ type: "text", text: CHAIN_SYSTEM + (sk.style ? `\n\nHouse style for the caption and notes:\n${sk.style}` : ""), cache_control: { type: "ephemeral" } }];
+      const system = await Ask.system("chain", CHAIN_SYSTEM); // the blocks Ask sends: who he is, his standing instructions, the house style, his notes
       let thought = "";
       const context = await contextAround();
       const text = await Ask.complete({ model: Ask.settings.model, system, messages: [{ role: "user", content: chainUser(context) }], max_tokens: 16000, stream: true, thinking: Ask.settings.think,
