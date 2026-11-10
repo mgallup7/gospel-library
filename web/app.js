@@ -1491,6 +1491,7 @@ import { esc, mb } from "./lib/format.js";
     const body = $(".doc", readerPane);
     const page = currentDoc; // the page as it is now: a move while the marks save must not send them to another page
     const allSame = units.every((u) => docMarks.get(u.pid)?.color === color);
+    const before = units.map((u) => ({ pid: u.pid, rec: docMarks.get(u.pid) || null })); // for Undo, when the color comes off
     for (const u of units) {
       try {
         const ranged = !!docMarks.get(u.pid)?.pid_end; // a verse that opens a note's range keeps the range's words and citation
@@ -1502,7 +1503,25 @@ import { esc, mb } from "./lib/format.js";
     // the verses stay selected and the bar stays up (focus with it), so a note or Add to deck can
     // follow without selecting them again; the dot shows the color they now carry
     updateSelectBar();
-    toast(allSame ? "Highlight removed." : units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
+    if (allSame) toast(units.length === 1 ? "Highlight removed." : `${units.length} highlights removed.`, { action: "Undo", onAction: () => restoreMarks(page, before, units.length === 1 ? "Highlight put back." : "Highlights put back.") });
+    else toast(units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
+  }
+  // Marks put back as they were (the record each paragraph had, or none): what the Undo on
+  // "Highlight removed" and "Note removed" does. The page may have changed meanwhile; the store is
+  // put right either way, and the page only if it is still the one open.
+  async function restoreMarks(page, before, said) {
+    for (const { pid, rec } of before) {
+      try {
+        let back = null;
+        if (rec) back = await window.Marks.set({ uri: rec.uri, pid: rec.pid, doc_id: rec.doc_id, verse: rec.verse, kind: rec.kind, color: rec.color || null, note: rec.note || "", pid_end: rec.pid_end || null, verse_end: rec.verse_end, text: rec.text, citation: rec.citation, title: rec.title });
+        else await window.Marks.remove(page.uri, pid);
+        if (currentDoc !== page) continue;
+        const b = $(".doc", readerPane);
+        if (back) { docMarks.set(pid, back); if (b) drawMark(b, back); } else { docMarks.delete(pid); if (b) undrawMark(b, pid); }
+      } catch (_) { toast("Could not put that back."); return; }
+    }
+    if (currentDoc === page) { drawRanges($(".doc", readerPane)); updateSelectBar(); }
+    toast(said);
   }
   // A note on a passage, written in the sheet: one verse or paragraph, or a run of them (end is the
   // last; an existing note brings its own range back). The note is kept on the first.
@@ -1532,7 +1551,9 @@ import { esc, mb } from "./lib/format.js";
         if (rec) { docMarks.set(unit.pid, rec); if (b) drawMark(b, rec); } else { docMarks.delete(unit.pid); if (b) undrawMark(b, unit.pid); }
         drawRanges(b);
         closeSheet(); updateSelectBar(); // the selection stays, for a color or Add to deck after the note
-        toast(keep ? "Note saved." : "Note removed.");
+        // a note deleted can be had back: the toast holds the record as it was when the sheet opened
+        if (!keep && old?.note) toast("Note removed.", { action: "Undo", onAction: () => restoreMarks(page, [{ pid: unit.pid, rec: old }], "Note put back.") });
+        else toast(keep ? "Note saved." : "Note removed.");
       } catch (_) { toast("Could not save the note."); }
     };
     bodyEl.replaceChildren(
@@ -1908,6 +1929,12 @@ import { esc, mb } from "./lib/format.js";
     const n = readerPane.querySelectorAll(".sel").length;
     if (!n) { bar?.remove(); return; }
     if (!bar) {
+      const present = () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); };
+      const copy = () => {
+        const text = copyText(selectedUnits());
+        navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
+      };
+      const clear = () => { const f = $(".doc .sel", readerPane); clearSelection(); focusUnit(f); };
       bar = el("div", { class: "select-bar" }, [
         el("span", { class: "n" }),
         window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
@@ -1919,12 +1946,13 @@ import { esc, mb } from "./lib/format.js";
           focusUnit(first);
           deckToast(added, added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
-        el("button", { type: "button", class: "text-btn only-wide", text: "Present", onclick: () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); } }),
-        el("button", { type: "button", class: "text-btn", text: "Copy", title: "Copy with the citation", onclick: () => {
-          const text = copyText(selectedUnits());
-          navigator.clipboard?.writeText(text).then(() => toast("Copied, with the citation."), () => toast("Could not copy here."));
-        } }),
-        el("button", { type: "button", class: "text-btn clear-sel", "aria-label": "Clear selection", title: "Clear selection", onclick: () => { const f = $(".doc .sel", readerPane); clearSelection(); focusUnit(f); } }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),
+        // these three fold behind "more" when the bar has no room for them (fitSelectBar)
+        el("button", { type: "button", class: "text-btn only-wide fold", text: "Present", onclick: present }),
+        el("button", { type: "button", class: "text-btn fold", text: "Copy", title: "Copy with the citation", onclick: copy }),
+        el("button", { type: "button", class: "text-btn clear-sel fold", "aria-label": "Clear selection", title: "Clear selection", onclick: clear }, [el("span", { class: "long", text: "Clear" }), el("span", { class: "short", text: "×", "aria-hidden": "true" })]),
+        popMenu({ class: "sel-more-btn", "aria-label": "More: Present, Copy, Clear", title: "More", html: ICON_MORE }, [
+          ["Present", ICON_PRESENT, present], ["Copy with the citation", ICON_COPY, copy], ["Clear selection", ICON_CLEAR, clear],
+        ], "sel-more"),
       ]);
       // right after the reader bar in the order Tab and VoiceOver follow; app.css draws it at the bottom
       const rb = $(".reader-bar", readerPane);
@@ -1934,6 +1962,36 @@ import { esc, mb } from "./lib/format.js";
     // a dot is pressed when every selected passage carries its color (pressing it again takes it off)
     const pids = [...readerPane.querySelectorAll(".doc .sel")].map((u) => u.id);
     for (const d of bar.querySelectorAll(".hl-dot")) d.setAttribute("aria-pressed", String(!!pids.length && pids.every((pid) => docMarks.get(pid)?.color === d.dataset.color)));
+    fitSelectBar();
+  }
+  // The bar on one row: when the dots, Note, Add to deck and the rest do not fit (an iPad in
+  // portrait, a phone), Present, Copy and Clear go behind one "more" button. Measured with nothing
+  // allowed to shrink, as the reader bar is.
+  function fitSelectBar() {
+    const bar = $(".select-bar", readerPane);
+    if (!bar || bar.offsetParent === null) return;
+    bar.classList.remove("compact");
+    bar.classList.add("measuring");
+    const over = bar.scrollWidth > bar.clientWidth + 1;
+    bar.classList.remove("measuring");
+    bar.classList.toggle("compact", over);
+  }
+  window.addEventListener("resize", fitSelectBar);
+  // A small menu on a button, the pattern of the reader bar's Aa: a tap opens it, a tap elsewhere
+  // or Escape closes it (focus back on the button), and a choice closes it and acts.
+  const ICON_MORE = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>';
+  const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a1 1 0 0 1 1-1h9"/></svg>';
+  const ICON_CLEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  function popMenu(btnAttrs, items, cls) {
+    const menu = el("div", { class: "size-menu", role: "menu", hidden: true }, items.map(([label, icon, act]) =>
+      el("button", { type: "button", role: "menuitem", onclick: () => { shut(); act(); } }, [el("span", { class: "g", html: icon }), label])));
+    const btn = el("button", { type: "button", "aria-haspopup": "menu", "aria-expanded": "false", ...btnAttrs, onclick: (e) => { e.stopPropagation(); if (menu.hidden) open(); else shut(); } });
+    const wrap = el("span", { class: cls }, [btn, menu]);
+    const away = (e) => { if (!wrap.contains(e.target)) shut(); };
+    menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } });
+    function open() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.querySelector("button")?.focus({ preventScroll: true }); }
+    function shut() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); }
+    return wrap;
   }
   // toast(text, { action: "Undo", onAction }) adds a button and stays about five seconds, long
   // enough to reach it; the plain toast still goes after two. A newer toast replaces an older one.
@@ -1960,12 +2018,15 @@ import { esc, mb } from "./lib/format.js";
     t.replaceChildren(...[el("span", { text }), action ? el("button", { type: "button", class: "toast-action", text: action, onclick: () => toastAct?.() }) : null].filter(Boolean));
     toastArm(action ? 5000 : 1800);
   }
+  // Outside a field Cmd+Z is always the app's: the toast's Undo while one shows, else the deck's own
+  // undo. Left to the browser it would rewind the search box, and a search would run from nowhere.
   document.addEventListener("keydown", (e) => {
-    if (!toastAct || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
     const a = document.activeElement;
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return; // a field's own undo comes first
     e.preventDefault();
-    toastAct();
+    if (toastAct) toastAct();
+    else if (window.Deck && window.Deck.undo) window.Deck.undo();
   });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
   function deckToast(added, text) {
@@ -2775,6 +2836,7 @@ import { esc, mb } from "./lib/format.js";
     // a switch that had focus keeps it on the pane now showing
     if (hadFocus) { const visible = [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.classList.contains("on")); if (visible) { try { visible.focus({ preventScroll: true }); } catch (_) {} } }
     fitReaderBars(); // a pane just shown, or a switch come or gone, changes what the bar needs
+    fitSelectBar();
   }
 
   function searchFor(q) {

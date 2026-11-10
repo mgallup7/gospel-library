@@ -752,7 +752,18 @@ body.presenting { overflow: hidden; }
   #reader .select-bar { bottom: calc(68px + var(--safe-bottom)); }
   #reader:has(> .select-bar) > .reader-foot .foot-btn[aria-label="Add to deck"] { display: none; }
 }
-.select-bar .n { flex: 1; font-size: var(--ui-13); color: var(--ink-2); }
+.select-bar .n { flex: 1; font-size: var(--ui-13); color: var(--ink-2); white-space: nowrap; }
+.select-bar .text-btn { white-space: nowrap; }
+/* what does not fit on one row (Present, Copy, Clear) folds behind one "more" button (app.js fitSelectBar) */
+.select-bar .sel-more { display: none; position: relative; flex: none; }
+.select-bar .sel-more-btn { width: 44px; height: 44px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
+.select-bar .sel-more-btn svg { width: 22px; height: 22px; }
+.select-bar .sel-more-btn[aria-expanded="true"] { background: var(--chrome-2); }
+.select-bar .sel-more .size-menu { top: auto; bottom: calc(100% + 8px); }
+.select-bar.compact .sel-more { display: inline-flex; }
+.select-bar.compact .fold { display: none; }
+.select-bar.measuring > * { flex-shrink: 0 !important; }
+.select-bar.measuring .n { flex: 0 0 auto; }
 .select-bar .primary, .deck .primary, .deck-summary .primary { height: 44px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .deck .primary:disabled, .deck .text-btn:disabled { opacity: .45; }
 .toast { position: fixed; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translate(-50%, 10px); z-index: 60; padding: 10px 16px; border-radius: 10px; background: var(--ink); color: var(--paper); font: 14px var(--sans); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
