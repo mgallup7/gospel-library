@@ -157,6 +157,88 @@ import { esc, mb } from "./lib/format.js";
     state.studyId = !state.docId && p.get("s") ? p.get("s") : null;
   }
 
+  // Each of the four places keeps a trail of its own. The browser has one history, so it holds
+  // the trail of the place in front and no other: a tap on another tab puts this trail away (its
+  // entries, with their names and their scroll), steps the browser back to where the trails
+  // begin, and lays the other place's trail down there. Back then walks the place you are in, as
+  // it always did, and never crosses into another. To put a trail away its entries must be known,
+  // and the browser shows only the current one, so every push and replace is mirrored here by
+  // position (each entry carries its own as i). The mirror and the trails put away live in
+  // sessionStorage, so a reload finds them.
+  const TAB_TOP = { library: "#", search: "#search", deck: "#deck", ask: "#ask" };
+  const tabOfUrl = (u) => { const b = String(u || "").replace(/^[^#]*#?/, "").split("?")[0]; return b === "search" || b === "deck" || b === "ask" ? b : "library"; };
+  let pos = Number.isInteger(history.state?.i) ? history.state.i : 0; // where the browser's history is
+  let floor = pos;   // where the trails begin: nothing below it is the app's to rewrite
+  let mirror = [];   // position -> { url, state }
+  let kept = {};     // place -> the trail it was left with
+  try {
+    const t = JSON.parse(sessionStorage.getItem("gospel.trail") || "null");
+    if (t && Array.isArray(t.mirror) && t.mirror[pos]?.url === (location.hash || "#") && t.floor <= pos) { mirror = t.mirror; floor = t.floor; kept = t.kept || {}; }
+  } catch (_) {}
+  const rawPush = history.pushState.bind(history), rawReplace = history.replaceState.bind(history);
+  let trailTimer = null;
+  function writeTrail() { clearTimeout(trailTimer); try { sessionStorage.setItem("gospel.trail", JSON.stringify({ floor, mirror: mirror.slice(0, pos + 1), kept })); } catch (_) {} }
+  const noteEntry = () => { mirror[pos] = { url: location.hash || "#", state: history.state }; clearTimeout(trailTimer); trailTimer = setTimeout(writeTrail, 200); };
+  history.pushState = (st, title, url) => { pos += 1; rawPush({ ...(st || {}), i: pos }, title, url); mirror.length = pos; noteEntry(); };
+  history.replaceState = (st, title, url) => { rawReplace({ ...(st || {}), i: pos }, title, url); noteEntry(); };
+  window.addEventListener("popstate", () => { if (Number.isInteger(history.state?.i)) pos = history.state.i; if (pos < floor) floor = pos; noteEntry(); }, true);
+  window.addEventListener("pagehide", writeTrail);
+  // The trail in front, as the place `tab` should find it again: nothing of a sheet's marker, and
+  // nothing of the place a step came in from (a search typed in the Library begins at the search).
+  function trailFor(tab) {
+    let live = mirror.slice(floor, pos + 1);
+    const hole = live.map((e) => !e).lastIndexOf(true); // entries from before a reload that lost the mirror
+    if (hole >= 0) live = live.slice(hole + 1);
+    live = live.filter((e) => !e.state?.overlay);
+    const first = live.findIndex((e) => tabOfUrl(e.url) === tab);
+    if (first < 0) return null;
+    if (first === 0) return live;
+    const base = live[first].state?.n || 0;
+    return live.slice(first).map((e, k) => ({ url: e.url, state: { ...e.state, n: Math.max(0, (e.state?.n || 0) - base), ...(k ? {} : { prev: null, prevUrl: null, prevList: null }) } }));
+  }
+  let tabJump = false; // a step back to where the trails begin, asked for by a tab: nothing to render on it
+  function jumpBy(delta) {
+    return new Promise((done) => {
+      tabJump = true;
+      const end = () => { clearTimeout(timer); window.removeEventListener("popstate", end); tabJump = false; done(); };
+      const timer = setTimeout(end, 1000);
+      window.addEventListener("popstate", end);
+      history.go(delta);
+    });
+  }
+  // A tab. Another place comes back as it was left, at its own scroll; the place you are in goes
+  // to its top (the shelves, an empty Search with the cursor in the box, the board, the thread).
+  let switching = false;
+  async function switchTab(to, { top = false } = {}) {
+    if (!state.ready || switching || !TAB_TOP[to]) return;
+    if (overlay === "sheet" || overlay === "stage") return; // a sheet or the stage is answered first (the tabs are inert under them)
+    const from = tabNow();
+    const same = to === from;
+    if (same && pos === floor && !pageNow() && !state.q.trim() && (location.hash || "#").split("?")[0] === TAB_TOP[to]) { // already at its top
+      window.scrollTo(0, 0); listPane.scrollTop = 0;
+      if (to === "search") focusBox();
+      if (to === "deck" && wide() && panelPane.hidden) panel.restore();
+      return;
+    }
+    switching = true;
+    try {
+      rememberScroll(); leavingScroll = null;
+      if (!same) { const mine = trailFor(from); if (mine) kept[from] = mine; }
+      const back = !same && !top && kept[to]?.length ? kept[to] : null;
+      const trail = back || [{ url: TAB_TOP[to], state: { n: 0, label: null, prev: null, place: to === "search" ? "search" : null } }];
+      overlay = null; noteUnder = null;
+      if (pos > floor) await jumpBy(floor - pos);
+      trail.forEach((e, k) => (k ? history.pushState : history.replaceState)(e.state, "", e.url));
+      leaveSearch(); typedLeft = null;
+      readUrl();
+      paneView = to === "deck" ? "board" : "page"; // the board is the Deck's; elsewhere it shows only when the switch asks
+      syncControls();
+      await render({ restore: back ? history.state?.scroll || null : null });
+      if (!back) { window.scrollTo(0, 0); listPane.scrollTop = 0; }
+      if (to === "search" && !state.q.trim() && !pageNow()) focusBox();
+    } finally { switching = false; }
+  }
+
   // The trail. Every place you go is a history entry; history.state carries its depth within
   // this visit (n), its own name, and the name of the one before it, so the Back button can say
   // where it leads ("‹ Alma 32", "‹ Results") and work in the home-screen app, where there is no
@@ -192,9 +274,10 @@ import { esc, mb } from "./lib/format.js";
     const cur = history.state || {};
     // a marker entry (a sheet or the stage over a place) stays one: push() reads the flag to know it is leaving from an overlay
     history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, prevList: cur.prevList || null, ...patch }, "", location.href);
+    syncTitle();
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
-  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); syncTitle(); }
+  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); else syncTitle(); }
   // Where the view was scrolled, kept on the entry being left. A path that redraws before it pushes
   // calls this first; push() then keeps that reading instead of measuring the new view.
   let leavingScroll = null;
@@ -218,6 +301,10 @@ import { esc, mb } from "./lib/format.js";
     // leaving from inside a sheet or the stage: its marker entry becomes the new place, so Back
     // from there returns to the page under it, not to a sheet that is no longer open
     const prevList = history.state?.list || null; // for the Deck's entry once its pane is switched back to the page (backLabel)
+    // a step that crosses into another place (a search typed in the Library, Think it through from a
+    // page) leaves the place it came from as it was: its tab comes back to this
+    const leftTab = tabOfUrl(prevUrl);
+    if (leftTab !== tabOfUrl(url)) { const t = trailFor(leftTab); if (t) kept[leftTab] = t; }
     if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, prevUrl, prevList, scroll: null, place: null }, "", url); }
     else history.pushState({ n: here() + 1, label: null, prev, prevUrl, prevList, scroll: null, place: null }, "", url);
     nameEntry();
@@ -252,9 +339,16 @@ import { esc, mb } from "./lib/format.js";
     if (s.prevList && wide() && state.browse?.tab === "deck" && !state.q.trim() && paneView === "page" && pageOpen()) return s.prevList;
     return s.prev || "Back";
   }
+  // Where a trail begins there is no step to take back. In the Library that is home; in the other
+  // places on a phone a page that covers the list closes, and the button says what is under it.
+  function floorLabel() {
+    if (tabNow() === "library") return "Library";
+    return !wide() && pageNow() ? labelNow(true) : null;
+  }
   function goBack() {
     if (here() > 0) history.back();
-    else goHome();
+    else if (tabNow() === "library") goHome();
+    else if (pageNow()) { state.docId = null; state.pid = null; state.studyId = null; render().then(() => push(true), () => {}); }
   }
   // The four places. Which one this is follows from the address: words in the box (or the empty
   // Search) are Search, #deck and #ask are themselves, and everything else, shelves and pages, is
@@ -327,9 +421,10 @@ import { esc, mb } from "./lib/format.js";
   }
   // What Back says, wherever it is drawn
   function trailButton() {
-    const label = backLabel();
-    return el("button", { type: "button", class: "trail-back", "aria-label": label ? `Back to ${label}` : "Library", title: label ? `Back to ${label}` : "Library", onclick: goBack }, [
-      el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: label || "Library" })]);
+    const label = backLabel() || floorLabel();
+    if (!label) return el("span", { class: "trail-back none", hidden: true }); // the top of Search, the Deck or Ask: the tab bar is the way out
+    return el("button", { type: "button", class: "trail-back", "aria-label": `Back to ${label}`, title: `Back to ${label}`, onclick: goBack }, [
+      el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: label })]);
   }
   function refreshTrailButtons() {
     for (const b of document.querySelectorAll(".trail-back")) if (!b.closest(".head-back")) b.replaceWith(trailButton());
@@ -346,6 +441,7 @@ import { esc, mb } from "./lib/format.js";
   function listTrail() { return backLabel() ? el("div", { class: "list-trail" }, [trailButton()]) : null; }
   window.addEventListener("popstate", () => {
     if (!state.ready) return;
+    if (tabJump) return; // a tab's step back to where the trails begin: switchTab draws what follows
     if (poppingOverlay) { poppingOverlay = false; return; } // our own pop of a marker, already closed
     if (overlay && !history.state?.overlay) { // Back with a sheet or the stage open: close it, stay where you are
       const kind = overlay;
@@ -1154,7 +1250,7 @@ import { esc, mb } from "./lib/format.js";
       const sec = el("section", { class: "home-sec sec-continue" }, [el("h2", { text: "Continue" })]);
       if (last) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openDoc(last.id, last.pid || null) }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: last.title }), el("span", { class: "hc-s", text: [last.where, last.verse ? `at verse ${last.verse}` : null].filter(Boolean).join(" · ") })]), el("span", { class: "hc-go", text: "›" })]));
-      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openTab("deck") }, [
+      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => switchTab("deck") }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
       body.append(sec);
     }
@@ -2793,28 +2889,13 @@ import { esc, mb } from "./lib/format.js";
     b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
   }
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); $("#filterBtn").setAttribute("aria-expanded", String(!filters.hidden)); });
-  function openTab(tab) {
-    if (!state.ready) return;
-    if (tab === "library") { goHome(); return; }
-    // a tap on the tab you are in does nothing (on a wide screen it brings the board back in front of the page)
-    if (state.browse?.tab === tab && !state.q.trim() && (wide() || !pageNow())) { if (tab === "deck" && wide() && panelPane.hidden) panel.restore(); if (tab === "search") focusBox(); return; }
-    const from = tabLeft();
-    rememberScroll();
-    leaveSearch();
-    state.q = "";
-    if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
-    state.browse = { tab };
-    if (tab === "search") state.scope = "all";
-    syncControls(); renderHome(); showList(); tabStep(from);
-    if (tab === "search") { setEntry({ place: "search" }); focusBox(); }
-  }
-  for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) b.addEventListener("click", () => openTab(b.dataset.tab));
+  for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) b.addEventListener("click", () => switchTab(b.dataset.tab));
   $("#settingsBtn").addEventListener("click", () => { if (state.ready) openSettings(); });
   function focusBox() { try { input.focus({ preventScroll: true }); input.select(); } catch (_) {} }
   // The search box from the keyboard ("/", Cmd+F): where it is not on the screen (the Deck, Ask,
   // a page on a phone) Search comes up first.
   function focusSearch() {
-    if (input.offsetParent !== null) focusBox(); else openTab("search");
+    if (input.offsetParent !== null) focusBox(); else switchTab("search").then(focusBox);
   }
   // The Library's search field: a tap on it is a step into Search, with the cursor in the box
   // and the shelf you were in as the place to search.
