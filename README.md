@@ -56,6 +56,11 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Back, and survives a reload. In the home-screen app a swipe in from the
   left edge goes back and from the right edge forward (in Safari the
   browser's own swipe does the same).
+- The reader bar says where you are: the chapter or page by name ("Alma 32"),
+  a tap on the name opens the book's chapters, and the arrows beside it (Left
+  and Right on a keyboard) turn to the previous and next chapter without
+  adding a Back step. With a keyboard, Cmd+F or Cmd+K is the search box and
+  Cmd+[ is Back.
 - Links stay in the app. A cross-reference, a footnote, a link from
   Missionary Standards to Preach My Gospel, however the Church's page
   writes the address (`alma/32?id=p21`, `alma/32.21-27`, a whole book, the

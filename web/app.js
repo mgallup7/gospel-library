@@ -1216,10 +1216,11 @@ import { esc, mb } from "./lib/format.js";
 
   // ------------------------------------------------------------ reader ----
   let currentDoc = null;
-  async function openDoc(id, pid, { push: doPush = true, scroll = true } = {}) {
+  // replace: the page takes the place of the one open (the next chapter), where a plain open is a step of its own
+  async function openDoc(id, pid, { push: doPush = true, scroll = true, replace = false } = {}) {
     if (!id) return;
     state.docId = id; state.pid = pid || null; state.studyId = null; currentStudy = null;
-    if (doPush) { push(); paneView = "page"; } // a page chosen now is what the pane should show
+    if (doPush) { push(replace); if (replace) setEntry({ scroll: null }); paneView = "page"; } // a page chosen now is what the pane should show
     markActive();
     showReader();
     if (!currentDoc || currentDoc.id !== id) {
@@ -1235,7 +1236,7 @@ import { esc, mb } from "./lib/format.js";
     focusParagraph(state.pid, { scroll });
     updateThinkFab();
     // on a phone the page replaces the list, so the way back is what a keyboard or VoiceOver user meets first
-    if (!wide() && doPush) { const back = readerPane.querySelector(".trail-back"); if (back) try { back.focus({ preventScroll: true }); } catch (_) {} }
+    if (!wide() && doPush && !replace) { const back = readerPane.querySelector(".trail-back"); if (back) try { back.focus({ preventScroll: true }); } catch (_) {} }
     const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(state.pid || "") ? Number(state.pid.slice(1)) : null;
     store.set("lastRead", { id: currentDoc.id, title: currentDoc.title, where: crumbFor(currentDoc), pid: state.pid || null, verse });
   }
@@ -1243,7 +1244,8 @@ import { esc, mb } from "./lib/format.js";
   function renderDoc(doc) {
     const bar = el("div", { class: "reader-bar" }, [
       trailButton(),
-      el("div", { class: "crumb", text: crumbFor(doc) }),
+      titleCrumb(doc),
+      chapNav(doc),
       el("div", { class: "spacer" }),
       ...sizeTools(doc),
       el("button", { class: "icon-btn bar-extra", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
@@ -1260,8 +1262,8 @@ import { esc, mb } from "./lib/format.js";
       body.append(notes);
     }
     const nav = el("div", { class: "doc-nav" }, [
-      doc.prev ? el("button", { text: `‹ ${doc.prev.title}`, onclick: () => openDoc(doc.prev.id, null) }) : el("span"),
-      doc.next ? el("button", { text: `${doc.next.title} ›`, onclick: () => openDoc(doc.next.id, null) }) : el("span"),
+      doc.prev ? el("button", { text: `‹ ${doc.prev.title}`, onclick: () => stepChapter(doc.prev) }) : el("span"),
+      doc.next ? el("button", { text: `${doc.next.title} ›`, onclick: () => stepChapter(doc.next) }) : el("span"),
     ]);
     const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
     // On a phone the tools sit at the bottom, under the thumb; the top bar keeps the way back and the crumb.
@@ -1322,6 +1324,52 @@ import { esc, mb } from "./lib/format.js";
     highlightTerms(body);
     applyMarks(doc, body);
     showInStudies(doc, body);
+  }
+
+  // The reader bar says where you are: the chapter or the page by name ("Alma 32"), and a tap on
+  // the name leads up to what holds it, the book's chapters or the manual's contents.
+  function titleCrumb(doc) {
+    const name = doc.collection === "scriptures" && doc.citation ? chapterOf(doc.citation) : doc.title;
+    const up = doc.collection === "scriptures" ? doc.book_name : doc.book?.title;
+    const can = doc.collection === "scriptures" ? !!doc.book_slug : !!doc.book?.uri;
+    return el("button", { type: "button", class: "crumb", disabled: !can, text: name, title: can ? `${up || "Contents"}: all of it` : crumbFor(doc),
+      "aria-label": can ? `${name}. Open ${up || "the contents"}` : name, onclick: () => openContents(doc) });
+  }
+  function openContents(doc) {
+    const c = doc.collection || "";
+    const tab = TAB_OF[c] || (c.startsWith("jsp-") ? "jsp" : "manuals");
+    const browse = c === "scriptures" && doc.book_slug ? { tab, book: doc.book_slug } : { tab, bookUri: doc.book.uri };
+    if (tab === "jsp") browse.series = c;
+    if (tab === "conference" && doc.year) browse.year = doc.year;
+    openList(browse);
+  }
+  // A shelf, or a depth in one, opened from the page: the list on a wide screen, the whole screen on
+  // a phone. When the entry before is that very place (the book the chapter was opened from), it is Back.
+  function openList(browse) {
+    rememberScroll();
+    const was = { browse: state.browse, q: state.q, doc: state.docId, pid: state.pid, study: state.studyId };
+    state.q = ""; state.browse = browse;
+    if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
+    if (here() > 0 && history.state?.prevUrl === urlFor()) { state.browse = was.browse; state.q = was.q; state.docId = was.doc; state.pid = was.pid; state.studyId = was.study; leavingScroll = null; history.back(); return; }
+    leaveSearch();
+    if (TAB_SCOPE[browse.tab]) state.scope = TAB_SCOPE[browse.tab];
+    syncControls(); renderHome(); showList(); push();
+  }
+  // Previous and next, in the bar: the neighbour takes this page's place in the trail, so a run of
+  // chapters is one step and Back still leads to where the reading began. Left and Right do the same.
+  const ICON_FWD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+  function chapNav(doc) {
+    if (!doc.prev && !doc.next) return null;
+    const b = (to, dir, word, icon) => el("button", { type: "button", class: "chap", "data-dir": dir, disabled: !to, "aria-label": to ? `${word}: ${to.title}` : word, title: to ? to.title : word, html: icon, onclick: () => stepChapter(to, dir) });
+    return el("span", { class: "chap-nav", role: "group", "aria-label": "Previous and next" }, [b(doc.prev, "prev", "Previous", ICON_BACK), b(doc.next, "next", "Next", ICON_FWD)]);
+  }
+  async function stepChapter(to, dir = null) {
+    if (!to) return;
+    const had = dir && document.activeElement?.closest?.(".chap-nav");
+    await openDoc(to.id, null, { replace: true });
+    // the bar was drawn again: the arrow that was pressed keeps the focus, for the next press
+    const again = had ? $(`.reader-bar .chap[data-dir="${dir}"]`, readerPane) : null;
+    if (again && !again.disabled) { try { again.focus({ preventScroll: true }); } catch (_) {} }
   }
 
   // A citation for a Joseph Smith Papers page, in the Papers' own form, with the manuscript page
@@ -1537,7 +1585,7 @@ import { esc, mb } from "./lib/format.js";
     studyScroll = scroll || 0;
     const bar = el("div", { class: "reader-bar" }, [
       trailButton(),
-      el("div", { class: "crumb", text: `My studies · added ${new Date(rec.added).toLocaleDateString([], { month: "short", day: "numeric" })}` }),
+      el("button", { type: "button", class: "crumb", text: rec.title, title: "My studies: all of them", "aria-label": `${rec.title}. Open My studies`, onclick: () => openList({ tab: "studies" }) }),
       el("div", { class: "spacer" }),
       el("span", { class: "pane-switch-slot" }),
     ]);
@@ -2553,8 +2601,26 @@ import { esc, mb } from "./lib/format.js";
     // Single-key shortcuts never fire while typing in any field (the Ask box, a deck title, a label).
     const a = document.activeElement;
     const typing = !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable);
-    if (e.key === "Escape") { if (!sheet.hidden) { if (!keepTyped()) closeSheet(); } else if (typing) a.blur(); return; }
+    if (e.key === "Escape") {
+      if (!sheet.hidden) { if (!keepTyped()) closeSheet(); }
+      else if (typing) a.blur();
+      else if (!readerPane.hidden && readerPane.querySelector(".doc .sel")) { const f = $(".doc .sel", readerPane); clearSelection(); focusUnit(f); } // the verses picked are let go, as Clear does
+      return;
+    }
+    // With a keyboard attached: Cmd+F or Cmd+K is the search box, Cmd+[ is Back (Ctrl on other keyboards)
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && state.ready) {
+      const k = e.key.toLowerCase();
+      if ((k === "f" || k === "k") && sheet.hidden) { e.preventDefault(); input.focus(); input.select(); return; }
+      if (k === "[") { e.preventDefault(); goBack(); return; }
+    }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    // Left and Right turn the chapter, when the page is what is in front and nothing with arrows of its own has the focus
+    if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.shiftKey && sheet.hidden && currentDoc && state.docId === currentDoc.id && !readerPane.hidden
+      && !(e.target.closest && e.target.closest("[role='menu'], .board, .dsheet, #panel"))) {
+      const to = e.key === "ArrowLeft" ? currentDoc.prev : currentDoc.next;
+      if (to) { e.preventDefault(); stepChapter(to); }
+      return;
+    }
     if (e.key === "/" && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
   });
@@ -2657,7 +2723,7 @@ import { esc, mb } from "./lib/format.js";
   // The deck board's pane on wide screens. deck.js calls show() with its board; lastEl says the
   // board has been opened this session, which is when the Page | Deck switch appears. Which of
   // the two panes shows is paneView; the switch only changes that, never the address or the trail.
-  let paneView = "page", unseen = false;
+  let paneView = "page", unseen = false, pageWasOpen = false;
   const panel = {
     lastEl: null, lastTitle: "",
     show(node, title) {
@@ -2688,6 +2754,8 @@ import { esc, mb } from "./lib/format.js";
     readerPane.hidden = board || !(state.docId || state.studyId);
     // one Back on the screen: with a pane up on the right its bar has it, so the list's own goes
     document.body.classList.toggle("pane-up", !readerPane.hidden || !panelPane.hidden);
+    // with a page open the header is the search box alone: the scope strip comes back with the list (app.css)
+    if (document.body.classList.toggle("page-open", !readerPane.hidden) !== pageWasOpen) { pageWasOpen = !pageWasOpen; measureBar(); }
     for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
     refreshSwitches();
     updateThinkFab();

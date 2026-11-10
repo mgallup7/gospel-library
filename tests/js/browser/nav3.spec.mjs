@@ -138,5 +138,69 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(name, (await title(page)) === "Alma 32", `Back from the tabs shows ${await title(page)}`);
     await page.context().close();
   }
+
+  // 3. The reader bar: the chapter by name, up to its book, previous and next, and the keys
+  {
+    const name = "ipad bar", page = await start(name, { width: 1180, height: 820 });
+    const scopes = () => page.evaluate(() => getComputedStyle(document.querySelector(".scopes")).display);
+    await open(page, "Alma 32");
+    const crumb = await page.evaluate(() => { const c = document.querySelector("#reader .reader-bar .crumb"), cs = getComputedStyle(c); return { text: c.textContent, tag: c.tagName, size: cs.fontSize, weight: cs.fontWeight }; });
+    check(name, crumb.text === "Alma 32" && crumb.tag === "BUTTON" && crumb.size === "15px" && Number(crumb.weight) >= 600, `the crumb is ${JSON.stringify(crumb)}`);
+    check(name, (await scopes()) === "none", "the scope strip stays up beside an open page");
+    const n0 = await page.evaluate(() => history.state.n), back0 = await backLabel(page);
+    await page.click("#reader .reader-bar .chap[data-dir=next]");
+    await page.waitForFunction(() => document.querySelector("#reader .doc h1")?.textContent.trim() === "Alma 33", null, { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(300);
+    let at = await page.evaluate(() => ({ t: document.querySelector("#reader .doc h1")?.textContent.trim(), n: history.state.n, crumb: document.querySelector("#reader .reader-bar .crumb").textContent, focus: document.activeElement?.dataset?.dir || null }));
+    check(name, at.t === "Alma 33" && at.crumb === "Alma 33" && at.n === n0 && at.focus === "next", `the next arrow gave ${JSON.stringify(at)} (depth was ${n0})`);
+    await page.evaluate(() => document.activeElement.blur());
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForFunction(() => document.querySelector("#reader .doc h1")?.textContent.trim() === "Alma 32", null, { timeout: 8000 }).catch(() => {});
+    await page.keyboard.press("ArrowRight"); await page.waitForTimeout(600);
+    await page.keyboard.press("ArrowRight"); await page.waitForTimeout(600);
+    at = await page.evaluate(() => ({ t: document.querySelector("#reader .doc h1")?.textContent.trim(), n: history.state.n }));
+    check(name, at.t === "Alma 34" && at.n === n0 && (await backLabel(page)) === back0, `Left, Right, Right gave ${JSON.stringify(at)}, Back ${await backLabel(page)} (was ${back0})`);
+    await page.screenshot({ path: `${SHOTS}nav3-ipad-bar.png` });
+    // Cmd+K is the search box; an arrow there moves the caret, not the chapter; Escape lets go of the verses picked
+    await page.keyboard.press("Control+k");
+    check(name, await page.evaluate(() => document.activeElement?.id === "q"), "Cmd+K did not focus the search box");
+    await page.keyboard.press("ArrowRight"); await page.waitForTimeout(300);
+    check(name, (await title(page)) === "Alma 34", "an arrow in the search box turned the chapter");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+f");
+    check(name, await page.evaluate(() => document.activeElement?.id === "q"), "Cmd+F did not focus the search box");
+    await page.keyboard.press("Escape");
+    await page.click("#reader .doc #p2"); await page.click("#reader .doc #p3");
+    check(name, !!(await page.$("#reader .select-bar")), "two verses tapped, no selection bar");
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press("Escape"); await page.waitForTimeout(150);
+    check(name, !(await page.$("#reader .select-bar")) && !(await page.$("#reader .doc .sel")), "Escape did not clear the selection");
+    // the name leads up to the book
+    await page.click("#reader .reader-bar .crumb"); await page.waitForSelector("#homeBody .chapters", { timeout: 8000 }).catch(() => {});
+    at = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), grid: document.querySelectorAll("#homeBody .chapters button").length, t: document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim(), n: history.state.n }));
+    check(name, /^#scriptures\?b\.book=alma&doc=\d+$/.test(at.hash) && at.grid === 63 && at.t === "Alma 34" && at.n === n0 + 1, `the crumb led to ${JSON.stringify(at)}`);
+    await page.keyboard.press("Control+[" ); await page.waitForTimeout(800);
+    at = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), n: history.state.n }));
+    check(name, at.n === n0 && /^#search/.test(at.hash), `Cmd+[ went to ${JSON.stringify(at)}`);
+    await tapBack(page); await page.waitForTimeout(800);
+    check(name, (await scopes()) !== "none", "the scope strip did not come back with the list");
+    await page.context().close();
+  }
+  {
+    const name = "iphone bar", page = await start(name, { width: 393, height: 852 });
+    await page.click("#homeBody .shelf-tile:has-text('Scriptures')"); await page.waitForTimeout(400);
+    await page.click("#homeBody .chip:has-text('Alma')"); await page.waitForTimeout(400);
+    await page.click("#homeBody .chapters button:text-is('32')"); await page.waitForSelector("#reader .reader-bar .crumb");
+    await page.waitForTimeout(500);
+    const n0 = await page.evaluate(() => history.state.n);
+    await page.click("#reader .reader-bar .chap[data-dir=next]"); await page.waitForTimeout(700);
+    const bar = await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar"); return { over: b.scrollWidth - b.clientWidth, crumb: b.querySelector(".crumb").textContent, n: history.state.n, y: Math.round(scrollY) }; });
+    check(name, bar.crumb === "Alma 33" && bar.n === n0 && bar.over <= 1 && bar.y === 0, `after the next arrow: ${JSON.stringify(bar)}`);
+    await page.screenshot({ path: `${SHOTS}nav3-iphone-bar.png` });
+    // the book the chapter was opened from is the entry before: the name goes back to it
+    await page.click("#reader .reader-bar .crumb"); await page.waitForTimeout(800);
+    const up = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), n: history.state.n, grid: !!document.querySelector("#homeBody .chapters"), reader: !document.querySelector("#reader").hidden }));
+    check(name, up.hash === "#scriptures?b.book=alma" && up.n === n0 - 1 && up.grid && !up.reader, `the crumb on a phone led to ${JSON.stringify(up)}`);
+    await page.context().close();
+  }
   return errors;
 }

@@ -171,6 +171,8 @@ main {
   .pane { overflow-y: auto; -webkit-overflow-scrolling: touch; }
   #list { border-right: 1px solid var(--rule); }
   .back { display: none !important; }
+  body.page-open .scopes { display: none; } /* reading: the header is the search box alone, as on a phone */
+  body.page-open .bar { grid-template-areas: "home search filters"; }
 }
 
 /* ---- results -------------------------------------------------------- */
@@ -301,7 +303,7 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
   backdrop-filter: saturate(180%) blur(12px); -webkit-backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--rule);
 }
-.reader-bar .spacer { flex: 1; }
+.reader-bar .spacer { flex: 1 1 0; min-width: 0; }
 /* text size: two buttons, or one Aa with a small menu when the bar has no room (app.js fitReaderBar) */
 .reader-bar .size-btns { display: inline-flex; gap: 4px; flex: none; }
 .reader-bar .size-pop { display: none; position: relative; flex: none; }
@@ -316,7 +318,6 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
 .size-menu .menu-extra { display: none; }
 .reader-bar.compact .size-btns { display: none; }
 .reader-bar.compact .size-pop { display: inline-flex; }
-.reader-bar.compact .spacer { flex: 0 0 0; } /* what room there is goes to the crumb */
 .reader-bar.tight .matchnav > span:first-child { display: none; }
 .reader-bar.tight .matchnav { padding-left: 4px; }
 .reader-bar.tight .pane-switch button { padding: 0 8px; }
@@ -333,7 +334,15 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
 .trail-back .chev { font-size: 26px; line-height: 1; margin-top: -3px; }
 .trail-back .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trail-back:active { background: var(--chrome-2); }
-.reader-bar .crumb { font-size: var(--ui-13); color: var(--ink-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; }
+/* where you are: the chapter or page by name, a button that leads up to its book; then previous and next */
+.reader-bar .crumb { font: 600 15px var(--sans); color: var(--ink); flex: 0 1 auto; min-width: 0; height: 36px; border-radius: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; text-align: left; }
+.reader-bar button.crumb:disabled { cursor: default; }
+.reader-bar button.crumb:not(:disabled):active { background: var(--chrome-2); }
+.reader-bar .chap-nav { display: inline-flex; flex: none; }
+.reader-bar .chap { width: 34px; height: 36px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
+.reader-bar .chap svg { width: 20px; height: 20px; }
+.reader-bar .chap:disabled { color: var(--ink-3); opacity: .45; cursor: default; }
+.reader-bar .chap:not(:disabled):active { background: var(--chrome-2); }
 .doc {
   max-width: 68ch; margin: 0 auto; padding: 18px 20px calc(60px + var(--safe-bottom));
   font-family: var(--serif); font-size: var(--reading-size); line-height: 1.55;
