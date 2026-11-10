@@ -222,7 +222,7 @@ body:not([data-tab="search"]) #filters { display: none; }
   .search { margin: 0; justify-self: end; width: min(100%, 420px); }
   body[data-tab="search"] .search { justify-self: stretch; width: auto; }
   .bar-acts { margin-right: -6px; }
-  .bar:has(.bar-acts:empty) .search { grid-column-end: -1; } /* nothing at the end of the head: the box runs to the edge the content keeps */
+  .bar.no-acts .search { grid-column-end: -1; } /* nothing at the end of the head: the box runs to the edge the content keeps */
   .scope-row { margin: 8px calc(-24px - var(--safe-right)) 0 -24px; padding-right: calc(20px + var(--safe-right)); }
   .scopes { padding-left: 24px; }
   body[data-tab="deck"] .bar, body[data-tab="ask"] .bar { padding-bottom: 8px; }
@@ -368,10 +368,10 @@ main {
 .own-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .own-row .hc-go { color: var(--ink-3); font-size: 20px; font-weight: 400; }
 @media (min-width: 760px) and (min-height: 500px) {
-  body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
-  body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
-  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .home.overview { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); column-gap: 36px; max-width: 1180px; margin: 0 auto; padding: 22px 24px 30px; align-items: start; }
-  main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) .home.overview .home-col { display: grid; gap: 22px; align-content: start; min-width: 0; }
+  body.overview.list-only main { grid-template-columns: 1fr; }
+  body.overview.list-only main #list { border-right: 0; }
+  body.list-only .home.overview { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); column-gap: 36px; max-width: 1180px; margin: 0 auto; padding: 22px 24px 30px; align-items: start; }
+  body.list-only .home.overview .home-col { display: grid; gap: 22px; align-content: start; min-width: 0; }
 }
 .home .lede { padding: 14px 16px 2px; font: 16px/1.45 var(--serif); color: var(--ink-2); }
 .shelf { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 16px; }
@@ -411,8 +411,8 @@ main {
 .recent-row:active { background: var(--chrome); }
 @media (min-width: 760px) and (min-height: 500px) {
   /* before a word is typed there is nothing for a second pane to hold */
-  main:has(.search-home):has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
-  main:has(.search-home):has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
+  body.search-top.list-only main { grid-template-columns: 1fr; }
+  body.search-top.list-only main #list { border-right: 0; }
   .search-home { padding: 10px 20px 24px; }
 }
 
@@ -450,7 +450,7 @@ main {
 .reader-bar.tightest .size-menu .menu-think { display: flex; }
 .size-menu .menu-cite, .size-menu .menu-orig { display: none; }
 .reader-bar.tightest .orig-btn { display: none; }
-.reader-bar.tightest:has(.orig-btn) .size-menu .menu-orig { display: flex; }
+.reader-bar.tightest.has-orig .size-menu .menu-orig { display: flex; }
 .reader-bar.tightest .size-menu .menu-cite { display: flex; }
 .reader-bar.bare .chap-nav { display: none; }
 .reader-bar.barest .trail-back .lb { display: none; }
@@ -804,20 +804,20 @@ body.presenting { overflow: hidden; }
 /* Ask takes the whole width when nothing is open beside it. Its thread is one centred column
    that reads downward, and the modes, the box and its button sit docked at the foot. */
 @media (min-width: 760px) and (min-height: 500px) {
-  main:has(#list .ask-page):has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
-  main:has(#list .ask-page):has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
-  #list:has(.ask-page) > .home { min-height: 100%; }
+  body.ask-up.list-only main { grid-template-columns: 1fr; }
+  body.ask-up.list-only main #list { border-right: 0; }
+  body.ask-up #list > .home { min-height: 100%; }
 }
-@media (max-width: 759px), (max-height: 499px) { #list:has(.ask-page) > .home { min-height: calc(100dvh - var(--bar-real, calc(var(--bar-h) + var(--safe-top))) - var(--tabs-h)); } }
-#list:has(.ask-page) { padding-bottom: 0; }
-#list:has(.ask-page) > .home { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: 0; }
-#list:has(.ask-page) > .home > div:has(> .ask-page) { flex: 1; display: flex; flex-direction: column; }
+@media (max-width: 759px), (max-height: 499px) { body.ask-up #list > .home { min-height: calc(100dvh - var(--bar-real, calc(var(--bar-h) + var(--safe-top))) - var(--tabs-h)); } }
+body.ask-up #list { padding-bottom: 0; }
+body.ask-up #list > .home { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: 0; }
+body.ask-up #list > .home > .ask-host { flex: 1; display: flex; flex-direction: column; }
 .ask { padding: 10px 16px 30px; }
 .ask-page { flex: 1; display: flex; flex-direction: column; width: 100%; max-width: 680px; margin: 0 auto; box-sizing: border-box; }
-.ask-page:has(.ask-dock) { padding-bottom: 0; }
+.ask-page:not(.setup-key) { padding-bottom: 0; } /* the dock is its foot; the key setup has none */
 .ask-page .ask-log { flex: 1; }
 .ask-page .ask-log:empty { display: none; }
-.ask-page:has(.ask-log > *) .ask-hint { display: none; }
+.ask-page > .ask-log:not(:empty) ~ .ask-hint { display: none; }
 .ask-dock { position: sticky; bottom: var(--tabs-h); z-index: 4; margin-top: 10px; padding: 8px 0 calc(12px + max(0px, var(--safe-bottom) - var(--tabs-h))); background: var(--paper); }
 .ask-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .ask-top-tools { display: flex; align-items: center; gap: 2px; flex: none; }
@@ -870,7 +870,7 @@ body.presenting { overflow: hidden; }
 /* Ask settings sit in the app's sheet: taller than a footnote, and a centred column on a wide screen */
 /* ---- Settings: a sheet the height of the screen on a phone, a card in the middle on an iPad ---- */
 .sheet.page { top: calc(var(--safe-top) + 12px); max-height: none; padding-top: 10px; background: var(--paper); font-family: var(--sans); font-size: 15px; line-height: 1.4; z-index: 40; }
-body:has(.sheet.page:not([hidden])) .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
+body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
 @media (min-width: 760px) and (min-height: 500px) {
   .sheet.page { left: 50%; right: auto; top: 6vh; bottom: 6vh; width: min(640px, 92vw); margin-left: max(-320px, -46vw); border: 1px solid var(--rule); border-radius: var(--r-card); padding: 14px 24px 24px; }
   .sheet.page .handle { display: none; }
@@ -933,9 +933,9 @@ body:has(.sheet.page:not([hidden])) .scrim { background: rgba(0, 0, 0, .32); z-i
 .doc .sel.hl-y { background: var(--hl-y); } .doc .sel.hl-g { background: var(--hl-g); } .doc .sel.hl-b { background: var(--hl-b); } .doc .sel.hl-p { background: var(--hl-p); }
 /* The selection bar comes right after the reader bar in the document (Tab reaches it at once) and
    is drawn at the bottom: while it is up the pane is a column and the bar is ordered after the page. */
-#reader:has(> .select-bar) { display: flex; flex-direction: column; }
-#reader:has(> .select-bar) > * { flex: none; }
-#reader:has(> .select-bar) > .doc, #reader:has(> .select-bar) > .doc-nav, #reader:has(> .select-bar) > .doc-foot { width: 100%; }
+#reader.selecting { display: flex; flex-direction: column; }
+#reader.selecting > * { flex: none; }
+#reader.selecting > .doc, #reader.selecting > .doc-nav, #reader.selecting > .doc-foot { width: 100%; }
 #reader > .select-bar { order: 1; }
 /* a verse reached by the arrow keys clears the sticky bars above and below it */
 .doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: 64px 0 90px; }
@@ -960,7 +960,7 @@ body:has(.sheet.page:not([hidden])) .scrim { background: rgba(0, 0, 0, .32); z-i
 .select-bar .primary, .deck .primary, .deck-summary .primary { height: 44px; padding: 0 14px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .deck .primary:disabled, .deck .text-btn:disabled { opacity: .45; }
 .toast { position: fixed; left: calc(50% + var(--rail-w) / 2); bottom: calc(18px + max(var(--tabs-h), var(--safe-bottom))); transform: translate(-50%, 10px); z-index: 60; padding: 10px 16px; border-radius: var(--r-ctl); background: var(--ink); color: var(--paper); font: 14px var(--sans); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
-main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + max(var(--tabs-h), var(--safe-bottom))); } /* above a selection bar that stays up, itself above the tab bar */
+body.sel-up .toast { bottom: calc(84px + max(var(--tabs-h), var(--safe-bottom))); } /* above a selection bar that stays up, itself above the tab bar */
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 /* the one toast stays in the page between messages: hidden from touch and VoiceOver once it fades */
 .toast:not(.show) { visibility: hidden; pointer-events: none; transition: opacity .2s, transform .2s, visibility 0s .2s; }
@@ -1020,7 +1020,7 @@ a.toast-action { display: inline-flex; align-items: center; }
   body[data-tab="deck"] #list { display: none; }
   body[data-tab="deck"] #panel .board { max-width: 900px; margin: 0 auto; padding-top: 18px; }
   body[data-tab="deck"] #panel > .reader-bar .crumb { display: none; } /* the head above says Deck */
-  #panel > .reader-bar:has(> .trail-back.none):not(:has(.pane-switch)) { display: none; } /* a bar with nothing to offer */
+  #panel > .reader-bar.idle { display: none; } /* a bar with nothing to offer */
 }
 .chip.small { padding: 4px 10px; font-size: 13px; }
 .stage-text .vn { font-family: var(--sans); font-size: .5em; vertical-align: super; opacity: .6; margin-right: .1em; }

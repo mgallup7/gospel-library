@@ -430,6 +430,7 @@ import { esc, mb } from "./lib/format.js";
   }
   function refreshTrailButtons() {
     for (const b of document.querySelectorAll(".trail-back")) if (!b.closest(".head-back")) b.replaceWith(trailButton());
+    syncPanelBar();
     for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
   }
   // A shelf's own heading: Back, except beside an open page or the board on a wide screen, where that
@@ -515,6 +516,7 @@ import { esc, mb } from "./lib/format.js";
     const want = tab === "library" && !wide() ? "gear" : "";
     if (want !== actsFor) {
       actsFor = want;
+      $("header.bar").classList.toggle("no-acts", want !== "gear"); // app.css: the box runs to the edge when nothing sits at the end of the head
       $("#barActs").replaceChildren(...(want === "gear" ? [el("button", { type: "button", class: "icon-btn gear-btn", "aria-label": "Settings", title: "Settings", html: ICON_GEAR, onclick: () => openSettings() })] : []));
     }
     syncTitle();
@@ -556,13 +558,13 @@ import { esc, mb } from "./lib/format.js";
   }
   function showList() {
     listPane.hidden = false;
-    if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; window.scrollTo(0, 0); } // a list starts at its top (a restore puts it back after)
+    if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; syncPanes(); window.scrollTo(0, 0); } // a list starts at its top (a restore puts it back after)
     document.body.classList.toggle("reading", !wide() && !readerPane.hidden);
     syncControls();
   }
   function showReader() {
     listPane.hidden = !wide();
-    if (wide()) placePanes(); else { readerPane.hidden = false; panelPane.hidden = true; }
+    if (wide()) placePanes(); else { readerPane.hidden = false; panelPane.hidden = true; syncPanes(); }
     document.body.classList.toggle("reading", !wide());
     window.scrollTo(0, 0);
     measureBar();
@@ -581,6 +583,7 @@ import { esc, mb } from "./lib/format.js";
   function showTooOld(v) {
     readerPane.hidden = true;
     listPane.hidden = false;
+    syncPanes();
     document.body.classList.add("first-run");
     listPane.replaceChildren(el("div", { class: "setup" }, [
       el("h1", { text: "Update this iPhone or iPad first" }),
@@ -633,6 +636,7 @@ import { esc, mb } from "./lib/format.js";
   async function renderSetup(status, done) {
     readerPane.hidden = true;
     listPane.hidden = false;
+    syncPanes();
     document.body.classList.add("first-run");
     const box = el("div", { class: "setup" });
     const head = el("h1", { text: "Your library" });
@@ -1192,6 +1196,7 @@ import { esc, mb } from "./lib/format.js";
     const body = el("div", { id: "homeBody", class: "home" + (tab ? "" : " overview") });
     frag.append(body);
     listPane.replaceChildren(frag);
+    syncList();
     let st;
     try { st = await libraryStats(); }
     catch (e) { body.append(el("div", { class: "status error", text: `The library is not answering (${e.message}).` })); return; }
@@ -1200,7 +1205,7 @@ import { esc, mb } from "./lib/format.js";
     try {
       if (!tab) return renderOverview(body, st);
       if (tab === "search") return renderSearchHome(body);
-      if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); return; }
+      if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div", { class: "ask-host" }); body.append(host); window.Ask?.render(host, { question, think }); return; }
       if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
         el("span", { class: "head-back" }, [headBack()]),
@@ -1214,9 +1219,27 @@ import { esc, mb } from "./lib/format.js";
       else await browseCollection(body, tab);
     } catch (e) {
       body.append(el("div", { class: "status error", text: e.message }));
-    }
+    } finally { syncList(); }
   }
   function setOverview(on) { document.body.classList.toggle("overview", !!on); }
+  // What the list holds and which panes are up, said as classes on the body beside "overview" and
+  // "pane-up", for app.css to lay the place out by. They stood as :has() rules on main and body,
+  // which the browser checked again on every change anywhere in the page (a connection drawn on a
+  // deck with links cost ten times what it does without them).
+  function syncList() {
+    const b = document.body.classList;
+    b.toggle("ask-up", !!listPane.querySelector(".ask-page"));
+    b.toggle("search-top", !!listPane.querySelector(".search-home"));
+  }
+  function syncPanes() {
+    const b = document.body.classList;
+    b.toggle("list-only", readerPane.hidden && panelPane.hidden);
+    const bar = !!readerPane.querySelector(":scope > .select-bar");
+    readerPane.classList.toggle("selecting", bar); // the pane is a column while the bar is up, the bar ordered last
+    b.toggle("sel-up", bar && !readerPane.hidden);
+  }
+  // the list emptied or refilled by a search, the concordance or the setup screens
+  new MutationObserver(syncList).observe(listPane, { childList: true });
   // Search with nothing in the box yet: what the box takes, in a line, and the last few searches
   // entered (kept on this device), each one tap away.
   const ICON_RECENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.500V12l3 2"/></svg>'.replace("7.500", "7.5");
@@ -2223,7 +2246,7 @@ import { esc, mb } from "./lib/format.js";
   function updateSelectBar() {
     let bar = $(".select-bar", readerPane);
     const n = readerPane.querySelectorAll(".sel").length;
-    if (!n) { bar?.remove(); return; }
+    if (!n) { bar?.remove(); syncPanes(); return; }
     if (!bar) {
       const present = () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); };
       const copy = () => {
@@ -2253,6 +2276,7 @@ import { esc, mb } from "./lib/format.js";
       // right after the reader bar in the order Tab and VoiceOver follow; app.css draws it at the bottom
       const rb = $(".reader-bar", readerPane);
       if (rb) rb.after(bar); else readerPane.prepend(bar);
+      syncPanes();
     }
     $(".n", bar).textContent = `${n} selected`;
     // a dot is pressed when every selected passage carries its color (pressing it again takes it off)
@@ -2630,6 +2654,7 @@ import { esc, mb } from "./lib/format.js";
   // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
   const BAR_LEVELS = ["compact", "tight", "tighter", "tightest", "bare", "barest"];
   function fitReaderBar(bar) {
+    bar.classList.toggle("has-orig", !!bar.querySelector(".orig-btn")); // the menu offers the Hebrew or Greek only where the bar has the switch to fold
     if (!bar.querySelector(".size-pop")) return;
     bar.classList.remove(...BAR_LEVELS);
     if (bar.offsetParent === null) return;
@@ -2652,7 +2677,8 @@ import { esc, mb } from "./lib/format.js";
   function fitReaderBars() { for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar); }
   window.addEventListener("resize", fitReaderBars);
   // what joins the bar after it is drawn (the match count, the Hebrew button, the switch) refits it
-  const barWatch = new MutationObserver((records) => { for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
+  // (and a page drawn over a selection takes its bar with it: the pane's classes follow)
+  const barWatch = new MutationObserver((records) => { if (records.some((r) => r.target === readerPane)) syncPanes(); for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
   barWatch.observe(readerPane, { childList: true, subtree: true });
   // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
   // The system size is read again whenever the app comes back to the front, since Larger Text may
@@ -2934,6 +2960,7 @@ import { esc, mb } from "./lib/format.js";
     sheet.setAttribute("aria-label", label);
     const wasHidden = sheet.hidden;
     sheet.hidden = false;
+    document.body.classList.toggle("sheet-page", sheet.classList.contains("page")); // Settings dims the page behind it (app.css)
     if (wasHidden) {
       sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); openOverlay("sheet");
       const vv = window.visualViewport;
@@ -2959,6 +2986,7 @@ import { esc, mb } from "./lib/format.js";
     const wasOpen = !sheet.hidden;
     sheet.hidden = true; $("#scrim")?.remove();
     sheet.classList.remove("page");
+    document.body.classList.remove("sheet-page");
     inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
     const vv = window.visualViewport;
@@ -3268,12 +3296,18 @@ import { esc, mb } from "./lib/format.js";
     const board = paneView === "board" && !!panel.lastEl;
     panelPane.hidden = !(board && panelPane.contains(panel.lastEl));
     readerPane.hidden = board || !(state.docId || state.studyId);
+    syncPanes();
     // one Back on the screen: with a pane up on the right its bar has it, so the list's own goes
     document.body.classList.toggle("pane-up", !readerPane.hidden || !panelPane.hidden);
     // with a page open the header is the search box alone: the scope strip comes back with the list (app.css)
     if (document.body.classList.toggle("page-open", !readerPane.hidden) !== pageWasOpen) { pageWasOpen = !pageWasOpen; measureBar(); }
     for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
     refreshSwitches();
+  }
+  // The board's bar with no Back to offer and no switch has nothing in it, and goes (app.css)
+  function syncPanelBar() {
+    const bar = panelPane.querySelector(":scope > .reader-bar");
+    if (bar) bar.classList.toggle("idle", !!bar.querySelector(":scope > .trail-back.none") && !bar.querySelector(".pane-switch"));
   }
   function refreshSwitches() {
     const on = wide() && !!panel.lastEl && pageOpen();
@@ -3291,6 +3325,7 @@ import { esc, mb } from "./lib/format.js";
     if (hadFocus) { const visible = [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.classList.contains("on")); if (visible) { try { visible.focus({ preventScroll: true }); } catch (_) {} } }
     // what Back brings back depends on which pane is up: its label is redrawn when that changes it
     for (const b of document.querySelectorAll(".reader-bar .trail-back")) if (b.querySelector(".lb")?.textContent !== (backLabel() || "Library")) b.replaceWith(trailButton());
+    syncPanelBar();
     fitReaderBars(); // a pane just shown, or a switch come or gone, changes what the bar needs
     fitSelectBar();
   }
