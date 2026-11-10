@@ -109,7 +109,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const secs = await page.evaluate(() => [...document.querySelectorAll("#sheet .set-sec h3")].map((h) => h.textContent).join(","));
     check(secs === "Claude,Reading,Library,Backup,Keyboard,About", `Settings should hold Claude, Reading, Library, Backup, Keyboard, About: ${secs}`);
     check(await page.evaluate(() => !!document.querySelector("#sheet .ask-settings textarea.ask-instructions") && document.querySelector("#tabs").inert), "Claude's part is ask.js's own box, and the tabs are inert under the sheet");
-    await page.waitForFunction(() => /Kept|Not promised|does not say/.test(document.querySelector("#set-library")?.textContent || ""), null, { timeout: 5000 }).catch(() => errors.push(`${name}: Settings should say whether storage is persisted`));
+    await page.waitForFunction(() => /Kept|May be cleared|does not say/.test(document.querySelector("#set-library")?.textContent || ""), null, { timeout: 5000 }).catch(() => errors.push(`${name}: Settings should say whether storage is persisted`));
     check((await at()).over <= 0, "Settings overflows sideways");
     await page.screenshot({ path: `${SHOTS}tabs-${name}-settings.png` });
     await page.goBack(); await page.waitForTimeout(400);

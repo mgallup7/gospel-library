@@ -865,7 +865,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   Registry.prototype.original = async function ({ reference }) {
     const api = GL().api;
     const r = await api("original", { chapter: reference, parse: true, max_words: 1500 });
-    if (!r || !r.available) return { text: "The original-language text is not in this library yet (it arrives with the next nightly build).", verses: [] };
+    if (!r || !r.available) return { text: "The original-language text is not in this library yet (it is not downloaded yet).", verses: [] };
     if (r.error) return { text: `Error: ${r.error}`, verses: [] };
     if (!r.verses.length) return { text: `No Hebrew or Greek text for "${reference}". Give a Bible chapter or verse; the other standard works have no original-language text here.`, verses: [] };
     const lines = [`${r.book_name} ${r.chapter}, ${r.language}${r.truncated ? " (long chapter: the first verses only; ask for a verse range for the rest)" : ""}. Each word: the ${r.language} word, its transliteration, its gloss in [brackets], its Strong's number and grammar.`];

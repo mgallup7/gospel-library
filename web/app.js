@@ -520,8 +520,8 @@ import { esc, mb } from "./lib/format.js";
     document.body.classList.toggle("shelf-studies", shelf === "studies");
     $("#placeTitle").textContent = TAB_NAME[tab];
     measureBar();
-    // what sits at the end of the head: Settings in the Library on a phone (the rail has the gear on an iPad)
-    const want = tab === "library" && !wide() ? "gear" : "";
+    // what sits at the end of the head: Settings, on a phone, in every tab (the rail has the gear on an iPad)
+    const want = !wide() ? "gear" : "";
     if (want !== actsFor) {
       actsFor = want;
       $("header.bar").classList.toggle("no-acts", want !== "gear"); // app.css: the box runs to the edge when nothing sits at the end of the head
@@ -1167,14 +1167,14 @@ import { esc, mb } from "./lib/format.js";
   // [key, title, what it says underneath on a wide screen, and on a phone]
   const SHELVES = [
     ["scriptures", "Scriptures", (st) => `${st.verses.toLocaleString()} verses, with footnotes${st.originals ? "; Hebrew and Greek under every Bible verse" : ""}`, (st) => st.originals ? "With Hebrew and Greek" : "With footnotes"],
-    ["conference", "General Conference", (st) => st.talks ? `${st.talks.toLocaleString()} talks, 1971 to ${latestName(st)}` : "Arrives with the nightly build", (st) => st.talks ? `1971 to ${latestName(st, true)}` : "Arriving nightly"],
+    ["conference", "General Conference", (st) => st.talks ? `${st.talks.toLocaleString()} talks, 1971 to ${latestName(st)}` : "Not downloaded yet", (st) => st.talks ? `1971 to ${latestName(st, true)}` : "Not downloaded yet"],
     ["preach-my-gospel", "Preach My Gospel", () => "2023 edition", () => "2023 edition"],
     ["missionary-standards", "Missionary Standards", () => "The booklet, its supplement, the service missionary edition", () => "All three editions"],
     ["handbook", "General Handbook", (st) => `${count(st, "handbook")} chapters`, (st) => `${count(st, "handbook")} chapters`],
     ["come-follow-me", "Come, Follow Me", () => "This year and last", () => "This year and last"],
     ["manuals", "Manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
-    ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Arriving, a series a night"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Arriving nightly"],
+    ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Not downloaded yet"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Not downloaded yet"],
     // the two that are his own: rows under the shelves, not tiles among them
     ["studies", "My studies", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own, kept on this device` : "Pages of your own, added from Files", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own` : "Pages of your own"],
     ["marks", "Highlights and notes", (st) => st.marks ? `${st.marks} ${st.marks === 1 ? "passage" : "passages"} marked, kept on this device` : "Tap a verse while reading, then a color or Note", (st) => st.marks ? `${st.marks} ${st.marks === 1 ? "passage" : "passages"} marked` : "None yet"],
@@ -1356,7 +1356,7 @@ import { esc, mb } from "./lib/format.js";
     if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: "conference", year: b.year, all: true }), b.year ? String(b.year) : "General Conference");
     const data = await api("browse", { collection: "general-conference" });
     const books = data.books.filter((x) => x.docs > 0);
-    if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks in this library yet. They arrive with the nightly build, newest conference first." })); return; }
+    if (!books.length) { body.append(el("div", { class: "empty", text: "No conference talks are downloaded yet. They come in on their own, some each night, newest conference first." })); return; }
     if (!b.year && !b.all) {
       const latest = await api("recent");
       if (latest.conference) {
@@ -1408,7 +1408,7 @@ import { esc, mb } from "./lib/format.js";
     if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: slug }), TAB_TITLE[slug] || "Back");
     const data = await api("browse", { collection: slug });
     const books = data.books.filter((x) => x.docs > 0);
-    if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing here yet. It arrives with a later nightly build." })); return; }
+    if (!books.length) { body.append(el("div", { class: "empty", text: "Not downloaded yet. It comes in on its own, on a later night." })); return; }
     if (books.length === 1) return renderBookToc(body, books[0].uri, null);
     for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => go({ tab: slug, bookUri: bk.uri }) }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} pages` })]));
   }
@@ -1417,7 +1417,7 @@ import { esc, mb } from "./lib/format.js";
   async function browseJsp(body) {
     const b = state.browse || {};
     const all = (await api("browse", {})).collections.filter((c) => c.slug.startsWith("jsp-"));
-    if (!all.length) { body.append(el("div", { class: "empty", text: "The Joseph Smith Papers arrive with the nightly builds, a series at a time: journals first, then revelations and translations, histories, and the documents." })); return; }
+    if (!all.length) { body.append(el("div", { class: "empty", text: "The Joseph Smith Papers are not downloaded yet. They come in on their own, a series at a time over several nights: journals first, then revelations and translations, histories, and the documents." })); return; }
     const chips = el("div", { class: "shelf" });
     const series = b.series || all[0].slug;
     const seriesName = (c) => c.title.replace(/^Joseph Smith Papers: /, "");
@@ -1428,7 +1428,7 @@ import { esc, mb } from "./lib/format.js";
     if (b.bookUri) return renderBookToc(body, b.bookUri, () => goUp({ tab: "jsp", series }), cur ? seriesName(cur) : "Back");
     const data = await api("browse", { collection: series });
     const books = data.books.filter((x) => x.docs > 0);
-    if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing from this series yet. It arrives with a later nightly build." })); return; }
+    if (!books.length) { body.append(el("div", { class: "empty", text: "Nothing from this series is downloaded yet. It comes in on its own, on a later night." })); return; }
     for (const bk of books) body.append(el("button", { class: "toc-row", onclick: () => go({ tab: "jsp", series, bookUri: bk.uri }) }, [el("div", { class: "t", text: bk.title }), el("div", { class: "s", text: `${bk.docs} ${bk.docs === 1 ? "page" : "pages"}` })]));
     body.append(el("p", { class: "deck-hint", text: "Transcriptions, source notes and historical introductions from josephsmithpapers.org (The Church Historian’s Press, © Intellectual Reserve, Inc.), for personal study. Tap a name in a paper for who or where it is." }));
   }
@@ -2094,7 +2094,7 @@ import { esc, mb } from "./lib/format.js";
   }
 
   // ---- Settings: one screen behind the gear ---------------------------------
-  // The gear (the rail's foot on an iPad, the top of the Library on a phone, and the one on Ask)
+  // The gear (the rail's foot on an iPad, the top of every tab on a phone, and the one on Ask)
   // opens one screen, in the app's sheet, so Back and Escape close it: Claude (ask.js draws its
   // own part), Reading, Library, Backup, About.
   async function backupData() {
@@ -2181,7 +2181,7 @@ import { esc, mb } from "./lib/format.js";
         const built = st.meta?.bundle?.built_at || active.builtAt;
         rows.push(row("Version", [built ? `Built ${new Date(built).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}` : "", active.version ? `version ${String(active.version).slice(0, 12)}` : ""].filter(Boolean).join(", ") || "Unknown"));
         const sem = await semanticNote();
-        rows.push(row("On this device", [`${st.documents.toLocaleString()} pages`, st.verses ? `${st.verses.toLocaleString()} verses` : "", st.talks ? `${st.talks.toLocaleString()} talks` : "", st.originals ? "Hebrew and Greek" : "", sem ? "the search model" : ""].filter(Boolean).join(", ")));
+        rows.push(row("On this device", [`${st.documents.toLocaleString()} pages`, st.verses ? `${st.verses.toLocaleString()} verses` : "", st.talks ? `${st.talks.toLocaleString()} talks` : "", st.originals ? "Hebrew and Greek" : "", sem ? "search by meaning" : ""].filter(Boolean).join(", ")));
       } catch (_) { rows.push(row("On this device", "The library is not answering.")); }
       try { const e = await navigator.storage?.estimate?.(); if (e && e.usage) rows.push(row("Size", `${mb(e.usage)} used on this device`)); } catch (_) {}
       const keepRow = el("div", { class: "set-row" });
@@ -2189,7 +2189,7 @@ import { esc, mb } from "./lib/format.js";
         let kept = null;
         try { kept = navigator.storage?.persisted ? await navigator.storage.persisted() : null; } catch (_) {}
         keepRow.replaceChildren(el("span", { class: "set-lb", text: "Storage" }), el("span", { class: "set-val" }, [
-          kept === null ? "This browser does not say whether it keeps the library." : kept ? "Kept: the system will not clear the library or your marks to make room." : "Not promised yet: the system may clear it when the device runs short. Adding the app to the Home Screen helps. ",
+          kept === null ? "This browser does not say whether it keeps the library." : kept ? "Kept: the system will not clear the library or your marks to make room." : "May be cleared: when the device runs short of space, the system may remove the library and your marks. Adding the app to the Home Screen helps. ",
           kept === false ? el("button", { type: "button", class: "text-btn inline", text: "Ask again", onclick: async () => { try { await navigator.storage.persist(); } catch (_) {} drawKeep(); } }) : null,
         ].filter(Boolean)));
       };
@@ -3435,9 +3435,10 @@ import { esc, mb } from "./lib/format.js";
   // Search by meaning: the model (35 MB, once) and the paragraphs' vectors load
   // quietly after the library is open; until then search goes by words alone.
   let semState = null;
+  const MEANING_ON = "finds passages by meaning as well as by their words";
   async function semanticNote() {
     try { semState = await api("semanticStatus", {}); } catch (_) { return ""; }
-    return semState.available && semState.ready ? "search by meaning is on" : "";
+    return semState.available && semState.ready ? MEANING_ON : "";
   }
   async function loadSemantic() {
     try { semState = await api("semanticStatus", {}); } catch (_) { return; }
@@ -3445,16 +3446,16 @@ import { esc, mb } from "./lib/format.js";
     // the home screen's footer line shows the download, then that meaning search is on
     const note = (text) => {
       const f = $("#homeStatus"); if (!f) return;
-      const base = f.textContent.replace(/ · (search by meaning is on|getting the search model[^·]*|preparing search by meaning…)$/, "");
+      const base = f.textContent.replace(/ · (finds passages by meaning[^·]*|downloading what search by meaning needs[^·]*|getting search by meaning ready…)$/, "");
       f.textContent = text ? `${base} · ${text}` : base;
     };
     try {
       await call("loadSemantic", { base: new URL("./", BASE).href }, (p) => {
-        if (p.phase === "model" && p.total) note(`getting the search model (${mb(p.loaded)} of ${mb(p.total)}, once)…`);
-        else if (p.phase === "index") note("preparing search by meaning…");
+        if (p.phase === "model" && p.total) note(`downloading what search by meaning needs (${mb(p.loaded)} of ${mb(p.total)}, once)…`);
+        else if (p.phase === "index") note("getting search by meaning ready…");
       });
       semState = await api("semanticStatus", {});
-      note(semState.ready ? "search by meaning is on" : "");
+      note(semState.ready ? MEANING_ON : "");
     } catch (err) {
       note("");
       console.warn("search by meaning is off:", err?.message);
