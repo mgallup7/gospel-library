@@ -2278,7 +2278,7 @@ import { esc, mb } from "./lib/format.js";
   // connects to it, each passage a card for the deck. It was a floating pill once, and sat on
   // the words and on the link to the next chapter.
   function thinkBtn(cls = "") {
-    return el("button", { type: "button", class: "icon-btn think-btn" + cls, title: "Think it through with Claude", "aria-label": "Think it through with Claude", html: ICON_THINK, onclick: () => thinkHere() });
+    return el("button", { type: "button", class: "icon-btn think-btn" + cls, title: "Think it through with Claude", "aria-label": "Think it through with Claude", html: ICON_THINK + '<span class="think-word" aria-hidden="true">Think</span>', onclick: () => thinkHere() }); // the lamp wears its word where the bar has room
   }
   function thinkHere() {
     if (!window.Ask) return;
@@ -2807,7 +2807,7 @@ import { esc, mb } from "./lib/format.js";
       el("button", { type: "button", role: "menuitem", class: "menu-orig", onclick: (e) => { const ob = e.currentTarget.closest(".reader-bar")?.querySelector(".orig-btn"); shut(); ob?.click(); } }, [el("span", { class: "g", html: "<b></b>" }), el("span", { class: "orig-name", text: "" })]),
       jsp ? el("button", { type: "button", role: "menuitem", class: "menu-cite", onclick: () => { shut(); citePapers(doc); } }, [el("span", { class: "g", html: "<b>“”</b>" }), "Cite this page"]) : null,
     ].filter(Boolean));
-    // "Aa" while it holds the sizes alone; three dots once Present and the rest have folded into it
+    // "Aa" always, since the sizes are always in it; three dots beside it once Present and the rest have folded in
     const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size and more", title: "Text size and more", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } }, [el("span", { class: "aa", text: "Aa" }), el("span", { class: "dots", html: ICON_MORE })]);
     const away = (e) => { if (!wrap.contains(e.target)) shut(); };
     const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
@@ -2825,12 +2825,14 @@ import { esc, mb } from "./lib/format.js";
       wrap,
     ];
   }
-  // How much of the bar folds away: none, the sizes into Aa, then the match count's words and a
-  // tighter switch, then Present and the site into the menu, then the lamp and Cite, and last (a
-  // phone with the match arrows up) the chapter arrows, which the foot of the page also has, and
-  // Back's label, leaving its arrow. Measured with nothing allowed to shrink
+  // How much of the bar folds away: none, the lamp's word, the sizes into Aa, then a tighter
+  // switch, then Present and the site into the menu (its button
+  // still says Aa, with dots beside it), then the lamp and Cite. After that an iPad and a phone
+  // differ (app.css): beside a list the Hebrew or Greek switch goes with the lamp, then the
+  // chapter arrows, then Back's label; on a phone Back's label goes first, then the Hebrew or
+  // Greek switch, and only at the very last the chapter arrows. Measured with nothing allowed to shrink
   // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
-  const BAR_LEVELS = ["compact", "tight", "tighter", "tightest", "bare", "barest"];
+  const BAR_LEVELS = ["nowords", "compact", "tight", "tighter", "tightest", "bare", "noorig", "barest"];
   function fitReaderBar(bar) {
     bar.classList.toggle("has-orig", !!bar.querySelector(".orig-btn")); // the menu offers the Hebrew or Greek only where the bar has the switch to fold
     if (!bar.querySelector(".size-pop")) return;

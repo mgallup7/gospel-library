@@ -458,18 +458,30 @@ main {
 .reader-bar.tightest .think-btn, .reader-bar.tightest .cite-btn { display: none; }
 .reader-bar.tightest .size-menu .menu-think { display: flex; }
 .size-menu .menu-cite, .size-menu .menu-orig { display: none; }
-.reader-bar.tightest .orig-btn { display: none; }
-.reader-bar.tightest.has-orig .size-menu .menu-orig { display: flex; }
 .reader-bar.tightest .size-menu .menu-cite { display: flex; }
-.reader-bar.bare .chap-nav { display: none; }
-.reader-bar.barest .trail-back .lb { display: none; }
-.reader-bar.barest .trail-back { padding-right: 4px; }
-/* the menu's button: "Aa" while it holds the sizes alone, three dots once the rest has folded in */
+/* the last things to go. Beside a list (an iPad): the Hebrew or Greek switch with the lamp, then
+   the chapter arrows, then Back's label. On a phone: Back's label, then the switch, and the
+   chapter arrows only when nothing else is left to give. */
+@media (min-width: 760px) and (min-height: 500px) {
+  .reader-bar.tightest .orig-btn { display: none; }
+  .reader-bar.tightest.has-orig .size-menu .menu-orig { display: flex; }
+  .reader-bar.bare .chap-nav { display: none; }
+  .reader-bar.barest .trail-back .lb { display: none; }
+  .reader-bar.barest .trail-back { padding-right: 4px; }
+}
+@media (max-width: 759px), (max-height: 499px) {
+  .reader-bar.bare .trail-back .lb { display: none; }
+  .reader-bar.bare .trail-back { padding-right: 4px; }
+  .reader-bar.noorig .orig-btn { display: none; }
+  .reader-bar.noorig.has-orig .size-menu .menu-orig { display: flex; }
+  .reader-bar.barest .chap-nav { display: none; }
+}
+/* the menu's button: always "Aa" (the sizes are always in it), with three dots beside it once the rest has folded in */
 .size-pop-btn .dots { display: none; }
 .size-pop-btn .dots svg { display: block; }
-.reader-bar.tighter .size-pop-btn .aa { display: none; }
-.reader-bar.tighter .size-pop-btn .dots { display: inline-flex; }
-.reader-bar.tighter .size-pop-btn { color: var(--accent); }
+.reader-bar.tighter .size-pop-btn .dots { display: inline-flex; margin-left: 1px; color: var(--accent); }
+.reader-bar.tighter .size-pop-btn .dots svg { width: 16px; height: 16px; }
+.reader-bar.tighter .size-pop-btn { width: auto; padding: 0 6px; }
 .reader-bar.tighter .size-pop { order: 2; } /* the menu of what is left closes the row */
 .reader-bar .pane-switch-slot { order: 3; }
 /* measuring what the bar needs: nothing shrinks, and the crumb keeps enough to be read */
@@ -551,7 +563,10 @@ main {
 }
 
 /* Think it through: a lamp in the reader bar, and in the bottom bar on a phone */
-.reader-bar .think-btn { color: var(--accent); flex: none; }
+.reader-bar .think-btn { color: var(--accent); flex: none; width: auto; min-width: 40px; padding: 0 8px; gap: 5px; }
+.think-btn .think-word { font: 600 var(--ui-14) var(--sans); }
+.reader-bar.nowords .think-btn { padding: 0; }
+.reader-bar.nowords .think-word { display: none; }
 .think-card .ask-q { color: var(--accent); }
 /* Think it through: its three questions, each a question card for the deck in one tap */
 .think-questions { margin: 12px 0 4px; border-top: 1px solid var(--rule); font-family: var(--sans); }
