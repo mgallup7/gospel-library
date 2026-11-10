@@ -242,7 +242,7 @@ import { esc } from "./lib/format.js";
     scheduleWrite(!redraw);
     updateBadge();
     if (redraw) draw();
-    else if (ui) { syncDownloadButton(); schedulePrepare(); syncUndo(); }
+    else if (ui) { syncDownloadButton(); syncUndo(); }
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
   }
 
@@ -641,6 +641,16 @@ import { esc } from "./lib/format.js";
     if (redraw) draw();
   }
   window.addEventListener("popstate", () => { if (marker && history.state?.overlay !== "deck") { marker = false; leaveModes(); } });
+  // A card's citation: the page it came from, opened at the passage (beside the board on a wide
+  // screen, where the Page | Deck switch brings the board back; Back does on a phone). While
+  // linking, the citation is a place to tap like the rest of its card, so it does not open.
+  // Whatever mode was up is left first, and its marker is out of history before the page goes in.
+  async function openPassage(it) {
+    if (linking || swallowTap || drag) return;
+    leaveModes(); syncMarker();
+    await settled();
+    GL().openDoc(it.doc_id, it.pid);
+  }
   function cancelLink() {
     if (!linking) return;
     linking = null;
@@ -735,7 +745,9 @@ import { esc } from "./lib/format.js";
     const present = el("button", { type: "button", class: "primary quiet", text: "Present", onclick: () => presentDeck() });
     const think = el("button", { type: "button", class: "text-btn", text: "Think it through", title: "Claude studies the chain: labels, connections, a caption", onclick: () => thinkChain() });
     const md = el("button", { type: "button", class: "text-btn", text: "Markdown", title: "The deck as Markdown, for Bear or any notes app", onclick: () => exportMarkdown() });
-    const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); } });
+    const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); if (open) prepareSoon(); } });
+    // the file is built as the finger comes down on Download (or a pointer comes over it, or it takes the focus), so the tap finds it ready
+    for (const ev of ["pointerdown", "pointerenter", "focus"]) download.addEventListener(ev, () => prepareSoon());
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       think, md,
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); did("Section added, at the end."); } }),
@@ -765,7 +777,7 @@ import { esc } from "./lib/format.js";
     board.addEventListener("click", (e) => {
       if (!linking || e.target.closest(".board-banner, .bpop")) return;
       const card = e.target.closest(".bcard");
-      if (card && card.dataset.type === "passage" && card.dataset.id !== linking.id && !e.target.closest("button:not(.port), textarea, input")) return;
+      if (card && card.dataset.type === "passage" && card.dataset.id !== linking.id && !e.target.closest("button:not(.port):not(.bc-cite), textarea, input")) return;
       swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
       cancelLink();
     }, true);
@@ -831,7 +843,6 @@ import { esc } from "./lib/format.js";
     ui.think.disabled = count() < 2;
     ui.md.disabled = empty;
     syncDownloadButton();
-    schedulePrepare();
     syncBanner();
     ui.hint.hidden = empty;
     ui.hint.textContent = empty ? ""
@@ -877,7 +888,10 @@ import { esc } from "./lib/format.js";
         cards.append(card);
         return;
       }
-      const meta = el("div", { class: "bc-meta" }, [el("div", { class: "bc-cite", text: it.citation })]);
+      // the citation is the way back to the page: it opens the chapter or talk at this passage
+      const meta = el("div", { class: "bc-meta" }, [it.doc_id
+        ? el("button", { type: "button", class: "bc-cite", text: it.citation, title: "Open this page at the passage", "aria-label": `${it.citation}: open the page at this passage`, onclick: () => openPassage(it) })
+        : el("div", { class: "bc-cite", text: it.citation })]);
       // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
       if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
       const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
@@ -2416,12 +2430,13 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // share sheet (Save to Files, PowerPoint, Keynote, AirDrop, Mail), and Safari
   // opens that sheet only in direct answer to a tap: once the file has taken a
   // moment to build, the tap is spent and the sheet never appears. So the file
-  // is built ahead of time while the board is open, and when it is not ready
-  // at the tap, the button becomes "Save PowerPoint" for one more tap.
+  // is built just before it is wanted (as the finger comes down on Download,
+  // and when More opens), and when it is still not ready at the tap, the share
+  // sheet is tried once the file is; if the browser says the tap is spent, the
+  // button has become "Save PowerPoint" for one more tap.
   const PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   let prepared = null;   // { updated, theme, blob, name, file }
   let preparing = null;
-  let prepareTimer = null;
   function pptxName() { return `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.pptx`; }
   function isPrepared() { return !!prepared && prepared.updated === deck.updated && prepared.theme === deck.theme && prepared.name === pptxName(); }
   async function preparePptx() {
@@ -2437,12 +2452,12 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     })();
     try { return await preparing; } finally { preparing = null; }
   }
-  // Build quietly a moment after the board settles, so the tap finds the file ready.
-  function schedulePrepare() {
-    clearTimeout(prepareTimer);
-    if (!deck.items.length || isPrepared()) return;
-    const run = () => { if (!linking && !pending && !preparing) preparePptx().then(() => syncDownloadButton()).catch(() => {}); };
-    prepareTimer = setTimeout(() => { if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 4000 }); else run(); }, 4000);
+  // Build now, quietly, because the file is about to be asked for. It is not rebuilt after
+  // every edit any more: that was a fifth of a second of work and most of a megabyte, every few
+  // seconds, while the deck was still being written.
+  function prepareSoon() {
+    if (!deck.items.length || isPrepared() || preparing) return;
+    preparePptx().then(() => syncDownloadButton()).catch(() => {});
   }
   function syncDownloadButton() {
     if (!ui) return;
@@ -2452,12 +2467,14 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   }
   function canShareFile(file) { try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) { return false; } }
   function say(text) { if (ui) ui.status.textContent = text; }
-  // Inside the tap: the share sheet where there is one, a download elsewhere.
-  function handOver(p) {
+  // Inside the tap: the share sheet where there is one, a download elsewhere. late: the file was
+  // built after the tap, so the browser may refuse the sheet; then the button waits for one more tap.
+  function handOver(p, { late = false } = {}) {
     if (canShareFile(p.file)) {
       say(reportLine());
       navigator.share({ files: [p.file], title: p.name }).catch((err) => {
         if (err && err.name === "AbortError") return;
+        if (late && err && err.name === "NotAllowedError") { say(`${reportLine()} Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.`); return; }
         fallbackDownload(p);
       });
       return;
@@ -2484,9 +2501,10 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     catch (err) { say(`Could not build the file: ${err.message}`); ui.download.disabled = false; return; }
     ui.download.disabled = false;
     syncDownloadButton();
-    // Built after the tap. Where a share sheet exists it needs a fresh tap; elsewhere the download can start now.
-    if (canShareFile(prepared.file)) say(`${reportLine()} Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.`);
-    else handOver(prepared);
+    // Built after the tap (the build began as the finger came down, so it is often a fraction of
+    // a second later): the share sheet is tried, and where the browser wants a fresh tap for it,
+    // the button now says Save PowerPoint. Elsewhere the download starts.
+    handOver(prepared, { late: true });
   }
 
   window.Deck = {

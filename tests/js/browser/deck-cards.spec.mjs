@@ -22,7 +22,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.click("#deckBtn");
   await page.waitForSelector(".board .bcard", { timeout: 10000 });
   // the question goes in after the card tapped, not at the end; slide text after the question
-  await page.click(".bcard[data-id='a'] .bc-cite");
+  await page.click(".bcard[data-id='a'] .bc-notes"); // beside its notes button (the citation now opens the page)
   await page.click(".board .board-foot button:has-text('+ Question')");
   await page.waitForSelector(".bcard.question textarea", { timeout: 5000 });
   await page.fill(".bcard.question textarea", "What has faith asked of you this transfer?");

@@ -201,7 +201,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     mid = await dragFrom(word("c", 1), { esc: true });
     check((await state()).links.length === 1, "Escape during a drag should cancel it, even with the finger let go over a target");
     check(!(await page.evaluate(() => !!document.querySelector(".board.dragging, .bcard.drag-src, .board-lines .temp, .board-banner:not([hidden]) .bb"))), "and leave no trace of the drag");
-    await dragFrom(".bcard[data-id='a'] .bc-cite");
+    await dragFrom(".bcard[data-id='a'] .bc-notes");
     check((await state()).links.length === 1, "a release over its own card should cancel the drag");
     check(/Nothing linked/.test(await toastText()), "and say so");
     await dragFrom(".board > .deck-hint");
