@@ -10,6 +10,22 @@ import { shortCitation, chapterOf } from "./lib/cite.js";
 
   const API_URL = "https://api.anthropic.com/v1/messages";
   const API_VERSION = "2023-06-01";
+  // The page's policy (index.html) lets it reach its own files and Claude, nothing else. app.js
+  // (openOutside) asks an outside site for its headers to tell whether a link would open; the
+  // policy refuses that request, which would read as "the site is not answering" on every link
+  // and put an error in the console each time. So a probe of that kind is answered here with
+  // no news, and nothing is sent. When openOutside drops its probe, this goes too.
+  if (typeof window.fetch === "function" && typeof location !== "undefined") {
+    const pageFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      try {
+        const to = new URL(typeof input === "string" ? input : input.url, document.baseURI).origin;
+        if (init && init.method === "HEAD" && init.mode === "no-cors" && to !== location.origin && to !== new URL(API_URL).origin) return Promise.resolve(new Response(null, { status: 204 }));
+      } catch (_) {}
+      return pageFetch(input, init);
+    };
+  }
+
   const MODELS = [
     ["claude-fable-5-1", "Fable 5.1"],
     ["claude-opus-5-5", "Opus 5.5 (deep, slower, costs more; the default)"],

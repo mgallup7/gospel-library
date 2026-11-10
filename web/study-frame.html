@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Study page</title>
+<script>
+/* The frame a study page is shown in (studies.js mount). The app's own page is pinned by a
+   Content-Security-Policy that a blob or srcdoc page would inherit, and a study's own scripts
+   would not run under it; this page has no policy, so the study runs as it was written.
+   It only works sandboxed, with no origin of its own: opened any other way it could see the
+   app's storage, so then it does nothing. It asks the app for the page, and writes what
+   comes into itself. Messages that arrive first (where to scroll, which heading to open at)
+   are kept and handed to the page once it has loaded. */
+(function () {
+  if (self.origin !== "null" || parent === self) return;
+  var early = [];
+  addEventListener("message", function (e) {
+    if (e.source !== parent || !e.data || typeof e.data !== "object") return;
+    if (e.data.type !== "gospel:page") { early.push(e.data); return; }
+    if (typeof e.data.html !== "string") return;
+    document.open(); // this listener goes with the old page; the study's hand-off script adds its own
+    addEventListener("load", function () { for (var i = 0; i < early.length; i++) postMessage(early[i], "*"); early = []; });
+    document.write(e.data.html);
+    document.close();
+  });
+  addEventListener("load", function () { parent.postMessage({ type: "gospel:frame-ready" }, "*"); });
+})();
+</script>
+</head>
+<body></body>
+</html>

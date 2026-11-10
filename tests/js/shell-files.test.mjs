@@ -1,6 +1,6 @@
 // The service worker's FILES is the shell: what a device keeps to start offline. A file added
 // under web/ and not listed there works online and fails on a plane, so the list is checked
-// against the folder: every web/*.js (but sw.js itself), web/*.css, index.html and web/lib/*.js,
+// against the folder: every web/*.js (but sw.js itself), web/*.css, web/*.html and web/lib/*.js,
 // with the vendor files, the manifest and the icon it names, each of which must exist.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +14,7 @@ const listed = JSON.parse(sw.match(/const FILES = (\[[\s\S]*?\]);/)[1]);
 
 test("sw.js FILES lists every file the shell needs, and nothing that is not there", () => {
   const ours = [
-    ...fs.readdirSync(web).filter((f) => (f.endsWith(".js") && f !== "sw.js") || f.endsWith(".css") || f === "index.html").map((f) => `./${f}`),
+    ...fs.readdirSync(web).filter((f) => (f.endsWith(".js") && f !== "sw.js") || f.endsWith(".css") || f.endsWith(".html")).map((f) => `./${f}`),
     ...fs.readdirSync(path.join(web, "lib")).filter((f) => f.endsWith(".js")).map((f) => `./lib/${f}`),
   ];
   const others = listed.filter((f) => f !== "./" && !ours.includes(f));

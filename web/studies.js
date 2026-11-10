@@ -5,8 +5,8 @@
    the scriptures or to a talk opens the local copy. The files live in the browser's own
    database (IndexedDB), apart from the library, so a library update leaves them alone.
 
-   The page is shown in a sandboxed frame (from a blob address of its own, so its #links
-   work): its own styles and scripts run, but it cannot see the app or the library key.
+   The page is shown in a sandboxed frame (study-frame.html, which writes the page into
+   itself): its own styles and scripts run, but it cannot see the app or the library key.
    A small script added to the page hands its links to the web over to the app, which
    resolves them against the library (app.js followLink). */
 import { markdown as renderMarkdown } from "./lib/markdown.js";
@@ -98,7 +98,9 @@ var t=null; addEventListener("scroll",function(){clearTimeout(t);t=setTimeout(fu
 addEventListener("message",function(e){if(e.data&&e.data.type==="gospel:scrollTo")scrollTo(0,e.data.y||0);
   if(e.data&&e.data.type==="gospel:anchor"){var t=document.getElementById(String(e.data.id||""));if(t){var d=t.closest("details");if(d)d.open=true;t.scrollIntoView({block:"start"});}}});
 })();</script>`;
-  function frameHtml(rec) {
+  let lastFrameHtml = ""; // what frameHtml last made: the page the next frame is to show
+  function frameHtml(rec) { return (lastFrameHtml = frameSource(rec)); }
+  function frameSource(rec) {
     if (rec.kind === "html") {
       const html = withReferences(rec.html || "");
       if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + HANDOFF);
@@ -116,6 +118,35 @@ p,li{margin:0 0 .8em}ul,ol{padding-left:1.4em}blockquote{margin:0 0 .8em;padding
 a{color:var(--accent)}code{font:14px ui-monospace,Menlo,monospace;background:rgba(127,127,127,.12);padding:1px 4px;border-radius:4px}
 pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px solid var(--rule);margin:1.6em 0}
 </style></head><body>${body}</body></html>`;
+  }
+  // The app's own page is pinned by a Content-Security-Policy (index.html), and a page shown
+  // from a blob address inherits the policy of the page that made it: the study's own scripts,
+  // and the hand-off script above, would all be refused. So the frame is sent to
+  // study-frame.html instead, a page of the app's with no policy of its own; sandboxed as
+  // before, it asks for the study and writes it into itself. mount does that for one frame.
+  const FRAME_URL = new URL("./study-frame.html", import.meta.url).href;
+  const waiting = new WeakMap(); // frame -> the HTML it is to show
+  function mount(frame, rec) {
+    waiting.set(frame, typeof rec === "string" ? rec : frameHtml(rec));
+    frame.src = FRAME_URL;
+  }
+  window.addEventListener("message", (e) => {
+    if (!e.data || e.data.type !== "gospel:frame-ready") return;
+    for (const frame of document.querySelectorAll("iframe.study-frame")) {
+      // the frame has no origin to name (it is sandboxed), so the test is that it is ours
+      if (frame.contentWindow === e.source && waiting.has(frame)) e.source.postMessage({ type: "gospel:page", html: waiting.get(frame) }, "*");
+    }
+  });
+  // app.js (renderStudy) still gives the frame a blob address made from frameHtml. Until it
+  // calls Studies.mount(frame, rec) itself, the frame is caught as it enters the reader, before
+  // the blob has loaded, and sent to study-frame.html with the page frameHtml just made.
+  const readerEl = document.getElementById("reader");
+  if (readerEl && typeof MutationObserver === "function") {
+    new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) {
+        if (n.nodeType === 1 && n.matches("iframe.study-frame") && /^blob:/.test(n.getAttribute("src") || "")) mount(n, lastFrameHtml);
+      }
+    }).observe(readerEl, { childList: true });
   }
   // Enough Markdown for notes and lessons: headings, paragraphs, lists, quotes, emphasis, links.
   // The renderer is Ask's (lib/markdown.js) in its page mode: no citation buttons and no
@@ -206,5 +237,5 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
     return { id: rec.id, title: rec.title, kind: rec.kind, text, anchors, links };
   }
 
-  window.Studies = { list, get, add, remove, frameHtml, plainText, mb, index };
+  window.Studies = { list, get, add, remove, frameHtml, mount, plainText, mb, index };
 })();

@@ -125,7 +125,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(popups.length === 0, `l7 popups: ${popups}`);
     // l8 stays inside the page and scrolls to its target
     popups = [];
-    const fr0 = page.frames().find((f) => f.url().startsWith("blob:"));
+    const fr0 = page.frames().find((f) => /study-frame\.html/.test(f.url()));
     await fr0.evaluate(() => { document.body.style.paddingTop = "3000px"; window.scrollTo(0, 2500); });
     await page.frameLocator("#reader .study-frame").locator("#l8").click();
     await page.waitForTimeout(400);
@@ -222,7 +222,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(/Alma 32:28/.test(await page.textContent("#sheet .nm")), `reference opened ${await page.textContent("#sheet .nm")}`);
     await shot("02-reference-peek");
     await page.click("#sheet .close");
-    const frame = page.frames().find((f) => f.url().startsWith("blob:"));
+    const frame = page.frames().find((f) => /study-frame\.html/.test(f.url()));
     await fr.locator('a[href="#the-harvest"]').click();
     await page.waitForTimeout(400);
     check(await frame.evaluate(() => window.scrollY) > 400, "the #anchor did not scroll");
@@ -247,7 +247,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#list .studies-hits .study-hit");
     await page.waitForSelector("#reader .study-frame", { timeout: 8000 });
     await page.waitForTimeout(1200);
-    const f2 = page.frames().find((f) => f.url().startsWith("blob:"));
+    const f2 = page.frames().find((f) => /study-frame\.html/.test(f.url()));
     const top = await f2.evaluate(() => document.getElementById("the-harvest").getBoundingClientRect().top);
     check(Math.abs(top) < 60, `the study did not open at The harvest (top ${top})`);
     await shot("05-opened-at-heading");

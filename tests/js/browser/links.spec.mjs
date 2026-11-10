@@ -203,9 +203,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check((await page.evaluate(() => window.__mail.join(" | "))) === "mailto:someone@example.com?subject=Hello acts | tel:+13035551212 acts", `study mail and phone: ${await page.evaluate(() => window.__mail.join(" | "))}`);
   check((await frame().locator("h1").textContent().catch(() => "")) === "Every link", "study mail link blanked the frame");
   await frame().locator("#inpage").click();
-  check((await page.frames().find((f) => f.url().startsWith("blob:")).evaluate(() => scrollY)) > 300, "study #anchor did not scroll within the page");
+  check((await page.frames().find((f) => /study-frame\.html/.test(f.url())).evaluate(() => scrollY)) > 300, "study #anchor did not scroll within the page");
   // plain references in an HTML study are links; a link, a script and a style keep their words
-  const plain = await page.frames().find((f) => f.url().startsWith("blob:")).evaluate(() => ({ refs: [...document.querySelectorAll("#plain a:not(#own)")].map((a) => a.textContent), own: document.querySelector("#own").innerHTML, note: window.note, style: document.querySelector("style").textContent }));
+  const plain = await page.frames().find((f) => /study-frame\.html/.test(f.url())).evaluate(() => ({ refs: [...document.querySelectorAll("#plain a:not(#own)")].map((a) => a.textContent), own: document.querySelector("#own").innerHTML, note: window.note, style: document.querySelector("style").textContent }));
   check(plain.refs.join("|") === "Alma 32:27|D&C 76:22-24" && plain.own === "My own link to Alma 32:28" && plain.note === "Alma 32:29" && /content:"Alma 32:21"/.test(plain.style), `study plain references: ${JSON.stringify(plain)}`);
   await frame().locator("#plain a").first().click();
   check(/Alma 32:27/.test(await peekTitle()), "study plain reference: no passage sheet");
@@ -254,11 +254,14 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await expectOut("chapter web", "https://example.com/elsewhere?q=1#top", /example\.com/);
   await inChapter("mailto:someone@example.com");
   check((await page.evaluate(() => window.__mail[window.__mail.length - 1])) === "mailto:someone@example.com acts", "chapter mail link was stopped");
-  // the network plainly dead though the device says online: the toast says so, and keeps the link
+  // the network plainly dead though the device says online. The page's policy lets it reach
+  // only its own files and Claude, so it cannot ask the site; the toast makes no claim about
+  // it, keeps the link, and no request leaves the page
   dead = true;
   await inChapter(TALK);
-  await page.waitForFunction(() => /not answering/.test(document.querySelector("#toast.show")?.textContent || ""), null, { timeout: 6000 }).catch(() => check(false, "dead network: the toast did not say so"));
-  await expectOut("dead network", TALK, /not answering/);
+  await page.waitForTimeout(600);
+  await expectOut("dead network", TALK, /Not in your library/);
+  check(!/not answering/.test(await page.evaluate(() => document.querySelector("#toast")?.textContent || "")), "dead network: the toast blamed the site, which the page cannot ask");
   dead = false;
   // offline: the message, no link; the reader's own link to the site says the same
   await ctx.setOffline(true);
