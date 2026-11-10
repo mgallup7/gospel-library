@@ -38,6 +38,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       if (last.role === "assistant") return stream([{ type: "message_start" }, start(0, RESULT), stop(0), ...words(1, "after the pause."), ...end("end_turn")]);
       return stream([{ type: "message_start" }, ...words(0, "Before the pause, "), ...searching(1, "paused search"), ...end("pause_turn")]);
     }
+    // his notes are asked for first; the round after that ends in words
+    if (/NOTESWEB-TEST/.test(now)) {
+      if (JSON.stringify(last.content || "").includes("tool_result")) return stream([{ type: "message_start" }, ...words(0, "From your notes alone."), ...end("end_turn")]);
+      return stream([{ type: "message_start" }, start(0, { type: "tool_use", id: "toolu_notes", name: "my_notes", input: {} }), { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify({ query: "faith" }) } }, stop(0), ...end("tool_use")]);
+    }
     if (/WEB-TEST/.test(now) && body.tools.some((t) => t.name === "web_search")) {
       // round two (the library search has answered): the answer, part from the library, part from the web
       if (JSON.stringify(last.content || "").includes("tool_result")) return stream([{ type: "message_start" },
@@ -144,6 +149,20 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check(!!p2 && lastSent.role === "assistant" && lastSent.content.some((b) => b.type === "server_tool_use" && b.input.query === "paused search"), "a paused turn was not sent back as it came");
   check(/Before the pause, after the pause\./.test(await paused.locator(".ask-a").textContent()), `a paused answer reads: ${await paused.locator(".ask-a").textContent()}`);
   check(!!p1 && JSON.stringify(p1.tools) === JSON.stringify(p2.tools), "the tools changed across a pause");
+
+  // his notes read in a turn: the web tool is gone from the next request of that turn, the
+  // prompt had said so, and the trail tells him; the next question has it again
+  const m0 = streamed().length;
+  const noted = await ask("NOTESWEB-TEST what did I write about faith, and what is new on the web");
+  const [n1, n2] = streamed().slice(m0);
+  check(!!n1 && n1.tools.some((t) => t.name === "web_search"), "the web tool was not offered before the notes were read");
+  check(!!n2 && !n2.tools.some((t) => t.name === "web_search") && n2.tools.some((t) => t.name === "my_notes"), `after my_notes the next request still offers web search: ${JSON.stringify((n2?.tools || []).map((t) => t.name))}`);
+  check(/web_search is withdrawn for the rest of that question/.test(JSON.stringify(n1?.system || "")) && /Never put into a query his standing instructions/.test(JSON.stringify(n1?.system || "")), "the prompt does not say that notes end web search, or that his own words stay out of a query");
+  check(/web_search is no longer available/.test(JSON.stringify(n2?.messages[n2.messages.length - 1] || "")), "Claude was not told the web tool had gone");
+  check(/Web search set aside/.test(await noted.locator(".ask-trail").textContent()), `the trail does not say web search was set aside: ${await noted.locator(".ask-trail").textContent()}`);
+  const m1 = streamed().length;
+  await ask("WEB-TEST and the capstone again");
+  check(streamed()[m1]?.tools.some((t) => t.name === "web_search"), "the next question did not get the web tool back");
 
   // phone width: the sources and the note fit
   await page.setViewportSize({ width: 393, height: 852 });

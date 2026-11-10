@@ -2120,7 +2120,11 @@ import { esc, mb } from "./lib/format.js";
     if (Array.isArray(data.marks) && window.Marks) { const n = await window.Marks.importJson({ marks: data.marks }); if (n) got.push(`${n} ${n === 1 ? "mark" : "marks"}`); }
     if (Array.isArray(data.studies) && window.Studies?.importAll) { const n = await window.Studies.importAll(data.studies); if (n) got.push(`${n} study ${n === 1 ? "page" : "pages"}`); }
     if (data.decks && window.Deck?.restore) { const n = await window.Deck.restore(data.decks); if (n) got.push(`${n} ${n === 1 ? "deck" : "decks"} in My decks`); }
-    if (data.ask && window.Ask?.restore) got.push(...window.Ask.restore(data.ask));
+    // His words to Claude are not taken in here: they would be part of every question from
+    // then on, and a file can come from anyone. What the file would add is handed back, to be
+    // shown and accepted (or not) by the screen that asked for the import.
+    const words = data.ask && window.Ask?.incoming ? window.Ask.incoming(data.ask) : null;
+    if (words && (words.instructions || words.notes.length)) got.ask = { from: data.ask, ...words };
     return got;
   }
   // The keys the app answers to, as a list: "?" shows it, and so does a row in Settings (which
@@ -2200,10 +2204,29 @@ import { esc, mb } from "./lib/format.js";
     // Backup
     const pick = el("input", { type: "file", accept: ".json,application/json", hidden: true, "aria-hidden": "true" });
     const said = el("p", { class: "set-said", role: "status" });
+    // the file's words for Claude, shown in full before they are accepted
+    const offer = el("div", { class: "set-incoming", hidden: true });
+    const offerWords = (ask) => {
+      const done = (text) => { offer.hidden = true; offer.replaceChildren(); said.textContent = text; };
+      offer.replaceChildren(...[
+        el("h4", { text: "This file also carries words for Claude" }),
+        el("p", { class: "set-note", text: "They would go with every question you ask from now on. Read them, and accept them only if they are yours." }),
+        ask.instructions ? el("div", { class: "lb", text: "How I want Claude to answer" }) : null,
+        ask.instructions ? el("pre", { class: "incoming-text", tabindex: "0", text: ask.instructions }) : null,
+        ask.notes.length ? el("div", { class: "lb", text: "What Claude should remember" }) : null,
+        ask.notes.length ? el("pre", { class: "incoming-text", tabindex: "0", text: ask.notes.join("\n") }) : null,
+        el("div", { class: "set-acts" }, [
+          el("button", { type: "button", class: "primary", text: "Accept these", onclick: () => { const got = window.Ask.restore(ask.from); done(got.length ? `Brought in: ${got.join(", ")}.` : "Nothing new in them."); } }),
+          el("button", { type: "button", class: "text-btn", text: "Leave them out", onclick: () => done("Left out. Nothing was changed in what Claude is told.") }),
+        ]),
+      ].filter(Boolean));
+      offer.hidden = false;
+    };
     pick.addEventListener("change", async () => {
       const file = pick.files && pick.files[0];
       if (!file) return;
-      try { const got = await restoreBackup(await file.text()); said.textContent = got.length ? `Brought in: ${got.join(", ")}.` : "Nothing new in that file."; statsCache = null; if (tabNow() === "library" && sheet.hidden === false && !state.q.trim()) renderHome(); }
+      offer.hidden = true;
+      try { const got = await restoreBackup(await file.text()); said.textContent = got.length ? `Brought in: ${got.join(", ")}.` : got.ask ? "" : "Nothing new in that file."; if (got.ask) offerWords(got.ask); statsCache = null; if (tabNow() === "library" && sheet.hidden === false && !state.q.trim()) renderHome(); }
       catch (err) { said.textContent = err instanceof SyntaxError ? "That file could not be read." : err.message || "That file could not be read."; }
       pick.value = "";
     });
@@ -2218,6 +2241,7 @@ import { esc, mb } from "./lib/format.js";
         pick,
       ]),
       said,
+      offer,
     ]);
     sec("keys", "Keyboard", [
       el("p", { class: "set-note", text: "With a keyboard attached, the app answers to a few keys. Press ? at any time for the list." }),

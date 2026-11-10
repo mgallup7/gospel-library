@@ -909,6 +909,10 @@ body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
 .set-acts .text-btn { box-shadow: inset 0 0 0 1px var(--rule); }
 .set-acts .primary, .settings .primary { height: 44px; padding: 0 18px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .set-said { min-height: 1.4em; margin: 8px 0 0; color: var(--ink-2); }
+.set-incoming { margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--chrome); }
+.set-incoming h4 { margin: 0 0 4px; font-size: var(--ui-15, 15px); }
+.set-incoming .lb { margin: 10px 0 4px; font-weight: 600; font-size: var(--ui-13); }
+.set-incoming .incoming-text { margin: 0; padding: 8px 10px; max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--ui-13); line-height: 1.45; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; }
 /* the keyboard shortcut list: the keys on the left, what each does beside them */
 .keys .keys-back { margin: 0 0 2px -12px; }
 .key-list { display: grid; grid-template-columns: clamp(150px, 42%, 190px) minmax(0, 1fr); margin: 0; }
