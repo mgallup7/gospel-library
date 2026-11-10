@@ -147,7 +147,7 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   previous/next.
 - Present: one verse or paragraph at a time, large, on a plain background, for
   a projector, a TV over AirPlay, or a tablet turned toward the room. Tap the
-  screen icon in the reader (or press P, or double-tap a paragraph). Arrow
+  screen icon in the reader (or press P). Arrow
   keys, space, taps and swipes move through the text; Esc returns to reading.
   The controls, seen only by the speaker, carry a timer since Present began
   (tap it to reset) and the first words of the next passage.

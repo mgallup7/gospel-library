@@ -1526,10 +1526,6 @@ import { esc, mb } from "./lib/format.js";
       updateSelectBar();
     });
     window.Original?.attach(doc, body, bar);
-    body.addEventListener("dblclick", (e) => {
-      const unit = e.target.closest("p, h2, h3, li");
-      if (unit && unit.id) { e.preventDefault(); window.getSelection()?.removeAllRanges(); startPresenting(unit.id); }
-    });
     highlightTerms(body);
     applyMarks(doc, body);
     showInStudies(doc, body);
