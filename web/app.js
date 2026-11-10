@@ -282,7 +282,7 @@ import { esc, mb } from "./lib/format.js";
   function setEntry(patch) {
     const cur = history.state || {};
     // a marker entry (a sheet or the stage over a place) stays one: push() reads the flag to know it is leaving from an overlay
-    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, prevList: cur.prevList || null, ...patch }, "", location.href);
+    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, prevList: cur.prevList || null, pane: cur.pane || null, ...patch }, "", location.href);
     syncTitle();
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
@@ -551,11 +551,13 @@ import { esc, mb } from "./lib/format.js";
   }
 
   // ------------------------------------------------------------ render ----
-  async function render({ restore = null } = {}) {
+  async function render({ restore = null, boot = false } = {}) {
+    const paneWas = boot ? history.state?.pane || null : null; // read before anything is drawn: drawing writes it again
     const searching = state.q.trim().length >= 2;
     if (searching && !state.terms.length) state.terms = termsFrom(state.q);
     const listWork = searching ? runSearch({ typeahead: false, silent: true, restore }) : (state.lastSearch = null, renderHome());
-    const boardFirst = wide() && !searching && state.browse?.tab === "deck";
+    // (at the start, a page that was showing over the board when the app was left shows again)
+    const boardFirst = wide() && !searching && state.browse?.tab === "deck" && !(paneWas === "page" && (state.docId || state.studyId));
     // #deck with a page open shows the board, and the page loads behind it for the switch to offer
     if (boardFirst) paneView = "board";
     else if (state.docId || state.studyId) paneView = "page";
@@ -563,6 +565,8 @@ import { esc, mb } from "./lib/format.js";
       const pageWork = state.docId ? openDoc(state.docId, state.pid, { push: false, scroll: !restore && !boardFirst }) : openStudy(state.studyId, { push: false, scroll: restore?.study || 0 });
       // on a phone the page is what you see, and the list behind it catches up on its own
       if (wide()) await Promise.all([listWork, pageWork]); else { await pageWork; listWork.catch(() => {}); }
+      // the board draws itself forward as the Deck is drawn; a page that was showing over it at the last visit takes its turn again
+      if (paneWas === "page" && wide() && pageOpen() && paneView !== "page") panel.page();
     } else {
       await listWork;
       showList();
@@ -3580,6 +3584,9 @@ import { esc, mb } from "./lib/format.js";
   function refreshSwitches() {
     const on = wide() && !!panel.lastEl && pageOpen();
     const boardUp = !panelPane.hidden;
+    // which of the two is showing goes into the entry, so a reload shows the same (render reads it at the start)
+    const showing = on ? (boardUp ? "board" : "page") : null;
+    if (state.ready && !switching && !history.state?.overlay && (history.state?.pane || null) !== showing) setEntry({ pane: showing });
     const hadFocus = document.activeElement && document.activeElement.closest(".pane-switch") ? document.activeElement.textContent : null;
     for (const slot of document.querySelectorAll(".pane-switch-slot")) {
       if (!on) { slot.replaceChildren(); continue; }
