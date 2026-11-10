@@ -785,7 +785,7 @@ import { esc } from "./lib/format.js";
     const canvas = el("div", { class: "board-canvas" }, [cards, svg, labels]);
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
-    // the banner is a child of the board itself, so it can stick to the top of the pane while the cards scroll
+    // the banner is a child of the board itself, between the head and the cards, so it can stick to the top of the pane while the cards scroll
     board.append(head, banner, canvas, saved, status, hint);
     // While linking, a tap on the board that is not on a phrase or passage to link to cancels:
     // the source card, a section, a tool, the head, empty space. swallowTap keeps that same tap
@@ -797,7 +797,7 @@ import { esc } from "./lib/format.js";
       swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
       cancelLink();
     }, true);
-    ui = { title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { head, title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
@@ -822,11 +822,19 @@ import { esc } from "./lib/format.js";
     queueLines();
     syncMarker();
   }
-  // The banner for a link in progress, by tap or by drag. It takes no room in the page (so the
-  // cards do not jump when it comes and goes) and sticks under the bar at the top of the pane.
+  // The banner for a link in progress. By tap, it carries Cancel and has room of its own
+  // between the board's head and the cards, so it never lies over the first card's citation;
+  // it sticks under the bar at the top of the pane, so Cancel is in reach however far the cards
+  // have scrolled. As it comes and goes the pane is scrolled by its height, as far as the pane
+  // can be, so the phrase about to be tapped stays where it was (a board too short to scroll
+  // steps down instead). By drag, it is only a line of help and lies over the top of the pane
+  // as before: nothing may move under a finger that is already down.
   function syncBanner() {
     if (!ui) return;
     const b = ui.banner;
+    const room = !!linking, had = !b.hidden && !b.classList.contains("over");
+    const changes = room !== had && board.isConnected;
+    const before = changes ? ui.canvas.getBoundingClientRect().top : 0;
     if (linking) {
       const from = endOf(linking);
       b.replaceChildren(el("div", { class: "bb", role: "status" }, [
@@ -835,9 +843,14 @@ import { esc } from "./lib/format.js";
       ]));
     } else if (drag) {
       b.replaceChildren(el("div", { class: "bb", role: "status" }, [el("span", { text: "Let go on a phrase or a passage to link. To cancel, let go on empty space or on the card you started from, or press Esc." })]));
-    } else { b.hidden = true; b.replaceChildren(); return; }
-    b.hidden = false;
-    b.style.top = `${stickyTop() + 6}px`;
+    } else b.replaceChildren();
+    b.hidden = !(linking || drag);
+    b.classList.toggle("over", !linking && !!drag);
+    if (!b.hidden) b.style.top = `${stickyTop() + 6}px`;
+    if (changes) {
+      const moved = ui.canvas.getBoundingClientRect().top - before;
+      if (moved) scrollerOf(ui.canvas).scrollBy(0, moved);
+    }
   }
   function syncHead() {
     if (document.activeElement !== ui.title) ui.title.value = deck.title || "";

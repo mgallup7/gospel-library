@@ -896,9 +896,11 @@ body:has(#panel:not([hidden])) .deck-summary .deck-actions > .primary { display:
 .board-think .think-row .chip { flex: none; }
 .board-think .think-row .chip:disabled { opacity: .6; }
 .stage-caption { font-size: .5em; font-style: italic; opacity: .85; text-align: center; margin-top: 2vmin; line-height: 1.35; }
-/* a link in progress: the banner takes no room in the page and sticks under the pane's bar, so Cancel is in reach however far the cards have scrolled */
-.board-banner { position: sticky; top: 6px; z-index: 7; height: 0; }
-.board-banner .bb { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 2px 4px 2px 12px; border-radius: 12px; background: var(--target); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); box-shadow: 0 6px 18px rgba(0,0,0,.2); font: 14px/1.35 var(--sans); color: var(--ink); }
+/* a link in progress: the banner has its own room between the board's head and the cards (it never covers the first card) and sticks under the pane's bar, so Cancel is in reach however far the cards have scrolled; the help shown during a drag takes no room, so nothing moves under the finger */
+.board-banner { position: sticky; top: 6px; z-index: 7; margin: 0 0 8px; }
+.board-banner.over { height: 0; margin: 0; }
+.board-banner.over .bb { position: absolute; left: 0; right: 0; top: 0; }
+.board-banner .bb { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 2px 4px 2px 12px; border-radius: 12px; background: var(--target); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); box-shadow: 0 6px 18px rgba(0,0,0,.2); font: 14px/1.35 var(--sans); color: var(--ink); }
 .board-banner .bb span { flex: 1; min-width: 0; padding: 6px 0; }
 .board-banner .bb .text-btn { flex: none; height: 44px; }
 .bcard.link-src { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
