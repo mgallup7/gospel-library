@@ -697,14 +697,28 @@ body.presenting { overflow: hidden; }
 .quote-note { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin: 6px 0 2px; padding: 8px 10px; border-radius: 10px; background: var(--target); font-size: 13px; color: var(--ink-2); }
 .ask-sources .src b { display: inline-block; min-width: 1.6em; color: var(--accent); }
 .ask-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-.ask.setup-key h2, .ask.settings h2 { font: 600 20px var(--serif); margin: 10px 0 8px; }
+.ask.setup-key h2, .ask-settings h2 { font: 600 20px var(--serif); margin: 10px 0 8px; }
 .ask.setup-key .lede { font: 16px/1.5 var(--serif); color: var(--ink-2); margin: 0 0 12px; }
 .ask.setup-key .steps { padding-left: 1.3em; font-size: 14px; line-height: 1.5; color: var(--ink-2); margin: 0 0 14px; }
 .ask .unlock { display: flex; gap: 8px; }
-.ask .unlock input, .ask.settings input[type=password], .ask.settings select { flex: 1; min-width: 0; height: 42px; padding: 0 12px; font: 16px var(--sans); border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); color: var(--ink); -webkit-appearance: none; }
-.ask.settings label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); margin: 0 0 12px; }
-.ask.settings label.row-check { grid-template-columns: auto 1fr; align-items: center; gap: 8px; }
-.ask .msg { font-size: 14px; color: var(--danger); min-height: 1.4em; margin: 8px 0 0; }
+.ask .unlock input, .ask-settings input[type=password], .ask-settings select { flex: 1; min-width: 0; height: 42px; padding: 0 12px; font: 16px var(--sans); border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); color: var(--ink); -webkit-appearance: none; }
+.ask-settings label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); margin: 0 0 14px; }
+.ask-settings label.row-check { grid-template-columns: auto 1fr; align-items: center; gap: 8px; }
+.ask .msg, .ask-settings .msg { font-size: 14px; color: var(--danger); min-height: 1.4em; margin: 8px 0 0; }
+/* Ask settings sit in the app's sheet: taller than a footnote, and a centred column on a wide screen */
+.sheet:has(.ask-settings) { max-height: 88vh; }
+@media (min-width: 760px) { .sheet:has(.ask-settings) { left: 50%; right: auto; width: min(720px, 92vw); margin-left: max(-360px, -46vw); border: 1px solid var(--rule); border-bottom: 0; } }
+.ask-settings { font-family: var(--sans); line-height: 1.4; }
+.ask-settings h2:focus { outline: none; }
+.ask-settings .lb { font-weight: 600; font-size: 14px; color: var(--ink); }
+.ask-settings .sub { font-size: 13px; color: var(--ink-3); line-height: 1.4; }
+.ask-settings textarea { width: 100%; box-sizing: border-box; min-height: 96px; padding: 10px 12px; font: 16px/1.45 var(--sans); color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; resize: vertical; -webkit-appearance: none; }
+.ask-settings .ask-actions { flex-wrap: wrap; position: sticky; bottom: calc(-18px - var(--safe-bottom)); margin: 4px 0 calc(-18px - var(--safe-bottom)); padding: 10px 0 calc(12px + var(--safe-bottom)); background: var(--chrome); }
+.ask-settings .primary { height: 44px; padding: 0 18px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+/* a note Claude proposed: his to save or dismiss */
+.remember { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 8px 0 2px; padding: 8px 10px; border-radius: 10px; background: var(--chrome); font: 14px/1.4 var(--sans); color: var(--ink-2); }
+.remember .what { flex: 1 1 240px; min-width: 0; }
+.remember b { color: var(--ink); font-weight: 600; }
 .text-btn.danger { color: var(--danger); }
 
 /* ---- deck ----------------------------------------------------------- */

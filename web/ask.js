@@ -59,6 +59,7 @@ Editions. Some shelves hold several editions or volumes, and every passage's lab
 - read: a passage in context (the paragraphs around a verse or paragraph you have already seen), or a whole chapter or talk by reference ("Alma 32", "D&C 76", "3 Nephi 11", a talk title).
 - original: the Hebrew or Greek of a Bible verse or short passage, word by word, each word with its transliteration, English gloss, Strong's number and grammar, beside the KJV. This is the first tool to reach for whenever the Bible is in view, in an answer, a draft or a page being thought through; Psalm titles are verse 0.
 - lexicon: a Strong's number's dictionary entry (lemma, gloss, definition), the senses the data tells apart, how often it occurs and in which books, with its first occurrences and the KJV's verses. For the meaning of a word across the Bible, not just in one verse. The search tool also takes Hebrew or Greek letters, a Strong's number ("H2617", "G26") or "translit: chesed", and returns every verse with that word.
+- remember: propose a note for later conversations when he states a lasting preference, settles something about work in progress, or asks you to keep a fact. It is only a proposal: it appears under the answer and is saved only if he taps Save, so never say that something has been saved or remembered. Use it rarely, one note at a time, never for passages, and never for anything he did not say himself.
 
 How to search. Work the way a careful researcher works in a library, not the way a search box works:
 1. Decide what a complete answer needs before the first search: a list (then every item), a doctrine (then the defining passages and what the prophets have taught about them), a quotation (then the exact words and their setting), a comparison (then both sides in their own words).
@@ -205,6 +206,10 @@ When I ask for a draft, write it in my voice, not yours.`;
         strongs: { type: "string", description: "A Strong's number such as H2617, G26 or H7307G (a letter suffix picks one sense)." },
         limit: { type: "integer", description: "How many occurrences to list, default 40, up to 200." },
       }, required: ["strongs"] } },
+    { name: "remember", description: "Propose one short note to keep for later conversations. He sees it under the answer with Save and Dismiss; it is kept only if he taps Save.",
+      input_schema: { type: "object", properties: {
+        note: { type: "string", description: "One sentence in plain words, as he would write it himself: a preference he stated, a decision about work in progress, a fact about his work he asked you to keep." },
+      }, required: ["note"] } },
   ];
   const MAX_TOOL_CALLS = 14;
 
@@ -266,8 +271,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const input = el("textarea", { class: "ask-input", rows: 3, placeholder: "What have the prophets said about covenants and identity?", "aria-label": "Your question or request" });
     const go = el("button", { type: "button", class: "primary ask-go", text: "Ask" });
     const gear = el("button", { type: "button", class: "icon-btn", "aria-label": "Settings", title: "Settings", html: "&#9881;" });
-    const modelName = MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model;
-    const hint = el("div", { class: "ask-hint", text: `Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). ${modelName}${settings.think ? ", thinking first," : ""} searches your library the way a researcher would, several searches deep; every passage it finds becomes a card you can tick onto the deck.` + (GL().skills?.voice ? " Drafts are written in your voice." : "") });
+    const hint = el("div", { class: "ask-hint", text: hintText() });
     if (!log) log = el("div", { class: "ask-log" });
     for (const b of modes.querySelectorAll("button")) {
       b.addEventListener("click", () => {
@@ -280,7 +284,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     }
     go.addEventListener("click", () => submit(input, modes, log));
     input.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(input, modes, log); } });
-    gear.addEventListener("click", () => renderSettings(container));
+    gear.addEventListener("click", () => openSettings(container, hint));
     box.append(el("div", { class: "ask-top" }, [modes, gear]), input, el("div", { class: "ask-actions" }, [go, el("button", { type: "button", class: "text-btn", text: "New thread", onclick: () => { thread = []; log.replaceChildren(); } })]), hint, log);
     container.append(box);
     if (handed) { input.value = handed; handed = null; submit(input, modes, log); return; }
@@ -340,26 +344,85 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     input.focus();
   }
 
-  function renderSettings(container) {
-    const box = el("div", { class: "ask settings" });
+  function hintText() {
+    return `Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). ${modelName()}${settings.think ? ", thinking first," : ""} searches your library the way a researcher would, several searches deep; every passage it finds becomes a card you can tick onto the deck.` + (GL().skills?.voice ? " Drafts are written in your voice." : "");
+  }
+
+  // Settings open over Ask in the app's own sheet, so Back and Escape close them and a question
+  // being typed underneath is left alone. What is typed here and not yet saved is kept while the
+  // page lives, so a stray Escape does not lose a paragraph of instructions.
+  let settingsDraft = null;
+  function openSettings(container, hint) {
+    const body = $("#sheet .sheet-body");
+    if (!body || !GL().openSheet) return;
+    const unsaved = !!settingsDraft;
+    const d = settingsDraft || { model: settings.model, think: settings.think, planner: settings.planner, key: settings.key, instructions: settings.instructions, notes: settings.notes };
+    const keep = () => { settingsDraft = { model: model.value, think: think.checked, planner: planner.checked, key: key.value, instructions: instructions.value, notes: notes.value }; };
     const model = el("select", { "aria-label": "Model" });
-    for (const [id, label] of MODELS) model.append(el("option", { value: id, text: label, selected: id === settings.model }));
-    const planner = el("input", { type: "checkbox", checked: settings.planner });
-    const think = el("input", { type: "checkbox", checked: settings.think });
-    const key = el("input", { type: "password", value: settings.key, autocomplete: "off", "aria-label": "API key" });
-    box.append(
-      el("h2", { text: "Ask settings" }),
-      el("label", {}, ["Model for answers", model]),
+    for (const [id, label] of MODELS) model.append(el("option", { value: id, text: label, selected: id === d.model }));
+    const planner = el("input", { type: "checkbox", checked: d.planner });
+    const think = el("input", { type: "checkbox", checked: d.think });
+    const key = el("input", { type: "password", value: d.key, autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "API key" });
+    const instructions = el("textarea", { class: "ask-instructions", rows: 6, maxlength: 6000, "aria-label": "How I want Claude to answer", placeholder: "In your own words: who you are and whom you teach, how you want to be answered, what to avoid." });
+    instructions.value = d.instructions;
+    const notes = el("textarea", { class: "ask-notes", rows: 5, maxlength: 8000, "aria-label": "What Claude should remember", placeholder: "Nothing yet. One note to a line, each with its date." });
+    notes.value = d.notes;
+    const msg = el("p", { class: "msg", role: "status", text: unsaved ? "These are your changes from before, not saved yet." : "" });
+    const close = () => { settingsDraft = null; GL().closeSheet(); };
+    const head = el("h2", { text: "Ask settings", tabindex: "-1" });
+    const box = el("div", { class: "ask-settings" }, [
+      head,
+      el("label", {}, [el("span", { class: "lb", text: "How I want Claude to answer" }), el("span", { class: "sub", text: "Your standing instructions, in your own words. They go with every question, every draft, Think it through and the deck's chain, and they outrank the app's own wording. Kept on this device only." }), instructions]),
+      el("label", {}, [el("span", { class: "lb", text: "What Claude should remember" }), el("span", { class: "sub", text: "Dated notes that go with every question. Claude can propose one under an answer; nothing is added unless you tap Save there. Edit or delete any line here." }), notes]),
+      el("label", {}, [el("span", { class: "lb", text: "Model for answers" }), model]),
       el("label", { class: "row-check" }, [think, " Let it think before it answers (you see the thinking as it goes; slower, uses more tokens)"]),
       el("label", { class: "row-check" }, [planner, " When you press Return in the search box, let Claude propose a few more searches and add what they find (one quick, cheap call)"]),
-      el("label", {}, ["API key", key]),
+      el("label", {}, [el("span", { class: "lb", text: "API key" }), key]),
+      msg,
       el("div", { class: "ask-actions" }, [
-        el("button", { type: "button", class: "primary", text: "Save", onclick: () => { settings.model = model.value; settings.planner = planner.checked; settings.think = think.checked; settings.key = key.value.trim(); render(container); } }),
-        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => render(container) }),
-        el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => { settings.key = ""; thread = []; render(container); } }),
+        el("button", { type: "button", class: "primary", text: "Save", onclick: () => {
+          const k = key.value.trim();
+          // the same test the first setup makes: a key that cannot be one is not saved over a good one
+          if (!/^sk-ant-/.test(k)) { msg.textContent = k ? "That does not look like a Claude API key (they begin with sk-ant-). Nothing was saved." : "Paste a Claude API key, or use Remove key from this device. Nothing was saved."; key.focus(); return; }
+          settings.model = model.value; settings.planner = planner.checked; settings.think = think.checked; settings.key = k;
+          settings.instructions = instructions.value.trim(); settings.notes = notes.value.trim();
+          close();
+          if (hint.isConnected) hint.textContent = hintText();
+          GL().toast("Settings saved.");
+        } }),
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
+        el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => {
+          const was = settings.key;
+          settings.key = "";
+          close();
+          render(container);
+          GL().toast("The key is off this device.", { action: "Undo", onAction: () => { settings.key = was; if (view === container && container.isConnected) render(container); } });
+        } }),
       ]),
+    ]);
+    box.addEventListener("input", keep);
+    box.addEventListener("change", keep);
+    body.replaceChildren(box);
+    GL().openSheet("Ask settings");
+    // the sheet puts the cursor in its first field; here that would raise the keyboard over the
+    // settings before anything is read, so the heading takes the focus instead
+    setTimeout(() => { try { head.focus({ preventScroll: true }); } catch (_) {} }, 60);
+  }
+
+  // A note Claude proposed with the remember tool: his to save or dismiss, never saved for him.
+  function isoDay(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+  function rememberOffer(note) {
+    const row = el("div", { class: "remember" });
+    row.append(
+      el("span", { class: "what" }, [el("b", { text: "Remember this? " }), el("span", { text: note })]),
+      el("button", { type: "button", class: "text-btn small", text: "Save", onclick: () => {
+        const line = `${isoDay()}: ${note}`;
+        settings.notes = [settings.notes.trim(), line].filter(Boolean).join("\n");
+        row.replaceChildren(el("span", { class: "what", text: "Saved. It goes with every question from now on; edit it in settings (the gear)." }));
+      } }),
+      el("button", { type: "button", class: "text-btn small", text: "Dismiss", onclick: () => row.remove() }),
     );
-    container.replaceChildren(box);
+    return row;
   }
 
   // --------------------------------------------------------------- submit --
@@ -397,8 +460,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         findings.refresh();
         status.textContent = head.length ? `${head.length} passages to start. Claude is searching further…` : "Claude is searching…";
       }
-      const trail = [];
-      const reply = await agent(text, mode, registry, findings, status, answer, trail);
+      const trail = [], proposals = [];
+      const reply = await agent(text, mode, registry, findings, status, answer, trail, proposals);
       lastPassages = registry.list;
       if (!subject) {
         thread.push({ role: "user", content: text }, { role: "assistant", content: reply });
@@ -409,7 +472,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         if (thread.length > MAX_TURNS * 2) thread = thread.slice(-MAX_TURNS * 2);
       }
       status.remove();
-      finish(answer, sources, tools, reply, registry.list, input, modes, log, trail);
+      finish(answer, sources, tools, reply, registry.list, input, modes, log, trail, proposals);
       findings.setCited([...new Set([...reply.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]);
       if (subject) offerSection(tools, reply, registry.list, findings);
     } catch (err) {
@@ -705,7 +768,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   // ------------------------------------------------------------------ agent --
   // Claude searches the library with tools until it is ready to answer; the
   // final text streams into the answer box.
-  async function agent(text, mode, registry, findings, statusEl, answerEl, trail = []) {
+  async function agent(text, mode, registry, findings, statusEl, answerEl, trail = [], proposals = []) {
     const head = registry.list.map((p) => passageLine(p)).join("\n\n");
     const k = modeSkill(mode);
     const lead = [todayLine(), weekLine(k)].filter(Boolean).join(" ");
@@ -779,6 +842,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
             const r = await registry.lexicon(tu.input);
             step.found = r.count ?? null;
             content = r.text;
+          } else if (tu.name === "remember") {
+            const note = String(tu.input.note || "").replace(/\s+/g, " ").trim().slice(0, 400);
+            step.what = note;
+            if (note && !proposals.includes(note)) proposals.push(note);
+            content = note ? "Shown to him under the answer as a proposal, with Save and Dismiss. It is not saved unless he taps Save, so do not say that it has been." : "Error: give the note to propose.";
           } else content = `Unknown tool ${tu.name}`;
         } catch (err) { content = `Error: ${err.message}`; }
         const cap = tu.name === "find_all" || tu.name === "find_all_verses" ? 170000 : 60000;
@@ -811,12 +879,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return messages;
   }
 
-  function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log, trail = []) {
+  function finish(answerEl, sourcesEl, toolsEl, reply, passages, input, modes, log, trail = [], proposals = []) {
     // The trail: what was searched, read, and counted, so the work can be checked.
     const model = MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model;
     const trailEl = el("details", { class: "ask-trail" }, [
       el("summary", { text: `${trail.length ? `${trail.length} ${trail.length === 1 ? "search" : "searches"}, ${passages.length} passages` : `${passages.length} passages`} · ${model}${settings.think ? ", thinking" : ""}` }),
-      trail.length ? el("ol", {}, trail.map((t) => el("li", { text: `${t.tool === "search" ? "Searched: " : t.tool === "read" ? "" : t.tool === "original" ? "Read " : t.tool === "lexicon" ? "Looked up " : "Counted: "}${t.what.replace(/^read /, "Read ").replace(/^lexicon /, "")}${t.found !== null && t.found !== undefined ? ` (${t.found})` : ""}` }))) : null,
+      trail.length ? el("ol", {}, trail.map((t) => el("li", { text: `${t.tool === "search" ? "Searched: " : t.tool === "read" ? "" : t.tool === "original" ? "Read " : t.tool === "lexicon" ? "Looked up " : t.tool === "remember" ? "Proposed a note: " : "Counted: "}${t.what.replace(/^read /, "Read ").replace(/^lexicon /, "")}${t.found !== null && t.found !== undefined ? ` (${t.found})` : ""}` }))) : null,
     ]);
     sourcesEl.append(trailEl);
     const bad = unverifiedQuotes(reply, passages);
@@ -829,6 +897,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         } }),
       ]));
     }
+    for (const note of proposals) sourcesEl.append(rememberOffer(note));
     toolsEl.append(el("button", { type: "button", class: "text-btn", text: "Copy answer", onclick: () => navigator.clipboard?.writeText(plainText(reply, passages)).catch(() => {}) }));
   }
 
@@ -1076,5 +1145,5 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     // the system blocks for a mode; the deck's chain calls it with its own paragraph
     system: systemFor,
     // for tests: the Think it through prompt, how its questions are read back, the inventory
-    thinkPrompt: MODE_THINK, thinkQuestions, inventoryText, core: CORE };
+    thinkPrompt: MODE_THINK, thinkQuestions, inventoryText, core: CORE, tools: TOOLS };
 })();
