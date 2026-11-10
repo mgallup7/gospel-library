@@ -2,7 +2,7 @@
 // the test library's engine returns: the lexicon glosses of H2617A, and the grammar examples.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { glossStem, foldGlosses, exampleOf } from "../../web/lib/step.js";
+import { glossStem, foldGlosses, exampleOf, grammarMeaning } from "../../web/lib/step.js";
 
 test("glossStem drops the little words a Hebrew word carries", () => {
   assert.equal(glossStem("covenant loyalty his"), "covenant loyalty");
@@ -49,11 +49,41 @@ test("exampleOf: the object marker's ( ) is no example at all", () => {
   assert.equal(exampleOf("e.g."), "");
 });
 
-test("exampleOf: parentheses and open quotes that belong to the example stay", () => {
-  assert.equal(exampleOf("a (female) person (or thing)"), "a (female) person (or thing)"); // HNcfsa
-  assert.equal(exampleOf("(male) people (or things) of..."), "(male) people (or things) of..."); // HNcmpc
-  assert.equal(exampleOf("\"they, them (males)"), "they, them (males)"); // HPp3mp
+test("exampleOf: parentheses and open quotes that belong to the example stay, the sex STEP writes for a gender does not", () => {
+  assert.equal(exampleOf("a (female) person (or thing)"), "a person (or thing)"); // HNcfsa, emunah
+  assert.equal(exampleOf("a (female) person (or thing) of..."), "a person (or thing) of..."); // HNcfsc
+  assert.equal(exampleOf("(male) people (or things) of..."), "people (or things) of..."); // HNcmpc
+  assert.equal(exampleOf("late (male person or thing)"), "late (person or thing)"); // HAamsa
+  assert.equal(exampleOf("\"they, them (males)"), "they, them"); // HPp3mp
+  assert.equal(exampleOf("you (a female) did or do rise"), "you did or do rise"); // HVqp2fs
+  assert.equal(exampleOf("a rising female"), "a rising one"); // HVqrfsa
+  assert.equal(exampleOf("females being risen"), "ones being risen"); // HVNrfpa
   assert.equal(exampleOf("\"I, me"), "I, me"); // HPp1bs
+});
+
+// The meanings as the test library's engine returns them (GL.api("morph")).
+test("grammarMeaning: a feminine noun is feminine in grammar, not a female thing", () => {
+  // N-NSF, hupostasis in Hebrews 11:1
+  assert.equal(grammarMeaning("a female PERSON OR THING that is doing something"), "a PERSON OR THING that is doing something (feminine in grammar)");
+  // HNcfsc, the construct noun, as emunah's forms are parsed
+  assert.equal(grammarMeaning("a reference to a female PERSON OR THING, combined with another term"), "a reference to a PERSON OR THING, combined with another term (feminine in grammar)");
+  assert.equal(grammarMeaning("a reference to male PEOPLE OR THINGS"), "a reference to PEOPLE OR THINGS (masculine in grammar)"); // HNcmpa
+  assert.equal(grammarMeaning("a neuter PERSON OR THING that is having something done to them"), "a PERSON OR THING that is having something done to them (neuter in grammar)"); // N-ASN
+  assert.equal(grammarMeaning("a reference to a male or female PERSON OR THING"), "a reference to a PERSON OR THING (masculine or feminine in grammar)"); // HNcbsa
+});
+
+test("grammarMeaning: verbs, participles, names and STEP's slips", () => {
+  assert.equal(grammarMeaning("performing an ACTION OR ACTIVITY that is done completely in the past or present by a male person or thing being discussed"),
+    "performing an ACTION OR ACTIVITY that is done completely in the past or present by a person or thing being discussed (masculine in grammar)"); // HVqp3ms
+  assert.equal(grammarMeaning("an ACTION that is happening - done by male people or things that are doing something"),
+    "an ACTION that is happening - done by people or things that are doing something (masculine in grammar)"); // V-PAP-NPM
+  assert.equal(grammarMeaning("the NAME of a male individual"), "the NAME of an individual (masculine in grammar)"); // HNpm
+  assert.equal(grammarMeaning("a female LOCATION that something belongs to"), "a LOCATION that something belongs to (feminine in grammar)"); // N-GSF-L
+  assert.equal(grammarMeaning("a reference to THEMSELVES: a male a person being spoken or written to"), "a reference to THEMSELVES: a person being spoken or written to (masculine in grammar)");
+  // nothing about gender: left alone
+  assert.equal(grammarMeaning("an ACTION that happened - by a person or thing being discussed"), "an ACTION that happened - by a person or thing being discussed"); // V-AAI-3S
+  assert.equal(grammarMeaning("a conjunction"), "a conjunction");
+  assert.equal(grammarMeaning(null), "");
 });
 
 test("exampleOf: Greek sentences lose their underlines", () => {

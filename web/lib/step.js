@@ -35,7 +35,7 @@ export function foldGlosses(list) {
  *   "a _woman_ giving teachings"                  (Greek: the sentence, the word underlined)
  *   giving to‚ rich _and_ poor": "and             (the sentence, then the word, quotes half kept)
  *   _of‚ from‚ by‚ in_": "_of‚ to, from‚ in_      (two lists of renderings)
- *   a (female) person (or thing)                  (parentheses that belong to the example)
+ *   a (female) person (or thing)                  (parentheses that belong to the example; not the sex)
  *   ( )                                           (no English word at all)
  *   Example: he/it did or does rise
  * The low comma (U+201A) STEP uses inside lists is an ordinary comma here.
@@ -46,6 +46,28 @@ export function exampleOf(ex) {
   // the sentence and the word it illustrates: keep the sentence, the part before `": "`
   const pair = /^"?(.*?)"\s*:\s*"(.*?)"?$/.exec(t);
   if (pair) t = pair[1];
+  // STEP writes a form's gender into its example as a sex: "a (female) person (or thing)",
+  // "you (a male) did rise", "a rising female". The gender is the word's, not the thing's
+  // (grammarMeaning says it), so the example goes without it.
+  t = t.replace(/\((?:an? )?(?:fe)?males?\)\s*/gi, "").replace(/\((?:fe)?male /gi, "(")
+    .replace(/\ban? (?:fe)?male\b/gi, "one").replace(/\b(?:fe)?males\b/gi, "ones").replace(/\b(?:fe)?male\b/gi, "one");
   t = t.replace(/^"+|"+$/g, "").replace(/_([^_]*)_/g, "$1").replace(/_/g, "").replace(/\s+([,;])/g, "$1").replace(/\s+/g, " ").trim();
   return /[A-Za-z]/.test(t) ? t : "";
+}
+
+// STEP's plain-English meaning for a grammar code speaks of the thing where it means the word:
+// a feminine noun is "a female PERSON OR THING", a masculine verb is done "by a male person
+// or thing". Faith and a city are not female; the word for them is feminine. The meaning is
+// kept, the sex taken out of it, and the gender said once at the end as grammar.
+const GENDER = { male: "masculine", female: "feminine", neuter: "neuter", "male or female": "masculine or feminine" };
+export function grammarMeaning(meaning) {
+  let t = String(meaning ?? "").replace(/‚/g, ",").replace(/\s+/g, " ").trim();
+  const seen = [];
+  // "a female PERSON", "male PEOPLE", "a male a person" (STEP's slip), "a male individual"
+  t = t.replace(/\b(an? )?(male or female|male|female|neuter) (?:an? )?(?=(\w))/gi, (m, article, gender, next) => {
+    const g = GENDER[gender.toLowerCase()];
+    if (!seen.includes(g)) seen.push(g);
+    return article ? (/[aeiou]/i.test(next) ? "an " : "a ") : "";
+  });
+  return seen.length ? `${t} (${seen.join(" and ")} in grammar)` : t;
 }

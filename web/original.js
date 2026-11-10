@@ -2,7 +2,7 @@
    verses, each with its transliteration, meaning, grammar and Strong's number,
    and the lexicon behind the numbers. Data: STEP Bible, Tyndale House,
    Cambridge (CC BY 4.0), www.STEPBible.org. */
-import { foldGlosses, exampleOf } from "./lib/step.js";
+import { foldGlosses, exampleOf, grammarMeaning } from "./lib/step.js";
 
 (() => {
   "use strict";
@@ -198,7 +198,7 @@ import { foldGlosses, exampleOf } from "./lib/step.js";
       const parts = morph.filter((m) => m.short || m.meaning);
       details.append(el("div", { class: "ow-section" }, [
         el("div", { class: "nm", text: `Grammar (${w.morph})` }),
-        ...parts.map((m) => el("p", {}, [el("b", { text: (m.short || m.code).replace(/^"|"$/g, "") }), m.meaning ? el("span", { text: `: ${m.meaning.toLowerCase()}` }) : null, exampleOf(m.example) ? el("span", { class: "ow-eg" }, [", as in “", el("i", { text: exampleOf(m.example) }), "”"]) : null])),
+        ...parts.map((m) => el("p", {}, [el("b", { text: (m.short || m.code).replace(/^"|"$/g, "") }), m.meaning ? el("span", { text: `: ${grammarMeaning(m.meaning).toLowerCase()}` }) : null, exampleOf(m.example) ? el("span", { class: "ow-eg" }, [", as in “", el("i", { text: exampleOf(m.example) }), "”"]) : null])),
       ]));
     }
     if (lex && (lex.entry || lex.count)) {
