@@ -2513,6 +2513,28 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     // settles when the database has the deck, so a reload the app starts itself can await it.
     ready, flush: () => writeCurrent(),
     undo: () => undo(), canUndo, // the last change to the deck taken back (true when it was); whether there is one
+    showSaved: () => { boardEl(); showSaved(); }, // My decks, from the head
+    // For the backup file: the deck in progress and My decks, whole; and decks from a file put
+    // back into My decks (the newer of two with one id stays; the file's deck in progress comes in
+    // as a saved deck, never over the one on the board). Says how many came in.
+    backup: () => JSON.parse(JSON.stringify({ current: deck, saved: savedDecks })),
+    restore: async ({ current = null, saved = [] } = {}) => {
+      await ready;
+      const list = (Array.isArray(saved) ? saved : []).filter((d) => d && typeof d.id === "string" && d.deck && Array.isArray(d.deck.items));
+      if (current && typeof current.id === "string" && Array.isArray(current.items) && current.items.length && current.id !== deck.id && !list.some((d) => d.id === current.id)) list.push({ id: current.id, title: current.title || "Deck from the backup", updated: 0, deck: current });
+      let n = 0;
+      for (const d of list) {
+        const old = savedDecks.find((x) => x.id === d.id);
+        if (old && (old.updated || 0) >= (d.updated || 0)) continue;
+        const entry = { id: d.id, title: String(d.title || "Untitled deck").slice(0, 200), updated: Number.isFinite(d.updated) && d.updated ? d.updated : Date.now(), deck: migrate(JSON.parse(JSON.stringify(d.deck))) || blank() };
+        entry.deck.id = d.id;
+        savedDecks = [entry, ...savedDecks.filter((x) => x.id !== d.id)];
+        await putSaved(entry);
+        n++;
+      }
+      sortSaved(); redrawSaved();
+      return n;
+    },
     // an empty deck, as "Yes, delete it and start over" leaves it, written before the promise settles
     reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },
     // for tests and scripts

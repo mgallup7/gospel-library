@@ -206,5 +206,20 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
     return { id: rec.id, title: rec.title, kind: rec.kind, text, anchors, links };
   }
 
-  window.Studies = { list, get, add, remove, frameHtml, plainText, mb, index };
+  // For the backup file: every page whole, and pages from a file put back (one already here stays).
+  const exportAll = async () => { try { return (await tx("readonly", (s) => s.getAll())) || []; } catch (_) { return []; } };
+  async function importAll(recs) {
+    let added = 0;
+    const have = new Set((await exportAll()).map((r) => r.id));
+    for (const r of Array.isArray(recs) ? recs : []) {
+      if (!r || typeof r.id !== "string" || have.has(r.id) || !(typeof r.html === "string" || typeof r.text === "string")) continue;
+      const kind = r.kind === "html" || r.kind === "md" ? r.kind : "txt";
+      await tx("readwrite", (s) => s.put({ id: r.id, title: String(r.title || "Untitled page").slice(0, 300), kind, html: kind === "html" ? String(r.html || "") : null, text: kind === "html" ? null : String(r.text || ""),
+        added: Number.isFinite(r.added) ? r.added : Date.now(), size: Number.isFinite(r.size) ? r.size : 0, source: String(r.source || "").slice(0, 300) }));
+      added++;
+    }
+    if (added) changed();
+    return added;
+  }
+  window.Studies = { list, get, add, remove, frameHtml, plainText, mb, index, exportAll, importAll };
 })();

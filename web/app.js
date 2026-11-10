@@ -701,15 +701,17 @@ import { esc, mb } from "./lib/format.js";
   // A newer library on the server? Offer it. When the server has a delta from this device's
   // build, only what changed is downloaded and applied in place; otherwise, or if that fails,
   // the whole library is installed into the other slot and the app switches to it.
-  async function checkForUpdate() {
-    if (!navigator.onLine) return;
+  // asked: Settings' "Check for an update", which says what it found; the check at start is silent
+  async function checkForUpdate(asked = false) {
+    if (!navigator.onLine) { if (asked) toast("This device is offline; the library on it is the one in use."); return "offline"; }
     const active = store.get("active");
     let manifest;
-    try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { return; }
-    if (!active || manifest.version === active.version) return;
+    try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { if (asked) toast("Could not reach the library's server just now."); return "failed"; }
+    if (!active || manifest.version === active.version) { if (asked) toast("The library is up to date."); return "current"; }
+    if ($(".banner.library-update")) return "found";
     const delta = pickDelta(manifest, active.version);
     const when = new Date(manifest.built_at).toLocaleDateString([], { month: "short", day: "numeric" });
-    const banner = el("div", { class: "banner" }, [
+    const banner = el("div", { class: "banner library-update" }, [
       el("span", { text: delta
         ? `A newer library is available (built ${when}): ${delta.documents_changed} ${delta.documents_changed === 1 ? "page" : "pages"} changed, ${mb(delta.size)} to download.`
         : `A newer library is available (built ${when}, ${mb(manifest.bundle_size)}).` }),
@@ -717,6 +719,7 @@ import { esc, mb } from "./lib/format.js";
       el("button", { class: "icon-btn", "aria-label": "Later", text: "×", onclick: () => banner.remove() }),
     ]);
     $("header.bar").after(banner);
+    return "found";
   }
   async function updateNow(banner, manifest, delta = null) {
     const active = store.get("active");
@@ -1156,8 +1159,11 @@ import { esc, mb } from "./lib/format.js";
     ["manuals", "Manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
     ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Arriving, a series a night"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Arriving nightly"],
-    ["studies", "My studies", (st) => [st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own` : "Pages of your own", st.marks ? `${st.marks} ${st.marks === 1 ? "highlight or note" : "highlights and notes"}` : "your highlights and notes"].join(", ") + ", kept on this device", (st) => st.studies || st.marks ? [st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"}` : null, st.marks ? `${st.marks} marks` : null].filter(Boolean).join(", ") : "Pages, highlights, notes"],
+    // the two that are his own: rows under the shelves, not tiles among them
+    ["studies", "My studies", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own, kept on this device` : "Pages of your own, added from Files", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own` : "Pages of your own"],
+    ["marks", "Highlights and notes", (st) => st.marks ? `${st.marks} ${st.marks === 1 ? "passage" : "passages"} marked, kept on this device` : "Tap a verse while reading, then a color or Note", (st) => st.marks ? `${st.marks} ${st.marks === 1 ? "passage" : "passages"} marked` : "None yet"],
   ];
+  const OWN = new Set(["studies", "marks"]);
   function jspPages(st) { return st.collections.filter((c) => c.slug.startsWith("jsp-")).reduce((a, c) => a + c.docs, 0); }
   function latestName(st, short = false) {
     const l = st.latest_conference;
@@ -1169,7 +1175,7 @@ import { esc, mb } from "./lib/format.js";
   // a shelf with nothing on it yet stays off the home screen (the conference shelf and the Papers say what is coming)
   function hasShelf(st, key) {
     if (key === "jsp") return st.collections.some((c) => c.slug.startsWith("jsp-") && c.docs > 0);
-    if (key === "conference" || key === "studies") return true;
+    if (key === "conference" || OWN.has(key)) return true;
     return count(st, key) > 0;
   }
   const TAB_TITLE = Object.fromEntries(SHELVES.map(([k, t]) => [k, t]));
@@ -1202,6 +1208,7 @@ import { esc, mb } from "./lib/format.js";
       else if (tab === "scriptures") await browseScriptures(body);
       else if (tab === "jsp") await browseJsp(body);
       else if (tab === "studies") await renderStudies(body);
+      else if (tab === "marks") await renderMarks(body);
       else await browseCollection(body, tab);
     } catch (e) {
       body.append(el("div", { class: "status error", text: e.message }));
@@ -1243,7 +1250,11 @@ import { esc, mb } from "./lib/format.js";
   }
 
   // The home screen: where you were, the shelves, the latest conference, a word about Ask.
-  async function renderOverview(body, st) {
+  async function renderOverview(root, st) {
+    // two groups: the shelves and what is yours, then what is new and Ask. Side by side on a wide
+    // screen, one after the other on a phone (app.css).
+    const body = el("div", { class: "home-col" }), side = el("div", { class: "home-col home-side" });
+    root.append(body, side);
     const last = store.get("lastRead");
     const deckN = window.Deck?.count ? window.Deck.count() : 0;
     if (last || deckN) {
@@ -1268,12 +1279,15 @@ import { esc, mb } from "./lib/format.js";
     } catch (_) { /* no lesson, no card */ }
     const shelves = el("section", { class: "home-sec sec-shelves" }, [el("div", { class: "home-sec-head" }, [el("h2", { text: "Shelves" }), el("span", { class: "hint", text: "Open one to browse it; the search box then searches only that shelf" })])]);
     const grid = el("div", { class: "shelf-grid" });
+    const yours = el("div", { class: "own-list" });
     for (const [key, title, sub, short] of SHELVES) {
       if (!hasShelf(st, key) && key !== "jsp") continue;
-      grid.append(el("button", { type: "button", class: "shelf-tile", onclick: () => openShelf(key) }, [el("span", { class: "st-t", text: title }), el("span", { class: "st-s", text: (wide() ? sub : short)(st) })]));
+      if (OWN.has(key)) yours.append(el("button", { type: "button", class: "shelf-tile own-row", onclick: () => openShelf(key) }, [el("span", { class: "own-main" }, [el("span", { class: "st-t", text: title }), el("span", { class: "st-s", text: (wide() ? sub : short)(st) })]), el("span", { class: "hc-go", "aria-hidden": "true", text: "›" })]));
+      else grid.append(el("button", { type: "button", class: "shelf-tile", onclick: () => openShelf(key) }, [el("span", { class: "st-t", text: title }), el("span", { class: "st-s", text: (wide() ? sub : short)(st) })]));
     }
     shelves.append(grid);
     body.append(shelves);
+    body.append(el("section", { class: "home-sec sec-yours" }, [el("h2", { text: "Yours" }), yours]));
     try {
       const latest = await api("recent");
       if (latest.conference && latest.talks.length) {
@@ -1282,14 +1296,14 @@ import { esc, mb } from "./lib/format.js";
         for (const t of latest.talks.slice(0, 6)) list.append(el("button", { class: "toc-row", "data-doc": t.id, onclick: () => openDoc(t.id, null) }, [el("div", { class: "t", text: t.title }), el("div", { class: "s", text: [t.author, t.session].filter(Boolean).join(" · ") })]));
         if (latest.talks.length > 6) list.append(el("button", { class: "toc-row more-talks", onclick: () => openShelf("conference") }, [el("div", { class: "t", text: `All ${latest.talks.length} talks ›` })]));
         sec.append(list);
-        body.append(sec);
+        side.append(sec);
       }
     } catch (_) { /* no conference yet */ }
     if (window.Ask) {
       const q = el("input", { type: "text", class: "ask-teaser-q", placeholder: "What have the prophets taught about covenants and identity?", "aria-label": "A question for the library" });
       const go = () => { rememberScroll(); state.browse = { tab: "ask", question: q.value.trim() }; state.q = ""; syncControls(); renderHome(); showList(); push(); };
       q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
-      body.append(el("section", { class: "home-sec sec-ask ask-teaser" }, [
+      side.append(el("section", { class: "home-sec sec-ask ask-teaser" }, [
         el("div", { class: "hc-t", text: "Ask the library" }),
         el("div", { class: "hc-s", text: "A question or a draft: Claude searches these shelves itself and answers with the passages, which you can open, present, or put on the deck." }),
         el("div", { class: "ask-teaser-row" }, [q, el("button", { type: "button", class: "primary", text: "Ask", onclick: go })]),
@@ -1829,7 +1843,7 @@ import { esc, mb } from "./lib/format.js";
       : "Pages of your own, kept on this device: a study you built, a lesson, notes. Add an HTML, Markdown or text file from Files; it opens here, offline, and its links to the scriptures and to talks open the library's copy." });
     body.append(intro);
     body.append(el("div", { class: "studies-add" }, [el("button", { type: "button", class: "primary", text: list.length ? "Add a page" : "Add a page from Files", onclick: () => pick.click() })]));
-    if (!list.length) { await renderMarks(body); return; }
+    if (!list.length) return;
     const rows = el("div", { class: "study-list" });
     for (const rec of list) {
       rows.append(el("div", { class: "study-row" + (state.studyId === rec.id ? " on" : "") }, [
@@ -1847,7 +1861,6 @@ import { esc, mb } from "./lib/format.js";
       ]));
     }
     body.append(rows);
-    await renderMarks(body);
   }
 
   // ---- My studies in the library's flow ---------------------------------------
@@ -1960,7 +1973,7 @@ import { esc, mb } from "./lib/format.js";
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
     const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
-    sec.append(el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" }), allBtn]));
+    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked` : "Nothing marked yet" }), allBtn]));
     const list = el("div", { class: "mark-list" });
     const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
       let id = m.doc_id;
@@ -2014,26 +2027,146 @@ import { esc, mb } from "./lib/format.js";
           // built from the marks already listed, with no wait, so the share sheet opens inside the tap
           const name = `gospel-marks-${new Date().toISOString().slice(0, 10)}.json`;
           const text = window.Marks.exportJsonOf ? window.Marks.exportJsonOf(marks) : await window.Marks.exportJson();
-          // on an iPhone or iPad the share sheet (Save to Files, AirDrop) is the dependable way out of
-          // a home-screen app, as it is for the deck; a download link is the way elsewhere
-          if (navigator.maxTouchPoints > 0 && typeof File === "function") {
-            const file = new File([text], name, { type: "application/json" });
-            let can = false;
-            try { can = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
-            if (can) {
-              try { await navigator.share({ files: [file], title: "Highlights and notes" }); return; }
-              catch (err) { if (err && err.name === "AbortError") return; } // anything else: the download below
-            }
-          }
-          const blob = new Blob([text], { type: "application/json" });
-          const a = el("a", { href: URL.createObjectURL(blob), download: name });
-          document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+          await saveFile(name, text, "Highlights and notes");
         } catch (_) { toast("Could not export just now."); }
       } }) : null,
       el("button", { type: "button", class: "text-btn", text: "Import", title: "Bring in highlights and notes from a file", onclick: () => pick.click() }),
       pick,
     ].filter(Boolean)));
     body.append(sec);
+  }
+
+  // A JSON file handed to the device. On an iPhone or iPad the share sheet (Save to Files,
+  // AirDrop) is the dependable way out of a home-screen app, as it is for the deck; a download
+  // link is the way elsewhere.
+  async function saveFile(name, text, title) {
+    if (navigator.maxTouchPoints > 0 && typeof File === "function") {
+      const file = new File([text], name, { type: "application/json" });
+      let can = false;
+      try { can = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
+      if (can) {
+        try { await navigator.share({ files: [file], title }); return; }
+        catch (err) { if (err && err.name === "AbortError") return; } // anything else: the download below
+      }
+    }
+    const blob = new Blob([text], { type: "application/json" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  // ---- Settings: one screen behind the gear ---------------------------------
+  // The gear (the rail's foot on an iPad, the top of the Library on a phone, and the one on Ask)
+  // opens one screen, in the app's sheet, so Back and Escape close it: Claude (ask.js draws its
+  // own part), Reading, Library, Backup, About.
+  async function backupData() {
+    const out = { app: "gospel-library", kind: "backup", version: 1, exported: new Date().toISOString() };
+    out.marks = window.Marks ? await window.Marks.all() : [];
+    out.studies = window.Studies?.exportAll ? await window.Studies.exportAll() : [];
+    out.decks = window.Deck?.backup ? window.Deck.backup() : null;
+    // his words to Claude and what it was asked to remember; never the API key or the passphrase
+    out.ask = { instructions: window.Ask?.settings.instructions || "", notes: window.Ask?.settings.notes || "" };
+    out.reading = { size: store.get("readingSize") };
+    return out;
+  }
+  async function restoreBackup(text) {
+    const data = JSON.parse(text);
+    if (!data || typeof data !== "object") throw new Error("That file is not a backup from this app.");
+    if (data.kind === "marks" || Array.isArray(data)) { const n = await window.Marks.importJson(data); return n ? [`${n} ${n === 1 ? "mark" : "marks"}`] : []; }
+    if (data.app !== "gospel-library" || data.kind !== "backup") throw new Error("That file is not a backup from this app.");
+    const got = [];
+    if (Array.isArray(data.marks) && window.Marks) { const n = await window.Marks.importJson({ marks: data.marks }); if (n) got.push(`${n} ${n === 1 ? "mark" : "marks"}`); }
+    if (Array.isArray(data.studies) && window.Studies?.importAll) { const n = await window.Studies.importAll(data.studies); if (n) got.push(`${n} study ${n === 1 ? "page" : "pages"}`); }
+    if (data.decks && window.Deck?.restore) { const n = await window.Deck.restore(data.decks); if (n) got.push(`${n} ${n === 1 ? "deck" : "decks"} in My decks`); }
+    if (data.ask && window.Ask?.restore) got.push(...window.Ask.restore(data.ask));
+    return got;
+  }
+  function openSettings() {
+    if (!state.ready || overlay) return;
+    const head = el("h2", { text: "Settings", tabindex: "-1" });
+    const box = el("div", { class: "settings" }, [head]);
+    const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [el("h3", { text: title }), ...[].concat(kids).filter(Boolean)]); box.append(s); return s; };
+    const row = (label, value) => el("div", { class: "set-row" }, [el("span", { class: "set-lb", text: label }), typeof value === "string" ? el("span", { class: "set-val", text: value }) : value]);
+    if (window.Ask?.settingsBox) sec("claude", "Claude", window.Ask.settingsBox({ close: closeSheet }));
+    // Reading
+    const sizeNow = () => `${parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17} px`;
+    const sizeLb = el("span", { class: "set-size-now", "aria-live": "polite", text: sizeNow() });
+    const step = (d) => { resize(d); sizeLb.textContent = sizeNow(); };
+    sec("reading", "Reading", [
+      row("Text size", el("span", { class: "set-size" }, [
+        el("button", { type: "button", "aria-label": "Smaller text", onclick: () => step(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
+        sizeLb,
+        el("button", { type: "button", "aria-label": "Larger text", onclick: () => step(1), html: "<span style='font-size:21px;font-weight:600'>A</span>" }),
+      ])),
+      el("p", { class: "set-sample", text: "For behold, this life is the time for men to prepare to meet God." }),
+    ]);
+    // Library: filled in as the answers come
+    const libRows = el("div", { class: "set-rows" }, [row("On this device", "Counting…")]);
+    const checkBtn = el("button", { type: "button", class: "text-btn", text: "Check for an update", onclick: async () => {
+      checkBtn.disabled = true; checkBtn.textContent = "Checking…";
+      const found = await checkForUpdate(true);
+      checkBtn.disabled = false; checkBtn.textContent = "Check for an update";
+      if (found === "found") closeSheet(); // the offer is on the page under this screen
+    } });
+    sec("library", "Library", [libRows, el("div", { class: "set-acts" }, [checkBtn])]);
+    (async () => {
+      const rows = [];
+      try {
+        const st = await libraryStats();
+        const active = store.get("active") || {};
+        const built = st.meta?.bundle?.built_at || active.builtAt;
+        rows.push(row("Version", [built ? `Built ${new Date(built).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}` : "", active.version ? `version ${String(active.version).slice(0, 12)}` : ""].filter(Boolean).join(", ") || "Unknown"));
+        const sem = await semanticNote();
+        rows.push(row("On this device", [`${st.documents.toLocaleString()} pages`, st.verses ? `${st.verses.toLocaleString()} verses` : "", st.talks ? `${st.talks.toLocaleString()} talks` : "", st.originals ? "Hebrew and Greek" : "", sem ? "the search model" : ""].filter(Boolean).join(", ")));
+      } catch (_) { rows.push(row("On this device", "The library is not answering.")); }
+      try { const e = await navigator.storage?.estimate?.(); if (e && e.usage) rows.push(row("Size", `${mb(e.usage)} used on this device`)); } catch (_) {}
+      const keepRow = el("div", { class: "set-row" });
+      const drawKeep = async () => {
+        let kept = null;
+        try { kept = navigator.storage?.persisted ? await navigator.storage.persisted() : null; } catch (_) {}
+        keepRow.replaceChildren(el("span", { class: "set-lb", text: "Storage" }), el("span", { class: "set-val" }, [
+          kept === null ? "This browser does not say whether it keeps the library." : kept ? "Kept: the system will not clear the library or your marks to make room." : "Not promised yet: the system may clear it when the device runs short. Adding the app to the Home Screen helps. ",
+          kept === false ? el("button", { type: "button", class: "text-btn inline", text: "Ask again", onclick: async () => { try { await navigator.storage.persist(); } catch (_) {} drawKeep(); } }) : null,
+        ].filter(Boolean)));
+      };
+      await drawKeep();
+      rows.push(keepRow);
+      libRows.replaceChildren(...rows);
+    })();
+    // Backup
+    const pick = el("input", { type: "file", accept: ".json,application/json", hidden: true, "aria-hidden": "true" });
+    const said = el("p", { class: "set-said", role: "status" });
+    pick.addEventListener("change", async () => {
+      const file = pick.files && pick.files[0];
+      if (!file) return;
+      try { const got = await restoreBackup(await file.text()); said.textContent = got.length ? `Brought in: ${got.join(", ")}.` : "Nothing new in that file."; statsCache = null; if (tabNow() === "library" && sheet.hidden === false && !state.q.trim()) renderHome(); }
+      catch (err) { said.textContent = err instanceof SyntaxError ? "That file could not be read." : err.message || "That file could not be read."; }
+      pick.value = "";
+    });
+    sec("backup", "Backup", [
+      el("p", { class: "set-note", text: "One file with your highlights and notes, your study pages, your decks, your instructions to Claude and what it was asked to remember. The API key and the library passphrase are never in it." }),
+      el("div", { class: "set-acts" }, [
+        el("button", { type: "button", class: "primary", text: "Export everything", onclick: async () => {
+          try { await saveFile(`gospel-library-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await backupData(), null, 1), "Gospel Library backup"); said.textContent = "Exported. Keep the file somewhere other than this device."; }
+          catch (_) { said.textContent = "Could not export just now."; }
+        } }),
+        el("button", { type: "button", class: "text-btn", text: "Import", onclick: () => pick.click() }),
+        pick,
+      ]),
+      said,
+    ]);
+    // About
+    const ver = el("p", { class: "set-note" });
+    sec("about", "About", [
+      el("p", { class: "set-note", text: "A personal copy of the scriptures, general conference and the manuals, kept on this device and searched here; it works offline. The text and study helps are the Church's, copied from churchofjesuschrist.org and josephsmithpapers.org for personal study." }),
+      ver,
+    ]);
+    try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
+    $(".sheet-body", sheet).replaceChildren(box);
+    sheet.classList.add("page");
+    openSheet("Settings");
+    // the sheet puts the cursor in its first field; here that would raise the keyboard over the
+    // settings before anything is read, so the heading takes the focus instead
+    setTimeout(() => { try { head.focus({ preventScroll: true }); } catch (_) {} }, 60);
   }
 
   // ---- Think it through, from anywhere ------------------------------------
@@ -2805,6 +2938,7 @@ import { esc, mb } from "./lib/format.js";
   function hideNote() {
     const wasOpen = !sheet.hidden;
     sheet.hidden = true; $("#scrim")?.remove();
+    sheet.classList.remove("page");
     inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
     const vv = window.visualViewport;
@@ -2906,7 +3040,7 @@ import { esc, mb } from "./lib/format.js";
     syncControls(); renderHome(); showList(); push(); setEntry({ place: "search" });
     focusBox();
   });
-  function openSettings() { /* the Settings screen arrives with its own step */ }
+
   const applyFilters = () => {
     if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
@@ -3116,7 +3250,7 @@ import { esc, mb } from "./lib/format.js";
     syncControls(); showList(); runSearch({ typeahead: false });
   }
   window.GL = {
-    api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet,
+    api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
     get ready() { return state.ready; },
     get skills() { return store.get("skills")?.data || null; },

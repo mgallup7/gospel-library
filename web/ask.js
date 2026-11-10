@@ -325,7 +325,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     go.addEventListener("click", () => { if (busy) stopper?.abort(); else submit(input, modes, log); });
     input.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !busy) { e.preventDefault(); submit(input, modes, log); } });
     if (busy) { go.textContent = "Stop"; go.classList.add("stop"); }
-    gear.addEventListener("click", () => openSettings(container, hint));
+    gear.addEventListener("click", () => openSettings());
     // The box grows with what is typed, up to a few lines, then scrolls.
     const fit = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 220)}px`; };
     input.addEventListener("input", fit);
@@ -463,13 +463,14 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return `Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). ${modelName()}${settings.think ? ", thinking first," : ""} searches your library the way a researcher would, several searches deep; every passage it finds becomes a card you can tick onto the deck.` + (GL().skills?.voice ? " Drafts are written in your voice." : "");
   }
 
-  // Settings open over Ask in the app's own sheet, so Back and Escape close them and a question
-  // being typed underneath is left alone. What is typed here and not yet saved is kept while the
-  // page lives, so a stray Escape does not lose a paragraph of instructions.
+  // The Claude settings are a part of the app's one Settings screen (app.js openSettings), which
+  // asks for them here as a box: the gear on Ask opens that screen. It is a sheet, so Back and
+  // Escape close it and a question being typed underneath is left alone. What is typed here and
+  // not yet saved is kept while the page lives, so a stray Escape does not lose a paragraph of
+  // instructions. close is the screen's own way of closing.
   let settingsDraft = null;
-  function openSettings(container, hint) {
-    const body = $("#sheet .sheet-body");
-    if (!body || !GL().openSheet) return;
+  function openSettings() { GL().openSettings?.(); }
+  function settingsBox({ close: done } = {}) {
     const unsaved = !!settingsDraft;
     const d = settingsDraft || { model: settings.model, think: settings.think, planner: settings.planner, key: settings.key, instructions: settings.instructions, notes: settings.notes };
     const keep = () => { settingsDraft = { model: model.value, think: think.checked, planner: planner.checked, key: key.value, instructions: instructions.value, notes: notes.value }; };
@@ -483,10 +484,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const notes = el("textarea", { class: "ask-notes", rows: 5, maxlength: 8000, "aria-label": "What Claude should remember", placeholder: "Nothing yet. One note to a line, each with its date." });
     notes.value = d.notes;
     const msg = el("p", { class: "msg", role: "status", text: unsaved ? "These are your changes from before, not saved yet." : "" });
-    const close = () => { settingsDraft = null; GL().closeSheet(); };
-    const head = el("h2", { text: "Ask settings", tabindex: "-1" });
+    const close = () => { settingsDraft = null; done?.(); };
+    // Ask, if it is the tab in view, follows what was saved: its hint names the model, and a first
+    // key or a key removed changes the whole tab
+    const live = () => (view && view.isConnected ? view : null);
     const box = el("div", { class: "ask-settings" }, [
-      head,
       el("label", {}, [el("span", { class: "lb", text: "How I want Claude to answer" }), el("span", { class: "sub", text: "Your standing instructions, in your own words. They go with every question, every draft, Think it through and the deck's chain, and they outrank the app's own wording. Kept on this device only." }), instructions]),
       el("label", {}, [el("span", { class: "lb", text: "What Claude should remember" }), el("span", { class: "sub", text: "Dated notes that go with every question. Claude can propose one under an answer; nothing is added unless you tap Save there. Edit or delete any line here." }), notes]),
       el("label", {}, [el("span", { class: "lb", text: "Model for answers" }), model]),
@@ -499,10 +501,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
           const k = key.value.trim();
           // the same test the first setup makes: a key that cannot be one is not saved over a good one
           if (!/^sk-ant-/.test(k)) { msg.textContent = k ? "That does not look like a Claude API key (they begin with sk-ant-). Nothing was saved." : "Paste a Claude API key, or use Remove key from this device. Nothing was saved."; key.focus(); return; }
+          const first = !settings.key;
           settings.model = model.value; settings.planner = planner.checked; settings.think = think.checked; settings.key = k;
           settings.instructions = instructions.value.trim(); settings.notes = notes.value.trim();
           close();
-          if (hint.isConnected) hint.textContent = hintText();
+          const hint = live()?.querySelector(".ask-hint p");
+          if (first && live()) render(live()); else if (hint) hint.textContent = hintText();
           GL().toast("Settings saved.");
         } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
@@ -511,18 +515,27 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
           settings.key = "";
           setThread([]);
           close();
-          render(container);
-          GL().toast("The key is off this device.", { action: "Undo", onAction: () => { settings.key = was; if (view === container && container.isConnected) render(container); } });
+          if (live()) render(live());
+          GL().toast("The key is off this device.", { action: "Undo", onAction: () => { settings.key = was; if (live()) render(live()); } });
         } }),
       ]),
     ]);
     box.addEventListener("input", keep);
     box.addEventListener("change", keep);
-    body.replaceChildren(box);
-    GL().openSheet("Ask settings");
-    // the sheet puts the cursor in its first field; here that would raise the keyboard over the
-    // settings before anything is read, so the heading takes the focus instead
-    setTimeout(() => { try { head.focus({ preventScroll: true }); } catch (_) {} }, 60);
+    return box;
+  }
+  // From a backup file: his instructions where this device has none of its own yet (empty, or
+  // still the starting ones), and any remembered note this device does not have. Says what came in.
+  function restore({ instructions = "", notes = "" } = {}) {
+    const got = [];
+    const mine = settings.instructions.trim();
+    if (typeof instructions === "string" && instructions.trim() && instructions.trim() !== mine && (!mine || mine === String(INSTRUCTIONS_SEED || "").trim())) { settings.instructions = instructions.trim(); got.push("your instructions to Claude"); }
+    if (typeof notes === "string" && notes.trim()) {
+      const have = new Set(settings.notes.split("\n").map((l) => l.trim()).filter(Boolean));
+      const add = notes.split("\n").map((l) => l.trim()).filter((l) => l && !have.has(l));
+      if (add.length) { settings.notes = [settings.notes.trim(), ...add].filter(Boolean).join("\n"); got.push(`${add.length} remembered ${add.length === 1 ? "note" : "notes"}`); }
+    }
+    return got;
   }
 
   // A note Claude proposed with the remember tool: his to save or dismiss, never saved for him.
@@ -1396,7 +1409,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   }
 
   function modelName() { return MODELS.find(([id]) => id === settings.model)?.[1].split(" (")[0] || settings.model; }
-  window.Ask = { render, settings, plan: planQueries, hasKey: () => !!settings.key, complete, modelName, subjectFor,
+  window.Ask = { render, settings, settingsBox, restore, plan: planQueries, hasKey: () => !!settings.key, complete, modelName, subjectFor,
     // the system blocks for a mode; the deck's chain calls it with its own paragraph
     system: systemFor,
     // for tests: the Think it through prompt, how its questions are read back, the inventory
