@@ -339,3 +339,72 @@ test("the lexicon's lines reach the model without an em dash", async () => {
   assert.match(r.text, /\[1\] Genesis 19:19: \S+ chesed \[kindness\] \(KJV: thou hast magnified thy mercy\)/);
   assert.doesNotMatch(r.text, /\u2014/);
 });
+
+// Web search (a server tool): the blocks it adds to a reply come back from the stream as the
+// API sent them, since they must go back unchanged on the next request of the turn.
+test("a reply with a web search in it keeps the search, its results and its citations as they came", async () => {
+  const result = { type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: [{ type: "web_search_result", url: "https://example.org/a", title: "A page", encrypted_content: "ENC", page_age: null }] };
+  const cite = { type: "web_search_result_location", url: "https://example.org/a", title: "A page", encrypted_index: "IDX", cited_text: "the words cited" };
+  const events = [
+    { type: "message_start" },
+    { type: "content_block_start", index: 0, content_block: { type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: {} } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"query":"a da' } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: 'te"}' } },
+    { type: "content_block_stop", index: 0 },
+    { type: "content_block_start", index: 1, content_block: result },
+    { type: "content_block_stop", index: 1 },
+    { type: "content_block_start", index: 2, content_block: { type: "text", text: "", citations: [] } },
+    { type: "content_block_delta", index: 2, delta: { type: "citations_delta", citation: cite } },
+    { type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "It was in 1892." } },
+    { type: "content_block_stop", index: 2 },
+    { type: "content_block_start", index: 3, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 3, delta: { type: "text_delta", text: " Plain words." } },
+    { type: "content_block_stop", index: 3 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" } },
+    { type: "message_stop" },
+  ];
+  const { Ask, calls } = load(sse(events));
+  const searched = [];
+  const res = await Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, tools: [...Ask.tools, Ask.webTool], onServerTool: (b) => searched.push(b.input.query) });
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  assert.deepEqual(plain(Ask.webTool), { type: "web_search_20250305", name: "web_search", max_uses: 3 });
+  assert.deepEqual(calls[0].body.tools[calls[0].body.tools.length - 1], { type: "web_search_20250305", name: "web_search", max_uses: 3 });
+  assert.equal(res.text, "It was in 1892. Plain words.");
+  assert.deepEqual(plain(res.blocks), [
+    { type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: { query: "a date" } },
+    result,
+    { type: "text", text: "It was in 1892.", citations: [cite] },
+    { type: "text", text: " Plain words." },
+  ]);
+  assert.equal(res.tool_uses.length, 0, "a search the server ran is not a tool for this device to run");
+  assert.deepEqual(searched, ["a date"]);
+  // the registry keeps what the web brought apart from the library's passages
+  const reg = new Ask.Registry(), trail = [];
+  reg.noteWeb(res.blocks, trail);
+  reg.noteWeb(res.blocks, trail);
+  assert.equal(reg.list.length, 0);
+  assert.deepEqual(plain(reg.web), [{ url: "https://example.org/a", title: "A page", age: "", cited: true }]);
+  assert.deepEqual(plain(reg.webText), [{ plain: "It was in 1892." }, { plain: "the words cited" }]);
+  assert.deepEqual(plain(trail), [{ tool: "web", what: "a date", found: 1 }]);
+  // a search that failed says so on the trail, and a page with no web address is not listed
+  const reg2 = new Ask.Registry(), trail2 = [];
+  reg2.noteWeb([{ type: "server_tool_use", id: "s2", name: "web_search", input: { query: "q" } }, { type: "web_search_tool_result", tool_use_id: "s2", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
+    { type: "text", text: "x", citations: [{ type: "web_search_result_location", url: "javascript:alert(1)", title: "bad" }] }], trail2);
+  assert.equal(trail2[0].found, "failed: max_uses_exceeded");
+  assert.equal(reg2.web.length, 0);
+});
+
+test("web search is off unless the setting is on, and a refusal of it is said plainly", async () => {
+  const none = () => { throw new Error("no call"); };
+  assert.equal(load(none).Ask.settings.web, false);
+  assert.equal(load(none, { askWeb: true }).Ask.settings.web, true);
+  assert.equal(load(none, { askWeb: "yes" }).Ask.settings.web, false, "only a plain true turns it on");
+  const api = async (method) => (method === "stats" ? { collections: [] } : {});
+  const { Ask } = load(none, {}, { api });
+  const text = (blocks) => blocks.map((b) => b.text).join("\n");
+  assert.doesNotMatch(text(await Ask.system("ask")), /Web search is on/);
+  assert.match(text(await Ask.system("ask", "", { web: true })), /Web search is on[\s\S]*The library comes first[\s\S]*Say plainly in the answer that you used the web/);
+  assert.doesNotMatch(text(await Ask.system("chain", "The chain.", { web: true })), /Web search is on/, "the deck's chain has no tools, so no web search");
+  const err = Object.assign(new Error("400 tools.7: web_search_20250305 is not supported for this model"), { status: 400 });
+  assert.match(Ask.friendlyError(err), /Web search was refused/);
+});

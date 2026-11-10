@@ -21,29 +21,42 @@ export function quoteFound(q, passages) {
   }
   return false;
 }
-export function unverifiedQuotes(src, passages) {
+// web: the stretches of an answer that Claude's web search stands behind ([{plain}], from the
+// citations the API attaches). A quotation inside one is from the web: the library cannot
+// check it, so it is left out of the list of unverified quotations and shown with its own mark.
+export function unverifiedQuotes(src, passages, web = []) {
   const out = [];
-  for (const m of src.matchAll(QUOTE_RE)) if (m[1].split(/\s+/).length >= 4 && !quoteFound(m[1], passages)) out.push(m[1]);
+  for (const m of src.matchAll(QUOTE_RE)) if (m[1].split(/\s+/).length >= 4 && !quoteFound(m[1], passages) && !(web.length && quoteFound(m[1], web))) out.push(m[1]);
+  return [...new Set(out)];
+}
+/** The quotations that are from the web: not in any passage, and inside a stretch the web search stands behind. */
+export function webQuotes(src, passages, web = []) {
+  const out = [];
+  if (web.length) for (const m of src.matchAll(QUOTE_RE)) if (m[1].split(/\s+/).length >= 4 && !quoteFound(m[1], passages) && quoteFound(m[1], web)) out.push(m[1]);
   return [...new Set(out)];
 }
 
 /**
  * Markdown to HTML.
  *   passages: the passages quotations are checked against (none: no check);
+ *   web: the stretches of the answer that came from a web search ([{plain}]); a quotation in
+ *        one, and in no passage, is marked "web" instead of underlined;
  *   cite(n): the HTML for a citation [n] (none: [n] stays as written);
  *   page: a page of notes rather than an answer: "#" is h1 (in an answer it is h2, since the
  *         answer sits under the app's own heading), and block quotes, rules, `code`, fenced
  *         code blocks, and links to the web, to the site or to a heading of the page are read
  *         too; each heading gets an id from its words, so [x](#its-words) finds it.
  */
-export function markdown(src, { passages = null, cite = null, page = false } = {}) {
+export function markdown(src, { passages = null, cite = null, page = false, web = null } = {}) {
   const quoted = (t) => {
     let html = "", last = 0;
     for (const m of t.matchAll(QUOTE_RE)) {
       html += esc(t.slice(last, m.index));
       const q = m[1], open = m[0][0], close = m[0][m[0].length - 1];
       const bad = !!passages && q.split(/\s+/).length >= 4 && !quoteFound(q, passages);
-      html += esc(open) + (bad ? `<span class="unverified" title="Not word for word in any passage found">${esc(q)}</span>` : esc(q)) + esc(close);
+      const fromWeb = bad && !!web && web.length > 0 && quoteFound(q, web);
+      html += fromWeb ? `${esc(open)}<span class="from-web" title="From the web, not checked against your library">${esc(q)}</span>${esc(close)}<sup class="from-web-tag" title="From the web, not checked against your library">web</sup>`
+        : esc(open) + (bad ? `<span class="unverified" title="Not word for word in any passage found">${esc(q)}</span>` : esc(q)) + esc(close);
       last = m.index + m[0].length;
     }
     return html + esc(t.slice(last));
