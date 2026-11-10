@@ -55,6 +55,23 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
     const before = await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.active") || "null"));
     check(before?.version === built.from, `installed ${before?.version}, expected ${built.from}`);
+    // the meaning index, built and kept in a file named for this build
+    const meaning = async () => {
+      await page.evaluate(() => GL.api("loadSemantic", { base: new URL("./", location.href).href }));
+      for (let i = 0; i < 200; i++) {
+        const s = await page.evaluate(() => GL.api("semanticStatus", {}));
+        if (s.loaded && s.index && s.index.saved) break;
+        await page.waitForTimeout(150);
+      }
+      return page.evaluate(async () => {
+        const root = await navigator.storage.getDirectory(), kept = [];
+        for await (const name of root.keys()) if (name.startsWith("gl-kept-meaning-")) kept.push(name);
+        const near = await GL.api("semanticNearest", { text: "ask God if these things are not true", k: 40 });
+        return { index: (await GL.api("semanticStatus", {})).index, kept, near: JSON.stringify(near) };
+      });
+    };
+    const m0 = await meaning();
+    check(m0.index?.from === "library" && m0.kept.join() === `gl-kept-meaning-${built.from}.bin`, `the index kept for the installed build: ${JSON.stringify([m0.index, m0.kept])}`);
 
     // a mark and a deck card on the page that will change, and the page open
     const docId = await page.evaluate(async (uri) => {
@@ -104,6 +121,17 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(400);
     check(!!(await page.$("#reader .doc #p4.hl-g")), "the reader should show the mark on verse 4");
     await page.screenshot({ path: SHOTS + "delta-after.png" });
+
+    // the updated library is another library: its index is built again and kept under the new
+    // version, the old build's file goes, and the launch after that reads the new file
+    const m1 = await meaning();
+    check(!!m1.index, "the index should be there after an update"); // built now, or already when the update was applied
+    check(m1.kept.join() === `gl-kept-meaning-${built.to}.bin`, `only the new build's index should be kept: ${m1.kept.join(", ")}`);
+    await page.reload();
+    await page.waitForFunction(() => window.GL?.ready, null, { timeout: 30000 });
+    const m2 = await meaning();
+    check(m2.index?.from === "file", `the next launch should read the kept index (${JSON.stringify(m2.index)})`);
+    check(m2.near === m1.near && m2.near.length > 100, "the kept index should rank as the rebuilt one did");
   } finally {
     if (ctx) await ctx.close();
     if (server) await new Promise((r) => server.close(r));

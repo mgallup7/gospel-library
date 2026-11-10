@@ -162,8 +162,56 @@ function closeDb() {
 function forgetDerived() {
   speakerIndex = null; vocab = null; vocabBuild = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
   lastRanked = null; originalsKnown = null; translitMap = null; lexiconAscii = null; concCache = new Map(); concDocsCache = new Map();
-  bitIndex = null; bitIndexTried = false; docOfIndex = null; docOfRow = null; scopeMasks = new Map(); building = null; libraryGen++;
+  bitIndex = null; bitIndexTried = false; docOfIndex = null; docOfRow = null; indexMade = null; scopeMasks = new Map(); building = null; libraryGen++;
   try { db && db.exec("DROP TABLE IF EXISTS temp.vocab"); } catch (_) {}
+}
+
+// Files of things worked out from the library (the meaning index), kept in the browser's private
+// storage beside it so the next launch reads them instead of working them out again. Each is
+// named for the library's version; none is ever needed: a missing or unreadable one is rebuilt.
+const KEPT = "gl-kept-";
+const keptName = (kind) => (mode === "opfs" && current && current.version ? `${KEPT}${kind}-${String(current.version).replace(/[^\w.-]/g, "_")}.bin` : null);
+async function readKept(name) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    return await (await (await root.getFileHandle(name)).getFile()).arrayBuffer();
+  } catch (_) { return null; }
+}
+// parts[0] is the file's head and goes in last, so a write that is cut off leaves a file that
+// does not read as one. Written a few megabytes at a time with a breath between, and given up
+// (the file removed) when alive() says the library has changed meanwhile.
+async function writeKept(name, parts, alive) {
+  const root = await navigator.storage.getDirectory();
+  const handle = await (await root.getFileHandle(name, { create: true })).createSyncAccessHandle();
+  let ok = false;
+  try {
+    await handle.truncate(0);
+    let at = parts[0].byteLength;
+    for (const part of parts.slice(1)) {
+      for (let o = 0; o < part.byteLength; o += 4 << 20) {
+        const piece = part.subarray(o, o + (4 << 20));
+        if ((await handle.write(piece, { at: at + o })) !== piece.byteLength) throw new Error("the storage is full");
+        await new Promise((r) => setTimeout(r, 0));
+        if (!alive()) throw new Error("the library changed");
+      }
+      at += part.byteLength;
+    }
+    await handle.write(parts[0], { at: 0 });
+    await handle.flush();
+    ok = true;
+  } finally {
+    try { await handle.close(); } catch (_) {}
+    if (!ok) await root.removeEntry(name).catch(() => {});
+  }
+}
+// Removes the kept files of one kind (or of every kind) except `keep`: those of older libraries
+async function sweepKept(kind, keep) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const stale = [];
+    for await (const name of root.keys()) if (name.startsWith(KEPT + (kind ? kind + "-" : "")) && name !== keep) stale.push(name);
+    for (const name of stale) await root.removeEntry(name).catch(() => {});
+  } catch (_) {}
 }
 
 const methods = {
@@ -342,6 +390,7 @@ const methods = {
     if (!slot || (current && current.slot === slot)) {
       closeDb();
       current = null;
+      await sweepKept(null, null); // what was worked out from it goes with it
     }
     if (mode === "opfs" && slot && pool.getFileNames().includes(slot)) pool.unlink(slot);
     return { ok: true };
@@ -381,6 +430,8 @@ const methods = {
   async semanticStatus() { return semanticStatus(); },
   async loadSemantic({ base }, progress) { need(); return loadSemantic(base, progress); },
   async semanticEmbed({ text }) { return Array.from(await embedQuery(String(text || ""))); },
+  // The paragraphs nearest a text by meaning alone, with their scores: the index's own ranking, for the tests
+  async semanticNearest({ text, k = 50 }) { need(); const idx = semanticIndex(); return idx ? idx.topK(await embedQuery(String(text || "")), k) : null; },
   async doc({ id, uri }) { need(); return document(id, uri); },
   async resolve({ href }) { need(); return resolve(href); },
   async speakers({ q }) { need(); return speakers(q); },
@@ -1858,7 +1909,7 @@ function semanticStatus() {
   const info = db ? embeddingsInfo() : null;
   if (!Sem) return { available: false, ready: false, loaded: false, count: 0, model: null, failed: "the search module did not load" };
   const failed = semFailed();
-  return { available: !!db && haveVectors() && !!info && info.model === Sem.MODEL.name, ready: semReady(), loaded: !!bitIndex, count: info ? info.count : 0, model: info ? info.model : null, failed: failed ? String(failed.message || failed) : null, worker: !!modelPort };
+  return { available: !!db && haveVectors() && !!info && info.model === Sem.MODEL.name, ready: semReady(), loaded: !!bitIndex, count: info ? info.count : 0, model: info ? info.model : null, failed: failed ? String(failed.message || failed) : null, worker: !!modelPort, index: indexMade ? { ...indexMade } : null };
 }
 async function loadSemantic(base, progress) {
   if (!Sem || !haveVectors()) return semanticStatus();
@@ -1866,10 +1917,14 @@ async function loadSemantic(base, progress) {
   await Promise.all([loadModel(base, (p) => progress && progress({ phase: "model", ...p })), buildSemanticIndex(progress)]);
   return semanticStatus();
 }
-// The index: every paragraph's sign bits, read once per session. It is built in slices with a
-// breath between them, so a search typed while it builds is answered between slices instead
-// of waiting seconds for the whole table.
+// The index: every paragraph's sign bits. It is made once per library: built from the vectors
+// table in slices with a breath between them (so a search typed while it builds is answered
+// between slices instead of waiting seconds for the whole table), then written to a file
+// beside the library. Every later launch reads that file whole, which takes a fraction of the
+// time and none of the stepping; a library that has changed (an update, a new download) has
+// another version, so its file is not found and the index is built and written again.
 let building = null, libraryGen = 0; // libraryGen moves on whenever the library's contents change
+let indexMade = null; // { from: "file" | "library", ms, saved }: how this session came by the index
 function buildSemanticIndex(progress) {
   if (bitIndex) return Promise.resolve(bitIndex);
   if (building) return building;
@@ -1879,8 +1934,19 @@ function buildSemanticIndex(progress) {
   building = (async () => {
     const breathe = async () => { await new Promise((r) => setTimeout(r, 0)); if (gen !== libraryGen) throw new Error("the library changed while the index was being built"); };
     try {
+      const t0 = performance.now();
       const info = embeddingsInfo();
       const dims = info.dims || Sem.MODEL.dims, bytes = dims >> 3;
+      // the kept file, when it was made from this library and this model and still fits them
+      const name = keptName("meaning"), key = `${current && current.version}|${info.model}|${dims}`;
+      const kept = name ? Sem.unpackIndex(await readKept(name), key) : null;
+      if (gen !== libraryGen || !db) return null;
+      if (kept && kept.ids[kept.ids.length - 1] === value("SELECT MAX(paragraph_id) FROM vecbits") && kept.rowDocs.length === (value("SELECT MAX(rowid) FROM paragraphs") || 0) + 1) {
+        docOfIndex = kept.docs; docOfRow = kept.rowDocs;
+        bitIndex = new Sem.BitIndex(kept.ids, kept.bits, kept.dims);
+        indexMade = { from: "file", ms: Math.round(performance.now() - t0), saved: true };
+        return bitIndex;
+      }
       const n = value("SELECT COUNT(*) FROM vecbits") || 0;
       if (!n) return null;
       const ids = new Int32Array(n), bits = new Uint8Array(n * bytes);
@@ -1922,6 +1988,12 @@ function buildSemanticIndex(progress) {
       docOfIndex = docs;
       docOfRow = docByRow;
       bitIndex = new Sem.BitIndex(ids.subarray(0, i), bits.subarray(0, i * bytes), dims);
+      const made = indexMade = { from: "library", ms: Math.round(performance.now() - t0), saved: false };
+      // kept for the next launch, without holding this one up; the files of older libraries go
+      if (name) {
+        const { parts } = Sem.packIndex({ key, dims, ids: bitIndex.ids, docs, rowDocs: docByRow, bits: bitIndex.bits });
+        writeKept(name, parts, () => gen === libraryGen).then(() => { made.saved = true; return sweepKept("meaning", name); }).catch((err) => console.warn("meaning index not kept:", err?.message));
+      }
       return bitIndex;
     } catch (err) {
       console.warn("meaning index not built:", err?.message);

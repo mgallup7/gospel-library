@@ -154,3 +154,44 @@ export class BitIndex {
     return out;
   }
 }
+
+// The index as one file, so a launch reads it whole instead of stepping through every vector
+// row: a 16-byte prefix (the letters GLMI, the format, the header's length, a byte-order mark),
+// a JSON header padded to 8 bytes, then the paragraph rowids, each one's document, the
+// document of every paragraph rowid (rowDocs), and the bits. `key` names the library and the
+// model the file was made from. packIndex gives the pieces to write, the head first;
+// unpackIndex gives the arrays back as views on the buffer, or null for anything that is not
+// exactly a file made by packIndex for this key (another library, a cut-off write, a stray byte order).
+const FILE_MAGIC = 0x494d4c47, FILE_FORMAT = 1, FILE_ORDER = 0x01020304;
+const asBytes = (a) => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+export function packIndex({ key, dims, ids, docs, rowDocs, bits }) {
+  const n = ids.length;
+  if (docs.length !== n || bits.length !== n * (dims >> 3)) throw new Error("the index's parts do not fit together");
+  const header = { key, dims, n, rows: rowDocs.length, length: 0 };
+  const json = (h) => new TextEncoder().encode(JSON.stringify(h));
+  const body = 4 * n + 4 * n + 4 * rowDocs.length + bits.length;
+  // the header holds the file's own length, whose digits change the header's length: settle it
+  let text = json(header), at = 0;
+  for (let i = 0; i < 4; i++) { at = (16 + text.length + 7) & ~7; header.length = at + body; text = json(header); if (((16 + text.length + 7) & ~7) === at) break; }
+  const head = new Uint8Array(at);
+  new Uint32Array(head.buffer, 0, 4).set([FILE_MAGIC, FILE_FORMAT, text.length, FILE_ORDER]);
+  head.set(text, 16);
+  return { parts: [head, asBytes(ids), asBytes(docs), asBytes(rowDocs), asBytes(bits)], length: header.length };
+}
+export function unpackIndex(buffer, key) {
+  try {
+    if (!buffer || buffer.byteLength < 16) return null;
+    const [magic, format, hlen, order] = new Uint32Array(buffer, 0, 4);
+    if (magic !== FILE_MAGIC || format !== FILE_FORMAT || order !== FILE_ORDER || 16 + hlen > buffer.byteLength) return null;
+    const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 16, hlen)));
+    const at = (16 + hlen + 7) & ~7, bytes = h.dims >> 3;
+    if (h.key !== key || !(h.n > 0) || !(h.rows >= 0) || !(bytes > 0) || h.length !== buffer.byteLength || at + 8 * h.n + 4 * h.rows + h.n * bytes !== buffer.byteLength) return null;
+    return {
+      dims: h.dims,
+      ids: new Int32Array(buffer, at, h.n),
+      docs: new Int32Array(buffer, at + 4 * h.n, h.n),
+      rowDocs: new Int32Array(buffer, at + 8 * h.n, h.rows),
+      bits: new Uint8Array(buffer, at + 8 * h.n + 4 * h.rows, h.n * bytes),
+    };
+  } catch (_) { return null; }
+}
