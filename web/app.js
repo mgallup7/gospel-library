@@ -2824,15 +2824,22 @@ import { esc, mb } from "./lib/format.js";
     const bar = $(".reader-bar", readerPane), nav = $(".matchnav", readerPane);
     let strip = $(".match-strip", readerPane);
     if (!bar || !nav) { strip?.remove(); return; }
+    if (bar.offsetParent === null) return; // the page is behind the board: nothing can be measured, and nothing moves
+    // the strip takes a row of the page as it comes and gives it back as it goes: the words being
+    // read stay where they are on the screen (most browsers see to that themselves; Safari does not)
+    const anchored = !!window.CSS?.supports?.("overflow-anchor", "auto");
+    const nudge = (by) => { if (!by || anchored) return; if (wide()) { if (readerPane.scrollTop > 0) readerPane.scrollTop += by; } else if (window.scrollY > 0) window.scrollBy(0, by); };
     const toStrip = () => {
+      const fresh = !strip;
       if (!strip) { strip = el("div", { class: "match-strip" }); bar.after(strip); }
       if (nav.parentElement !== strip) strip.append(nav);
+      if (fresh) nudge(strip.offsetHeight);
       strip.style.top = bar.offsetHeight + "px"; // it holds its place under the bar as the page scrolls
     };
     if (wide()) {
       if (nav.parentElement !== bar) $(".spacer", bar)?.before(nav);
       fitReaderBar(bar);
-      if (bar.classList.contains("tight")) { toStrip(); fitReaderBar(bar); } else if (strip) { strip.remove(); strip = null; }
+      if (bar.classList.contains("tight")) { toStrip(); fitReaderBar(bar); } else if (strip) { const h = strip.offsetHeight; strip.remove(); strip = null; nudge(-h); }
     } else toStrip();
   }
   window.addEventListener("resize", placeMatchNav);
