@@ -517,7 +517,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       el("label", { class: "row-check" }, [think, " Let it think before it answers (you see the thinking as it goes; slower, uses more tokens)"]),
       el("label", { class: "row-check" }, [planner, " When you press Return in the search box, let Claude propose a few more searches and add what they find (one quick, cheap call)"]),
       el("label", { class: "row-check" }, [web, " Let Claude search the web. Off unless you turn it on here: Anthropic bills each search (about a cent, and the tokens of what it reads), and the words it searches for go to Anthropic. The library is still searched first; what comes from the web is listed apart and is not checked against your library."]),
-      el("label", {}, [el("span", { class: "lb", text: "API key" }), key]),
+      el("label", {}, [el("span", { class: "lb", text: "API key" }), key, el("span", { class: "sub", text: "Your key is kept on this device only. Set a monthly spend limit for it in the Anthropic console." })]),
       msg,
       el("div", { class: "ask-actions" }, [
         el("button", { type: "button", class: "primary", text: "Save", onclick: () => {

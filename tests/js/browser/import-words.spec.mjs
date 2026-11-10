@@ -1,7 +1,7 @@
 // import-words: a backup file's words for Claude are shown before they are taken in. The file's
 // "How I want Claude to answer" and "What Claude should remember" would go with every question,
 // so Import brings in the rest and holds these back under Accept or Leave out; until Accept,
-// nothing Claude is told has changed.
+// nothing Claude is told has changed. And the key field in Settings says where the key lives.
 import fs from "node:fs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
@@ -22,6 +22,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const before = await told();
     await page.evaluate(() => GL.openSettings());
     await page.waitForSelector("#sheet:not([hidden]) .settings", { timeout: 8000 });
+    const keyLine = await page.evaluate(() => [...document.querySelectorAll("#sheet .ask-settings label")].find((l) => l.querySelector("input[type=password]"))?.textContent || "");
+    check(/Your key is kept on this device only\. Set a monthly spend limit for it in the Anthropic console\./.test(keyLine), `${name}: the key field's line: ${keyLine}`);
     await page.setInputFiles("#sheet .settings input[type=file]", file);
     await page.waitForSelector("#sheet .set-incoming:not([hidden])", { timeout: 8000 }).catch(() => errors.push(`${name}: the file's words for Claude were not shown`));
     const shown = await page.textContent("#sheet .set-incoming").catch(() => "");
