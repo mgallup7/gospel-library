@@ -21,7 +21,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       await page.waitForTimeout(600);
     };
     const openConc = async (what) => {
-      const btn = await page.$("#list .group-title .text-btn.inline");
+      const btn = await page.$("#list .group-title .see-all");
       check(!!btn, `${what}: the count button should be in the results header`);
       if (!btn) return NaN;
       const label = await btn.textContent();

@@ -20,7 +20,7 @@ export default async function run(browser, { BASE, PASS }) {
     await box(page, q); await page.press("#q", "Enter");
     await page.waitForSelector("#list .group-title", { timeout: 15000 });
     await page.waitForTimeout(500);
-    const btn = await page.$("#list .group-title .text-btn.inline");
+    const btn = await page.$("#list .group-title .see-all");
     check(!!btn, `${q}: the count button should show`);
     if (!btn) continue;
     const said = Number((await btn.textContent()).replace(/[^0-9]/g, ""));

@@ -965,7 +965,7 @@ import { esc, mb } from "./lib/format.js";
     if (data.hits.length || data.documents.length) {
       const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents" && !data.typeahead;
       const line = el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}` });
-      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline", text: `${data.lexical_total.toLocaleString()} with these words`, title: "Every match, in reading order", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
+      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small see-all", text: data.lexical_total === 1 ? "See the 1 with these words, in its book" : `See all ${data.lexical_total.toLocaleString()}, book by book \u203a`, title: "Every passage with these words, in the order of the books", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
       // the results as a whole, handed to Claude (the floating pill's other job)
       if (data.hits.length && window.Ask) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline think-these", text: "Think these through", title: "Think these through with Claude", onclick: () => thinkHere() }));
       frag.append(line);

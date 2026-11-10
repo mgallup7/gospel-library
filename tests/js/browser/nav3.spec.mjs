@@ -42,8 +42,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#searchTab"); await page.waitForTimeout(400); // Search's own trail from its top, so its depths stay as counted
     // 1a. the concordance shows, and stays once Claude's extra searches have come back
     await box(page, "faith hope charity"); await page.press("#q", "Enter");
-    await page.waitForSelector("#list .group-title .text-btn.inline", { timeout: 10000 });
-    await page.click("#list .group-title .text-btn.inline");
+    await page.waitForSelector("#list .group-title .see-all", { timeout: 10000 });
+    await page.click("#list .group-title .see-all");
     await page.waitForSelector("#list .conc-row", { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1500);
     const c = await page.evaluate(() => ({ head: !!document.querySelector("#list .conc-head"), rows: document.querySelectorAll("#list .conc-row").length, ranked: document.querySelectorAll("#list .hit-row").length, hash: location.hash }));

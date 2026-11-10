@@ -25,8 +25,8 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   that says "trust in the Lord's timing" turns up for "patience with God's
   plan" even though no word is shared. Until the model has arrived, or on a
   browser that cannot run it, search goes by words alone and says so.
-- Every match, when you want them all: the "800 with these words" count
-  above the results opens a concordance, each passage in the order of the
+- Every match, when you want them all: the "See all 800, book by book"
+  button above the results opens a concordance, each passage in the order of the
   books under its chapter or talk with the count, the words marked, a tap
   from its place; Back returns to the ranked results. Chips at the head
   count each book ("Alma 83 · Ether 32") and narrow the list to one; an
