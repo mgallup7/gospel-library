@@ -1,4 +1,4 @@
-/* Gospel Library — personal edition
+/* Gospel Library, personal edition
    One serif for reading, one sans for operating, one accent, one highlighter. */
 
 :root {
@@ -685,12 +685,12 @@ body.presenting { overflow: hidden; }
 /* ---- ask ------------------------------------------------------------ */
 /* Ask takes the whole width when nothing is open beside it. Its thread is one centred column
    that reads downward, and the modes, the box and its button sit docked at the foot. */
-@media (min-width: 760px) {
+@media (min-width: 760px) and (min-height: 500px) {
   main:has(#list .ask-page):has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
   main:has(#list .ask-page):has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
   #list:has(.ask-page) > .home { min-height: 100%; }
 }
-@media (max-width: 759px) { #list:has(.ask-page) > .home { min-height: calc(100dvh - var(--bar-real, calc(var(--bar-h) + var(--safe-top)))); } }
+@media (max-width: 759px), (max-height: 499px) { #list:has(.ask-page) > .home { min-height: calc(100dvh - var(--bar-real, calc(var(--bar-h) + var(--safe-top)))); } }
 #list:has(.ask-page) { padding-bottom: 0; }
 #list:has(.ask-page) > .home { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: 0; }
 #list:has(.ask-page) > .home > div:has(> .ask-page) { flex: 1; display: flex; flex-direction: column; }
@@ -751,7 +751,7 @@ body.presenting { overflow: hidden; }
 .ask .msg, .ask-settings .msg { font-size: 14px; color: var(--danger); min-height: 1.4em; margin: 8px 0 0; }
 /* Ask settings sit in the app's sheet: taller than a footnote, and a centred column on a wide screen */
 .sheet:has(.ask-settings) { max-height: 88vh; }
-@media (min-width: 760px) { .sheet:has(.ask-settings) { left: 50%; right: auto; width: min(720px, 92vw); margin-left: max(-360px, -46vw); border: 1px solid var(--rule); border-bottom: 0; } }
+@media (min-width: 760px) and (min-height: 500px) { .sheet:has(.ask-settings) { left: 50%; right: auto; width: min(720px, 92vw); margin-left: max(-360px, -46vw); border: 1px solid var(--rule); border-bottom: 0; } }
 .ask-settings { font-family: var(--sans); line-height: 1.4; }
 .ask-settings h2:focus { outline: none; }
 .ask-settings .lb { font-weight: 600; font-size: 14px; color: var(--ink); }

@@ -11,12 +11,12 @@ import { shortCitation, chapterOf } from "./lib/cite.js";
   const API_URL = "https://api.anthropic.com/v1/messages";
   const API_VERSION = "2023-06-01";
   const MODELS = [
-    ["claude-fable-5-1", "Fable 5.1 (the newest and most capable; the model behind Claude's own chat)"],
-    ["claude-opus-5-5", "Opus 5.5 (deep, slower, costs more)"],
-    ["claude-sonnet-5-5", "Sonnet 5.5 (quick and good; the default)"],
+    ["claude-fable-5-1", "Fable 5.1"],
+    ["claude-opus-5-5", "Opus 5.5 (deep, slower, costs more; the default)"],
+    ["claude-sonnet-5-5", "Sonnet 5.5 (quick and good)"],
     ["claude-haiku-5-5", "Haiku 5.5 (fastest, cheapest)"],
   ];
-  const DEFAULT_MODEL = "claude-sonnet-5-5";
+  const DEFAULT_MODEL = "claude-opus-5-5";
   const PLANNER_MODEL = "claude-haiku-5-5";
   const MAX_PASSAGES = 22;
   const MAX_TURNS = 8;

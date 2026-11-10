@@ -1449,7 +1449,7 @@ import { esc } from "./lib/format.js";
     out.push("");
     for (const it of sequence()) {
       const notes = it.notes && it.notes.trim() ? [`*Speaker notes: ${it.notes.trim().replace(/\n+/g, " ")}*`, ""] : [];
-      if (it.type === "section") { out.push(`## ${it.title || "—"}`, "", ...notes); continue; }
+      if (it.type === "section") { out.push(`## ${it.title || "Untitled section"}`, "", ...notes); continue; }
       if (it.type === "question") { out.push(`### Question`, "", it.text || "", "", ...notes); continue; }
       if (it.type === "note") { out.push(`### Slide text`, "", it.text || "", "", ...notes); continue; }
       if (it.type === "link") {
@@ -1793,7 +1793,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const units = [];
     if (deck.title) units.push({ kind: "title", html: esc(deck.title), where: deck.subtitle || "" });
     for (const it of sequence()) {
-      if (it.type === "section") { units.push({ kind: "title", html: esc(it.title || "—"), where: "" }); continue; }
+      if (it.type === "section") { units.push({ kind: "title", html: esc(it.title || "Untitled section"), where: "" }); continue; }
       if (it.type === "question") { if ((it.text || "").trim()) units.push({ kind: "question", html: esc(it.text.trim()), where: "" }); continue; }
       if (it.type === "note") { if ((it.text || "").trim()) units.push({ kind: "note", html: esc(it.text.trim()).replace(/\n/g, "<br>"), where: "" }); continue; }
       if (it.type === "link") { const u = linkUnit(it); if (u) units.push(u); continue; }

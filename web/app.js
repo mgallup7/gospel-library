@@ -1,4 +1,4 @@
-/* Gospel Library — personal edition. Plain JavaScript, no build step.
+/* Gospel Library, personal edition. Plain JavaScript, no build step.
    The library lives on this device; engine.js (a Web Worker) holds it and
    answers searches. This file is the interface. */
 import { shortTitle as shortTitleOf, chapterOf, papersCitation, papersPageOf } from "./lib/cite.js";
@@ -2051,13 +2051,13 @@ import { esc, mb } from "./lib/format.js";
   // Outside a field Cmd+Z is always the app's: the toast's Undo while one shows, else the deck's own
   // undo. Left to the browser it would rewind the search box, and a search would run from nowhere.
   document.addEventListener("keydown", (e) => {
-    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || e.defaultPrevented) return;
     const a = document.activeElement;
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return; // a field's own undo comes first
     e.preventDefault();
     // a toast whose action is a link to the web has nothing to undo
     if (toastAct && !toastEl?.querySelector("a.toast-action")) toastAct();
-    else if (window.Deck && window.Deck.undo) window.Deck.undo();
+    else if (window.Deck && window.Deck.undo && window.Deck.undo()) toast("Undone."); // deck.js listens too, and stands down once this has taken the key
   });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
   function deckToast(added, text) {
@@ -2842,7 +2842,8 @@ import { esc, mb } from "./lib/format.js";
       if ($(".banner.shell-update")) return;
       const banner = el("div", { class: "banner shell-update", role: "status" }, [
         el("span", { text: "A new version is ready." }),
-        el("button", { class: "text-btn", type: "button", text: "Reload", onclick: () => {
+        el("button", { class: "text-btn", type: "button", text: "Reload", onclick: async () => {
+          try { await window.Deck?.flush(); } catch (_) {} // the deck's last edit is in the database before the page goes
           if (!waiting || waiting.state !== "installed") { location.reload(); return; }
           reloading = true;
           waiting.postMessage({ type: "take-over" });

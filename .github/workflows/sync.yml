@@ -58,6 +58,18 @@ jobs:
       - name: Install
         run: pip install -q -r requirements.txt
 
+      # The app's own tests, before anything is fetched or published: a failure here stops the run,
+      # so a broken shell never reaches the devices.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test
+        run: |
+          pip install -q "pytest>=8"
+          node --test tests/js/*.test.mjs
+          python3 -m pytest -q tests/test_library.py
+
       - name: Check the passphrase is set
         run: |
           if [ -z "$LIBRARY_PASSPHRASE" ]; then
