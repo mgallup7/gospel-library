@@ -6,6 +6,7 @@
 // A verse that is not there gets no jump card of its own; a book: filter that names no book says
 // so; a study is found by the words as typed; the header's and the reader bar's targets are 44pt to
 // touch; the site icon says so offline; an iPhone on its side keeps the phone's layout.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   async function start(name, viewport) {
@@ -25,12 +26,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   {
     const name = "ipad", page = await start(name, { width: 1180, height: 820 });
     await page.click("#deckBtn"); await page.waitForTimeout(700);
+    // the Deck is a place of its own, reached by its tab: at its top there is no Back
     let b = await backs(page);
-    if (b.length !== 1) errors.push(`${name} empty deck: ${b.length} Back buttons (${b.join(", ")})`);
-    await page.fill("#q", "faith hope"); await page.press("#q", "Enter"); await page.waitForTimeout(1200);
+    if (b.length !== 0) errors.push(`${name} empty deck: ${b.length} Back buttons (${b.join(", ")})`);
+    await box(page, "faith hope"); await page.press("#q", "Enter"); await page.waitForTimeout(1200);
     if ((await panes(page)).panel) errors.push(`${name}: the empty board stayed up under fresh results`);
     b = await backs(page);
-    if (b.length !== 1 || b[0] !== "Deck") errors.push(`${name} results: Back buttons ${JSON.stringify(b)}`);
+    if (b.length !== 0) errors.push(`${name} results, at the top of Search: Back buttons ${JSON.stringify(b)}`);
     await page.click(".hit-row .add >> nth=0"); await page.waitForTimeout(600);
     const after = await page.evaluate(() => ({ panel: !document.querySelector("#panel").hidden, undo: !!document.querySelector(".toast .toast-action"), n: document.querySelector("#deckBtn .deck-count")?.textContent }));
     if (after.panel) errors.push(`${name}: + on a result turned the pane to the board`);
@@ -45,8 +47,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#homeBody .shelf-tile:has-text('Scriptures')"); await page.waitForTimeout(500);
     await page.click("#homeBody .chip:text-is('Genesis')"); await page.waitForTimeout(500);
     await page.click("#homeBody .chapters button:text-is('1')"); await page.waitForSelector("#reader .doc"); await page.waitForTimeout(800);
+    // the board opened once, then back to the Library, where the page now has the switch in its bar
     await page.click("#deckBtn"); await page.waitForTimeout(700);
-    await page.click("#panel .pane-switch button:has-text('Page')"); await page.waitForTimeout(600);
+    await page.click("#homeBtn"); await page.waitForSelector("#reader .pane-switch"); await page.waitForTimeout(600);
     const bar = await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar"); return { cls: b.className, over: b.scrollWidth - b.clientWidth, crumb: b.querySelector(".crumb").getBoundingClientRect().width, two: b.querySelector(".size-btns").offsetParent !== null }; });
     if (!/compact/.test(bar.cls) || bar.two) errors.push(`${name}: the text sizes did not fold into Aa (${bar.cls})`);
     if (bar.over > 1) errors.push(`${name}: the reader bar overflows by ${bar.over}px`);
@@ -59,20 +62,21 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.screenshot({ path: `${SHOTS}nav-portrait-bar.png`, clip: { x: 0, y: 0, width: 820, height: 260 } });
     const wideBar = await page.evaluate(() => document.querySelector("#reader .reader-bar").className);
     await page.setViewportSize({ width: 1180, height: 820 }); await page.waitForTimeout(400);
-    const land = await page.evaluate(() => document.querySelector("#reader .reader-bar .size-btns").offsetParent !== null);
-    if (!land) errors.push(`${name}: in landscape the two size buttons should be back (was ${wideBar})`);
+    // wider, the bar unfolds: Present and the site come back out of the menu (the sizes may stay in Aa beside the Hebrew and the switch)
+    const land = await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar"); return { cls: b.className, present: b.querySelector(".bar-extra").offsetParent !== null, over: b.scrollWidth - b.clientWidth }; });
+    if (!land.present || /tighter/.test(land.cls) || land.over > 1) errors.push(`${name}: in landscape the bar should unfold (was ${wideBar}, is ${JSON.stringify(land)})`);
     await page.context().close();
   }
 
   // iPhone: search edges and the marks list
   {
     const name = "iphone", page = await start(name, { width: 393, height: 852 });
-    await page.fill("#q", "Alma 32:21-"); await page.waitForTimeout(900);
+    await box(page, "Alma 32:21-"); await page.waitForTimeout(900);
     if (!(await page.$("#list .jump"))) errors.push(`${name}: Alma 32:21- lost its jump card`);
-    await page.fill("#q", 'a"b'); await page.press("#q", "Enter"); await page.waitForTimeout(900);
+    await box(page, 'a"b'); await page.press("#q", "Enter"); await page.waitForTimeout(900);
     const both = await page.evaluate(() => [!!document.querySelector("#list .smart-line"), !!document.querySelector("#list .empty")]);
     if (both[0] && both[1]) errors.push(`${name}: a"b shows the smart line and Nothing matches together`);
-    await page.fill("#q", "a"); await page.waitForTimeout(900);
+    await box(page, "a"); await page.waitForTimeout(900);
     const hash = await page.evaluate(() => location.hash);
     if (/search/.test(hash)) errors.push(`${name}: a one-letter query left ${hash}`);
     await page.evaluate(async () => {
@@ -82,9 +86,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
         await window.Marks.set({ uri: `/nav-test/${bk}/${ch}`, pid: `p${i + 1}`, verse: i + 1, color: window.Marks.COLORS[i % 4], note: i === 5 ? "a seed of faith" : null, text: `Verse ${i} ${i % 2 ? "faith" : "hope"}`, citation: `${bk} ${ch}:${i + 1}`, title: `${bk} ${ch}` });
       }
     });
-    await page.fill("#q", ""); await page.waitForTimeout(300);
-    await page.click("#homeBody .shelf-tile:has-text('My studies')"); await page.waitForSelector(".mk-find");
-    const count = () => page.evaluate(() => ({ rows: document.querySelectorAll(".mark-row").length, books: document.querySelectorAll(".mk-book").length, scopes: getComputedStyle(document.querySelector(".scopes")).display }));
+    await box(page, ""); await page.waitForTimeout(300);
+    await page.click("#homeBody .own-row:has-text('Highlights and notes')"); await page.waitForSelector(".mk-find");
+    const count = () => page.evaluate(() => ({ rows: document.querySelectorAll(".mark-row").length, books: document.querySelectorAll(".mk-book").length, scopes: getComputedStyle(document.querySelector(".scope-row")).display }));
     let c = await count();
     if (c.rows !== 10 || c.books !== 3) errors.push(`${name} marks: ${c.rows} rows under ${c.books} headings, not the latest 10 under 3`);
     if (c.scopes !== "none") errors.push(`${name}: the scope strip shows on My studies`);
@@ -111,14 +115,14 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     }, sel);
     const hits = async (sels) => { for (const s of sels) { const bad = await reach(s); if (bad) errors.push(`${name}: under 44pt to touch, ${bad}`); } };
     await page.evaluate(async () => { await window.Studies.add(new File(["# Zone conference plan\n\nThe zone conference begins with a hymn, then the training.\n"], "zone.md", { type: "text/markdown" })); });
-    await page.fill("#q", "zone conference"); await page.press("#q", "Enter");
+    await box(page, "zone conference"); await page.press("#q", "Enter");
     await page.waitForSelector("#list .studies-hits .study-hit", { timeout: 5000 }).catch(() => {});
     const st = await page.evaluate(() => ({ n: document.querySelectorAll("#list .studies-hits .study-hit").length, t: document.querySelector("#list .studies-hits .cite span")?.textContent, b: [...document.querySelectorAll("#list .studies-hits .snip b")].map((x) => x.textContent.toLowerCase()) }));
     if (st.n !== 1 || st.t !== "Zone conference plan" || !st.b.includes("zone")) errors.push(`${name}: "zone conference" did not find the study by the words as typed: ${JSON.stringify(st)}`);
-    await page.fill("#q", "book:xyzzy faith"); await page.press("#q", "Enter"); await page.waitForSelector("#list .hit-row");
+    await box(page, "book:xyzzy faith"); await page.press("#q", "Enter"); await page.waitForSelector("#list .hit-row");
     const nb = await page.evaluate(() => document.querySelector("#list .no-book")?.textContent || null);
     if (!nb || !nb.includes("xyzzy")) errors.push(`${name}: book:xyzzy said ${nb}`);
-    await page.fill("#q", "book:alma faith"); await page.press("#q", "Enter"); await page.waitForTimeout(900);
+    await box(page, "book:alma faith"); await page.press("#q", "Enter"); await page.waitForTimeout(900);
     if (await page.$("#list .no-book")) errors.push(`${name}: book:alma was called unknown`);
     await hits(["#homeBtn", "#filterBtn", ".search .clear", ".scopes button.on", ".scopes button[data-scope=pmg]", "#list .smart-line .text-btn.small"]);
     await page.click("#list .hit >> nth=0"); await page.waitForSelector("#reader .matchnav");
@@ -140,13 +144,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   // iPhone: a verse that is not there; the dots; the phone on its side
   {
     const name = "iphone small", page = await start(name, { width: 393, height: 852 });
-    await page.fill("#q", "Alma 32:999"); await page.waitForTimeout(900);
+    await box(page, "Alma 32:999"); await page.waitForTimeout(900);
     let j = await page.evaluate(() => document.querySelector("#list .jump")?.textContent || null);
     if (!j || !/^Alma 32 /.test(j) || !/no verse 999/.test(j)) errors.push(`${name}: Alma 32:999 offers “${j}”`);
     await page.press("#q", "Enter"); await page.waitForSelector("#reader:not([hidden]) .doc h1"); await page.waitForTimeout(500);
     const at = await page.evaluate(() => ({ t: document.querySelector("#reader .doc h1").textContent.trim(), hash: location.hash, target: !!document.querySelector("#reader .doc .is-target") }));
     if (at.t !== "Alma 32" || /p=p999/.test(at.hash) || at.target) errors.push(`${name}: Enter on Alma 32:999 gave ${JSON.stringify(at)}`);
-    await page.fill("#q", "Alma 32:43"); await page.waitForTimeout(900);
+    await box(page, "Alma 32:43"); await page.waitForTimeout(900);
     j = await page.evaluate(() => document.querySelector("#list .jump")?.textContent || null);
     if (!j || !/^Alma 32:43 /.test(j) || /no verse/.test(j)) errors.push(`${name}: Alma 32:43 offers “${j}”`);
     await page.press("#q", "Enter"); await page.waitForSelector("#reader:not([hidden]) .doc #p43.is-target");
@@ -159,10 +163,10 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const row = await page.evaluate(() => { const b = document.querySelector("#reader .select-bar"); return { over: b.scrollWidth - b.clientWidth, more: b.querySelector(".sel-more-btn").offsetParent !== null }; });
     if (row.over > 1 || !row.more) errors.push(`${name}: the selection bar at 393: ${JSON.stringify(row)}`);
     await page.screenshot({ path: `${SHOTS}nav-iphone-selected.png` });
-    // on its side the phone is 852 wide and 393 high: one pane still, the tools still at the bottom
+    // on its side the phone is 852 wide and 393 high: one pane still, the tabs still along the bottom
     await page.setViewportSize({ width: 852, height: 393 }); await page.waitForTimeout(500);
-    const side = await page.evaluate(() => ({ list: !document.querySelector("#list").hidden, reader: !document.querySelector("#reader").hidden, foot: getComputedStyle(document.querySelector("#reader .reader-foot")).display, wide: window.GL.wide }));
-    if (side.list || !side.reader || side.foot === "none" || side.wide) errors.push(`${name}: on its side the phone got the iPad's layout: ${JSON.stringify(side)}`);
+    const side = await page.evaluate(() => ({ list: !document.querySelector("#list").hidden, reader: !document.querySelector("#reader").hidden, foot: getComputedStyle(document.querySelector("#tabs")).flexDirection, wide: window.GL.wide }));
+    if (side.list || !side.reader || side.foot !== "row" || side.wide) errors.push(`${name}: on its side the phone got the iPad's layout: ${JSON.stringify(side)}`);
     await page.screenshot({ path: `${SHOTS}nav-iphone-landscape.png` });
     await page.context().close();
   }

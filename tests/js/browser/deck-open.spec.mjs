@@ -3,6 +3,7 @@ import fs from "node:fs";
 // the switch back to the deck; on a phone Back returns to the deck), and the PowerPoint is built
 // when Download is about to be pressed, not a few seconds after every edit.
 // Run by tests/js/browser/run.mjs.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "deck-open/";
@@ -21,7 +22,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.evaluate(() => window.Deck.ready);
 
     // a real passage: Alma 32:21 from the reader, then another page, so the citation has somewhere to go
-    await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
+    await box(page, "Alma 32:21"); await page.press("#q", "Enter");
     await page.waitForTimeout(800);
     const jump = await page.$("#list .jump");
     if (jump && !wide && await jump.isVisible()) await jump.click();
@@ -30,7 +31,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#reader .doc #p21");
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(200);
-    await page.fill("#q", "Ether 12:6"); await page.press("#q", "Enter");
+    await box(page, "Ether 12:6"); await page.press("#q", "Enter");
     await page.waitForTimeout(800);
     const jump2 = await page.$("#list .jump");
     if (jump2 && !wide && await jump2.isVisible()) await jump2.click();

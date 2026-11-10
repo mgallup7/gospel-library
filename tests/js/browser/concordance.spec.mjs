@@ -1,5 +1,6 @@
 import fs from "node:fs";
 // concordance: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "conc/";
@@ -15,7 +16,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const sub = async () => num(await page.textContent("#list .conc-sub"));
     // a search, its "N with these words", and the concordance it opens: the two numbers must agree
     const search = async (q) => {
-      await page.fill("#q", q); await page.press("#q", "Enter");
+      await box(page, q); await page.press("#q", "Enter");
       await page.waitForSelector("#list .group-title", { timeout: 15000 });
       await page.waitForTimeout(600);
     };
@@ -106,11 +107,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       if (pageBtn) await pageBtn.click();
     }
 
-    // a row opens the verse
+    // a row opens the verse. On an iPad the best match is already open beside the list, so Back
+    // from the row's page names that page; on a phone it names the list.
+    const openBefore = await page.evaluate(() => { const r = document.querySelector("#reader"); return r.hidden || r.offsetParent === null ? null : r.querySelector(".crumb")?.textContent || null; });
     await page.click("#list .conc-row >> nth=3");
     await page.waitForSelector("#reader .doc .is-target", { timeout: 10000 });
     await page.waitForTimeout(400);
-    check((await page.textContent("#reader .trail-back .lb")) === "Every match", `back label from a row: ${await page.textContent("#reader .trail-back .lb")}`);
+    check((await page.textContent("#reader .trail-back .lb")) === (openBefore || "Every match"), `back label from a row: ${await page.textContent("#reader .trail-back .lb")} (a page was open: ${openBefore})`);
     await page.click("#reader .trail-back");
     await page.waitForSelector("#list .conc-row", { timeout: 10000 });
     // Back from the concordance returns to the results
@@ -126,7 +129,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const almaTotal = await openConc("book:alma faith");
     check(almaTotal === 83 || almaTotal > 0, `book:alma faith: ${almaTotal}`);
     if (vp.width >= 760) {
-      await page.fill("#q", "faith");
+      await box(page, "faith");
       await page.click(".scopes button[data-scope=scriptures]");
       await page.press("#q", "Enter");
       await page.waitForSelector("#list .group-title", { timeout: 15000 });

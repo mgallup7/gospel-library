@@ -1,6 +1,10 @@
 // pane-switch: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase.
-// On an iPad the right pane holds the page and the deck board together, with a Page | Deck switch
-// between them; on a phone there is no switch and the Deck tab is a list view.
+// On an iPad the Deck tab is the board across the place, and the page stays where it was read:
+// its tab brings it back with its selection and its scroll. Once the board has been opened, the
+// page's bar has a Page | Deck switch that turns the right pane to the board and back without
+// leaving the page's place. A reload on #deck?doc= shows the board with the page on offer. On a
+// phone there is no switch and the Deck tab is a list view.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   async function unlock(page) {
@@ -36,7 +40,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   {
     const page = await (await browser.newContext({ viewport: { width: 1180, height: 820 }, deviceScaleFactor: 1 })).newPage();
     await unlock(page);
-    await page.fill("#q", "Alma 32:21");
+    await box(page, "Alma 32:21");
     await page.waitForTimeout(600);
     await page.press("#q", "Enter");
     await page.waitForSelector("#reader .doc #p21.is-target", { timeout: 30000 });
@@ -53,13 +57,21 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#deckBtn");
     await page.waitForTimeout(700);
     w = await look(page);
-    if (!w.board) errors.push("ipad deck: the board is not in the right pane");
+    if (!w.board) errors.push("ipad deck: the board is not showing");
     if (w.reader) errors.push("ipad deck: the page is still showing beside the board");
-    if (w.sw !== "Page|Deck*") errors.push(`ipad deck: switch reads ${w.sw}`);
+    if (w.sw) errors.push(`ipad deck: a switch with no page in the Deck's own place: ${w.sw}`);
     if (w.cards !== 1) errors.push(`ipad deck: ${w.cards} cards on the board`);
     if (w.fab) errors.push("ipad deck: Think it through shows over the board");
-    if (!/^#deck\?doc=\d+/.test(w.hash)) errors.push(`ipad deck: address ${w.hash}`);
+    if (w.hash !== "#deck") errors.push(`ipad deck: address ${w.hash}`);
     await page.screenshot({ path: SHOTS + "pane-switch-1-board.png" });
+    // the page is where it was read (Search, from the typed reference): its tab brings it back
+    await page.click("#searchTab");
+    await page.waitForTimeout(700);
+    const pageHash = (await look(page)).hash;
+    await clickSwitch(page, "Deck");
+    await page.waitForTimeout(400);
+    w = await look(page);
+    if (!w.board || w.cards !== 1 || w.sw !== "Page|Deck*" || w.hash !== pageHash) errors.push(`ipad switch to Deck: ${JSON.stringify(w)}`);
     await clickSwitch(page, "Page");
     await page.waitForTimeout(400);
     w = await look(page);
@@ -70,18 +82,18 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     if (Math.abs(w.scroll - scrolled) > 2) errors.push(`ipad page: scroll moved from ${scrolled} to ${w.scroll}`);
     if (w.sw !== "Page*|Deck") errors.push(`ipad page: switch reads ${w.sw}`);
     if (!w.fab) errors.push("ipad page: Think it through is missing over the page");
-    if (!/^#deck\?doc=\d+/.test(w.hash)) errors.push(`ipad page: the switch changed the address to ${w.hash}`);
+    if (w.hash !== pageHash || !/doc=\d+/.test(w.hash)) errors.push(`ipad page: the switch changed the address to ${w.hash}`);
     await page.screenshot({ path: SHOTS + "pane-switch-2-page.png" });
     await clickSwitch(page, "Deck");
     await page.waitForTimeout(400);
     w = await look(page);
     if (!w.board || w.cards !== 1) errors.push(`ipad deck again: board ${w.board}, ${w.cards} cards`);
     if (w.sw !== "Page|Deck*") errors.push(`ipad deck again: switch reads ${w.sw}`);
-    await clickBack(page);
-    await page.waitForTimeout(800);
+    // the Deck tab and back again: the page is still there
+    await page.click("#deckBtn"); await page.waitForTimeout(500);
+    await page.click("#searchTab"); await page.waitForTimeout(700);
     w = await look(page);
-    if (!w.reader || w.board) errors.push("ipad back: the page is not showing after Back");
-    if (!/Alma 32/.test(w.title)) errors.push(`ipad back: reader shows ${w.title}`);
+    if (!/Alma 32/.test(w.title) || w.hash !== pageHash) errors.push(`ipad back from the Deck tab: ${w.title} at ${w.hash}`);
     if (/^#deck/.test(w.hash)) errors.push(`ipad back: still at ${w.hash}`);
     // a reload on the page shows the page; one on #deck shows the board with the page on offer
     doc = /doc=(\d+)/.exec(w.hash)?.[1] || doc;

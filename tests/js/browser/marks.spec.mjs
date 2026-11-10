@@ -7,6 +7,7 @@ const barDo = async (page, sel, item) => {
   await page.click("#reader .select-bar .sel-more-btn");
   await page.click(`#reader .select-bar .size-menu >> text=${item}`);
 };
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "marks/";
@@ -24,7 +25,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.press("div.setup input", "Enter");
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
     await page.waitForTimeout(600);
-    await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
+    await box(page, "Alma 32:21"); await page.press("#q", "Enter");
     await page.waitForTimeout(800);
     const jump = await page.$("#list .jump");
     if (jump && viewport.width < 760 && await jump.isVisible()) await jump.click(); // Enter opens the page on the phone too
@@ -98,9 +99,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#homeBtn");
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 10000 });
     await page.waitForTimeout(400);
-    const sub = await page.textContent("#homeBody .shelf-tile:has-text('My studies') .st-s");
-    check(/2/.test(sub), `tile should count 2 marks: ${sub}`);
-    await page.click("#homeBody .shelf-tile:has-text('My studies')");
+    const sub = await page.textContent("#homeBody .own-row:has-text('Highlights and notes') .st-s");
+    check(/2/.test(sub), `the Highlights and notes row should count 2 marks: ${sub}`);
+    await page.click("#homeBody .own-row:has-text('Highlights and notes')");
     await page.waitForSelector("#homeBody .mark-row", { timeout: 10000 });
     check((await page.locator("#homeBody .mark-row").count()) === 2, "two marks listed");
     check(/Alma 32:23/.test(await page.textContent("#homeBody .mark-row >> nth=0")), "newest mark first (verse 23)");

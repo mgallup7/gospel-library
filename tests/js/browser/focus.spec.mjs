@@ -1,4 +1,5 @@
 // focus: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const check = (c, m) => { if (!c) errors.push(m); };
@@ -9,7 +10,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.fill("div.setup input", PASS);
   await page.press("div.setup input", "Enter");
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
-  await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
+  await box(page, "Alma 32:21"); await page.press("#q", "Enter");
   // Enter on a reference opens the chapter at the verse on the phone too
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
   await page.waitForTimeout(300);
@@ -31,12 +32,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const after = await page.evaluate(() => document.activeElement?.textContent?.trim());
   check(after === "Note", `focus should return to the Note button (got ${after})`);
   // the stage
-  await page.click("#reader .reader-foot .foot-btn[aria-label='Present']");
+  await readerTool(page, "Present", "#reader .reader-bar .icon-btn[aria-label='Present']"); // in the bar's menu on a phone
   await page.waitForSelector(".stage:not([hidden])");
   await page.waitForTimeout(200);
   check(await page.evaluate(() => document.activeElement?.id === "stage"), "the stage should take focus");
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
-  check(await page.evaluate(() => document.activeElement && document.activeElement.getAttribute("aria-label") === "Present"), `focus returns to Present (${await page.evaluate(() => document.activeElement?.outerHTML?.slice(0, 80))})`);
+  check(await page.evaluate(() => document.activeElement && /^(Present|Text size and more)$/.test(document.activeElement.getAttribute("aria-label") || "")), `focus returns to Present, or to the menu that held it (${await page.evaluate(() => document.activeElement?.outerHTML?.slice(0, 80))})`);
   return errors;
 }

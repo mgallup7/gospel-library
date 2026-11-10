@@ -1,5 +1,6 @@
 import fs from "node:fs";
 // studies-and-links: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "studies/";
@@ -238,7 +239,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(await tf.locator("pre.plain a").count() === 2, `text study links: ${await tf.locator("pre.plain a").count()}`);
     await shot("03-text");
     // a search finds the study's words and opens it at the nearest heading
-    await page.fill("#q", "nourish patience"); await page.press("#q", "Enter");
+    await box(page, "nourish patience"); await page.press("#q", "Enter");
     await page.waitForSelector("#list .studies-hits .study-hit", { timeout: 8000 });
     const where = await page.textContent("#list .studies-hits .study-hit .where");
     check(/The harvest/.test(where), `study hit says ${where}`);
@@ -252,7 +253,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(Math.abs(top) < 60, `the study did not open at The harvest (top ${top})`);
     await shot("05-opened-at-heading");
     // the chapter the study links to says so under its title
-    await page.fill("#q", "Alma 32"); await page.press("#q", "Enter");
+    await box(page, "Alma 32"); await page.press("#q", "Enter");
     await page.waitForTimeout(700);
     const jump = await page.$("#list .jump"); if (jump && await jump.isVisible()) await jump.click();
     await page.waitForSelector("#reader .doc .in-studies", { timeout: 10000 });

@@ -150,7 +150,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(!(await linking()) && (await state()).links.length === 1, "a tap on the source card should leave link mode");
     check((await page.locator(".bcard .w.first").count()) === 0, "and start no highlight");
     await startLink();
-    await page.click(".board > .deck-hint");
+    await page.click(".board > .deck-status");
     await settle();
     check(!(await linking()), "a tap on empty board should leave link mode");
     await startLink();
@@ -204,7 +204,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await dragFrom(".bcard[data-id='a'] .bc-notes");
     check((await state()).links.length === 1, "a release over its own card should cancel the drag");
     check(/Nothing linked/.test(await toastText()), "and say so");
-    await dragFrom(".board > .deck-hint");
+    await dragFrom(".board > .deck-status");
     check((await state()).links.length === 1, "a release over empty space should cancel the drag");
     await page.click(word("c", 1)); await page.keyboard.press("Escape");
     check((await page.locator(".bcard .w.first").count()) === 0, "the board should still take taps after cancelled drags");
@@ -231,7 +231,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check((await state()).links.length === 1, "closing the editor keeps the connection");
 
     // ---- the Markdown sheet and My decks: focus inside, the page behind inert, Escape and Back close them
-    if (!(await page.locator(".board .deck-actions.secondary:not([hidden])").count())) await page.click(".board-row button:has-text('More')");
+    if (!(await page.locator(".board .board-more:not([hidden])").count())) await page.click(".board-row button:has-text('More')");
     await page.click(".board .deck-actions button:has-text('Markdown')");
     await page.waitForSelector(".dsheet", { timeout: 3000 });
     const md = await page.evaluate(() => ({ focus: !!document.activeElement.closest(".dsheet"), inert: document.querySelector("main").inert }));

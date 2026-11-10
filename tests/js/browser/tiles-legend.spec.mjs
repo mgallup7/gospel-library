@@ -1,5 +1,6 @@
 import fs from "node:fs";
 // tiles-legend: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "legend/";
@@ -12,12 +13,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.fill("div.setup input", PASS);
   await page.press("div.setup input", "Enter");
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
-  await page.fill("#q", "Psalm 23"); await page.press("#q", "Enter");
+  await box(page, "Psalm 23"); await page.press("#q", "Enter");
   await page.waitForTimeout(800);
   const jump = await page.$("#list .jump"); if (jump && await jump.isVisible()) await jump.click(); // Enter opens it on both sizes now
   await page.waitForSelector("#reader .doc", { timeout: 15000 });
-  const fb = await page.$("#reader .reader-foot .foot-btn[aria-label='Hebrew']");
-  await fb.click();
+  await readerTool(page, "Hebrew", "#reader .reader-bar .orig-btn"); // in the bar's menu on a phone
   await page.waitForSelector("#reader .orig .ow", { timeout: 15000 });
   await page.waitForTimeout(500);
   // the legend

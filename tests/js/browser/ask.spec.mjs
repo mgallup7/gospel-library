@@ -9,6 +9,7 @@
 // a busy server is tried twice more and the question goes back in the box; an answer cut off
 // by max_tokens says so and continues. Ask has the full width with one centred column, the box
 // docked at the foot, the hint only while the thread is empty, and the question printed once.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const check = (c, m) => { if (!c) errors.push(m); };
@@ -83,7 +84,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   // the layout: the whole width, a 680px column in the middle, the box at the foot, a hint while empty
   const layout = () => page.evaluate(() => { const r = (s) => document.querySelector(s).getBoundingClientRect(); const c = r(".ask-page"), d = r(".ask-dock"); return { list: Math.round(r("#list").width), w: Math.round(c.width), left: Math.round(c.left), foot: Math.round(d.bottom), hint: getComputedStyle(document.querySelector(".ask-hint")).display !== "none", gear: !!document.querySelector(".ask-gear svg"), scroll: document.documentElement.scrollWidth }; });
   const empty = await layout();
-  check(empty.list === 1180 && empty.w === 680 && empty.left === 250, `Ask has the full width and a centred 680px column: ${JSON.stringify(empty)}`);
+  check(empty.list === 1108 && empty.w === 680 && empty.left === 286, `Ask has the full width and a centred 680px column: ${JSON.stringify(empty)}`);
   check(empty.foot === 820, `the box is docked at the foot (bottom at ${empty.foot})`);
   check(empty.hint && empty.gear, "an empty thread shows the hint, and the gear is an icon");
   await page.screenshot({ path: SHOTS + "ask-empty.png" });
@@ -235,14 +236,14 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
   // with it on (the default), Return in the search box asks for more searches; off, it sends nothing
   before = requests.length;
-  await page.fill("#q", "what did the prophets teach about faith and hope");
+  await box(page, "what did the prophets teach about faith and hope");
   await page.press("#q", "Enter");
   await page.waitForTimeout(2500);
   check(requests.slice(before).some((b) => !b.stream), "with the setting on, Return should ask Claude for more searches");
   await page.evaluate(() => localStorage.setItem("gospel.askPlanner", "false"));
-  await page.fill("#q", "");
+  await box(page, "");
   before = requests.length;
-  await page.fill("#q", "what did the prophets teach about faith and hope");
+  await box(page, "what did the prophets teach about faith and hope");
   await page.press("#q", "Enter");
   await page.waitForTimeout(2500);
   check(requests.length === before, `no call to Claude with the setting off (got ${requests.length - before})`);

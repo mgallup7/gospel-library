@@ -101,7 +101,8 @@ import { esc, mb } from "./lib/format.js";
   //   #                       the library (home)
   //   #scriptures?b.book=alma a shelf, with how far into it you are
   //   #search?q=faith&scope=… results
-  //   #ask  #deck             the two tabs
+  //   #search                 Search with an empty box (its scope rides along)
+  //   #ask  #deck             Ask and the Deck
   // and the page open in the reader rides along on any of them as &doc=123&p=p21, or one of
   // your own pages as &s=<id> (an old #read/123 address still opens). On a phone the page
   // covers the list.
@@ -121,6 +122,7 @@ import { esc, mb } from "./lib/format.js";
     } else if (state.browse?.tab) {
       base = state.browse.tab;
       for (const k of BROWSE_KEYS) if (state.browse[k]) p.set(`b.${k}`, String(state.browse[k]));
+      if (base === "search" && state.scope !== "all") p.set("scope", state.scope);
     }
     if (state.docId) { p.set("doc", String(state.docId)); if (state.pid) p.set("p", state.pid); }
     else if (state.studyId) p.set("s", state.studyId);
@@ -149,10 +151,93 @@ import { esc, mb } from "./lib/format.js";
       state.browse = { tab: base };
       for (const k of BROWSE_KEYS) { const v = p.get(`b.${k}`); if (v !== null) state.browse[k] = k === "year" ? Number(v) : k === "all" ? v === "true" : v; }
       if (!p.get("scope") && TAB_SCOPE[base]) state.scope = TAB_SCOPE[base];
-    } else state.browse = null;
+    } else state.browse = searching ? { tab: "search" } : null; // Search is where an emptied box comes back to
     state.docId = p.get("doc") ? Number(p.get("doc")) : null;
     state.pid = p.get("p") || null;
     state.studyId = !state.docId && p.get("s") ? p.get("s") : null;
+  }
+
+  // Each of the four places keeps a trail of its own. The browser has one history, so it holds
+  // the trail of the place in front and no other: a tap on another tab puts this trail away (its
+  // entries, with their names and their scroll), steps the browser back to where the trails
+  // begin, and lays the other place's trail down there. Back then walks the place you are in, as
+  // it always did, and never crosses into another. To put a trail away its entries must be known,
+  // and the browser shows only the current one, so every push and replace is mirrored here by
+  // position (each entry carries its own as i). The mirror and the trails put away live in
+  // sessionStorage, so a reload finds them.
+  const TAB_TOP = { library: "#", search: "#search", deck: "#deck", ask: "#ask" };
+  const tabOfUrl = (u) => { const b = String(u || "").replace(/^[^#]*#?/, "").split("?")[0]; return b === "search" || b === "deck" || b === "ask" ? b : "library"; };
+  let pos = Number.isInteger(history.state?.i) ? history.state.i : 0; // where the browser's history is
+  let floor = pos;   // where the trails begin: nothing below it is the app's to rewrite
+  let mirror = [];   // position -> { url, state }
+  let kept = {};     // place -> the trail it was left with
+  try {
+    const t = JSON.parse(sessionStorage.getItem("gospel.trail") || "null");
+    if (t && Array.isArray(t.mirror) && t.mirror[pos]?.url === (location.hash || "#") && t.floor <= pos) { mirror = t.mirror; floor = t.floor; kept = t.kept || {}; }
+  } catch (_) {}
+  const rawPush = history.pushState.bind(history), rawReplace = history.replaceState.bind(history);
+  let trailTimer = null;
+  function writeTrail() { clearTimeout(trailTimer); try { sessionStorage.setItem("gospel.trail", JSON.stringify({ floor, mirror: mirror.slice(0, pos + 1), kept })); } catch (_) {} }
+  const noteEntry = () => { mirror[pos] = { url: location.hash || "#", state: history.state }; clearTimeout(trailTimer); trailTimer = setTimeout(writeTrail, 200); };
+  history.pushState = (st, title, url) => { pos += 1; rawPush({ ...(st || {}), i: pos }, title, url); mirror.length = pos; noteEntry(); };
+  history.replaceState = (st, title, url) => { rawReplace({ ...(st || {}), i: pos }, title, url); noteEntry(); };
+  window.addEventListener("popstate", () => { if (Number.isInteger(history.state?.i)) pos = history.state.i; if (pos < floor) floor = pos; noteEntry(); }, true);
+  window.addEventListener("pagehide", writeTrail);
+  // The trail in front, as the place `tab` should find it again: nothing of a sheet's marker, and
+  // nothing of the place a step came in from (a search typed in the Library begins at the search).
+  function trailFor(tab) {
+    let live = mirror.slice(floor, pos + 1);
+    const hole = live.map((e) => !e).lastIndexOf(true); // entries from before a reload that lost the mirror
+    if (hole >= 0) live = live.slice(hole + 1);
+    live = live.filter((e) => !e.state?.overlay);
+    const first = live.findIndex((e) => tabOfUrl(e.url) === tab);
+    if (first < 0) return null;
+    if (first === 0) return live;
+    const base = live[first].state?.n || 0;
+    return live.slice(first).map((e, k) => ({ url: e.url, state: { ...e.state, n: Math.max(0, (e.state?.n || 0) - base), ...(k ? {} : { prev: null, prevUrl: null, prevList: null }) } }));
+  }
+  let tabJump = false; // a step back to where the trails begin, asked for by a tab: nothing to render on it
+  function jumpBy(delta) {
+    return new Promise((done) => {
+      tabJump = true;
+      const end = () => { clearTimeout(timer); window.removeEventListener("popstate", end); tabJump = false; done(); };
+      const timer = setTimeout(end, 1000);
+      window.addEventListener("popstate", end);
+      history.go(delta);
+    });
+  }
+  // A tab. Another place comes back as it was left, at its own scroll; the place you are in goes
+  // to its top (the shelves, an empty Search with the cursor in the box, the board, the thread).
+  let switching = false;
+  async function switchTab(to, { top = false } = {}) {
+    if (!state.ready || switching || !TAB_TOP[to]) return;
+    if (overlay === "sheet" || overlay === "stage") return; // a sheet or the stage is answered first (the tabs are inert under them)
+    const from = tabNow();
+    const same = to === from;
+    if (same && pos === floor && !pageNow() && !state.q.trim() && (location.hash || "#").split("?")[0] === TAB_TOP[to]) { // already at its top
+      window.scrollTo(0, 0); listPane.scrollTop = 0;
+      if (to === "search") focusBox();
+      if (to === "deck" && wide() && panelPane.hidden) panel.restore();
+      return;
+    }
+    switching = true;
+    try {
+      rememberScroll(); leavingScroll = null;
+      if (!same) { const mine = trailFor(from); if (mine) kept[from] = mine; }
+      const back = !same && !top && kept[to]?.length ? kept[to] : null;
+      const trail = back || [{ url: TAB_TOP[to], state: { n: 0, label: null, prev: null, place: to === "search" ? "search" : null } }];
+      overlay = null; noteUnder = null;
+      if (pos > floor) await jumpBy(floor - pos);
+      trail.forEach((e, k) => (k ? history.pushState : history.replaceState)(e.state, "", e.url));
+      leaveSearch(); typedLeft = null;
+      readUrl();
+      paneView = to === "deck" ? "board" : "page"; // the board is the Deck's; elsewhere it shows only when the switch asks
+      syncControls();
+      mainEl.classList.remove("tab-in"); void mainEl.offsetWidth; mainEl.classList.add("tab-in"); // a quick fade in (app.css; none under reduced motion)
+      await render({ restore: back ? history.state?.scroll || null : null });
+      if (!back) { window.scrollTo(0, 0); listPane.scrollTop = 0; }
+      if (to === "search" && !state.q.trim() && !pageNow()) focusBox();
+    } finally { switching = false; }
   }
 
   // The trail. Every place you go is a history entry; history.state carries its depth within
@@ -176,6 +261,7 @@ import { esc, mb } from "./lib/format.js";
     if (state.q.trim().length >= 2) return state.view === "all" ? "Every match" : "Results";
     if (tab === "ask") return "Ask";
     if (tab === "deck") return "Deck";
+    if (tab === "search") return "Search";
     if (tab) return (shelfDepth(state.browse) && shelfNamed?.key === browseKey(state.browse) && shelfNamed.name) || TAB_TITLE[tab] || "Shelf";
     return "Library";
   }
@@ -189,9 +275,10 @@ import { esc, mb } from "./lib/format.js";
     const cur = history.state || {};
     // a marker entry (a sheet or the stage over a place) stays one: push() reads the flag to know it is leaving from an overlay
     history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, prevList: cur.prevList || null, ...patch }, "", location.href);
+    syncTitle();
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
-  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); }
+  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); else syncTitle(); }
   // Where the view was scrolled, kept on the entry being left. A path that redraws before it pushes
   // calls this first; push() then keeps that reading instead of measuring the new view.
   let leavingScroll = null;
@@ -202,7 +289,7 @@ import { esc, mb } from "./lib/format.js";
     const url = urlFor();
     if (location.hash === url || (url === "#" && !location.hash)) { settleOverlay(); return; }
     // a move from inside a sheet is never a refinement of the entry under it: the marker becomes the new place
-    if (replace && !history.state?.overlay) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), list: labelNow(true), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
+    if (replace && !history.state?.overlay) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), list: labelNow(true), place: history.state?.place || null }, "", url); refreshTrailButtons(); syncPlace(); return; }
     const fromOverlay = !!history.state?.overlay;
     if (!fromOverlay && (!leavingScroll || Date.now() - leavingScroll.at > 2000)) rememberScroll(); // a reading older than the move it was taken for is stale
     leavingScroll = null;
@@ -215,10 +302,15 @@ import { esc, mb } from "./lib/format.js";
     // leaving from inside a sheet or the stage: its marker entry becomes the new place, so Back
     // from there returns to the page under it, not to a sheet that is no longer open
     const prevList = history.state?.list || null; // for the Deck's entry once its pane is switched back to the page (backLabel)
+    // a step that crosses into another place (a search typed in the Library, Think it through from a
+    // page) leaves the place it came from as it was: its tab comes back to this
+    const leftTab = tabOfUrl(prevUrl);
+    if (leftTab !== tabOfUrl(url)) { const t = trailFor(leftTab); if (t) kept[leftTab] = t; }
     if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, prevUrl, prevList, scroll: null, place: null }, "", url); }
     else history.pushState({ n: here() + 1, label: null, prev, prevUrl, prevList, scroll: null, place: null }, "", url);
     nameEntry();
     refreshTrailButtons();
+    syncPlace(); // a step can cross into another place (words typed in the Library's field are Search)
   }
   // Overlays (a sheet, the stage) sit over a place without being one. Opening one puts a marker
   // entry in history at the same address, so Back closes the overlay and nothing else; closing it
@@ -249,14 +341,29 @@ import { esc, mb } from "./lib/format.js";
     if (s.prevList && wide() && state.browse?.tab === "deck" && !state.q.trim() && paneView === "page" && pageOpen()) return s.prevList;
     return s.prev || "Back";
   }
+  // Where a trail begins there is no step to take back. In the Library that is home; in the other
+  // places on a phone a page that covers the list closes, and the button says what is under it.
+  function floorLabel() {
+    if (tabNow() === "library") return "Library";
+    return !wide() && pageNow() ? labelNow(true) : null;
+  }
   function goBack() {
     if (here() > 0) history.back();
-    else goHome();
+    else if (tabNow() === "library") goHome();
+    else if (pageNow()) { state.docId = null; state.pid = null; state.studyId = null; render().then(() => push(true), () => {}); }
+  }
+  // The four places. Which one this is follows from the address: words in the box (or the empty
+  // Search) are Search, #deck and #ask are themselves, and everything else, shelves and pages, is
+  // the Library.
+  const TAB_NAME = { library: "Library", search: "Search", deck: "Deck", ask: "Ask" };
+  function tabNow() {
+    const t = state.browse?.tab;
+    return state.q.trim() || t === "search" ? "search" : t === "deck" || t === "ask" ? t : "library";
   }
   // Home, Ask and the Deck are destinations, not steps: going from one to another takes its place
   // in the trail, so Back from any of them still leads to where you were before the first. A page
   // the move closes or covers is a step all the same: Back must bring it back.
-  const atTab = () => !state.q.trim() && (!state.browse?.tab || state.browse.tab === "ask" || state.browse.tab === "deck");
+  const atTab = () => !state.q.trim() && (!state.browse?.tab || state.browse.tab === "ask" || state.browse.tab === "deck" || state.browse.tab === "search");
   const pageNow = () => (state.docId ? `d${state.docId}` : state.studyId ? `s${state.studyId}` : null);
   const tabLeft = () => ({ top: atTab(), page: pageNow(), shown: !readerPane.hidden });
   function tabStep(from) {
@@ -316,9 +423,10 @@ import { esc, mb } from "./lib/format.js";
   }
   // What Back says, wherever it is drawn
   function trailButton() {
-    const label = backLabel();
-    return el("button", { type: "button", class: "trail-back", "aria-label": label ? `Back to ${label}` : "Library", title: label ? `Back to ${label}` : "Library", onclick: goBack }, [
-      el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: label || "Library" })]);
+    const label = backLabel() || floorLabel();
+    if (!label) return el("span", { class: "trail-back none", hidden: true }); // the top of Search, the Deck or Ask: the tab bar is the way out
+    return el("button", { type: "button", class: "trail-back", "aria-label": `Back to ${label}`, title: `Back to ${label}`, onclick: goBack }, [
+      el("span", { class: "chev", text: "‹" }), el("span", { class: "lb", text: label })]);
   }
   function refreshTrailButtons() {
     for (const b of document.querySelectorAll(".trail-back")) if (!b.closest(".head-back")) b.replaceWith(trailButton());
@@ -335,6 +443,7 @@ import { esc, mb } from "./lib/format.js";
   function listTrail() { return backLabel() ? el("div", { class: "list-trail" }, [trailButton()]) : null; }
   window.addEventListener("popstate", () => {
     if (!state.ready) return;
+    if (tabJump) return; // a tab's step back to where the trails begin: switchTab draws what follows
     if (poppingOverlay) { poppingOverlay = false; return; } // our own pop of a marker, already closed
     if (overlay && !history.state?.overlay) { // Back with a sheet or the stage open: close it, stay where you are
       const kind = overlay;
@@ -374,7 +483,7 @@ import { esc, mb } from "./lib/format.js";
     for (const b of document.querySelectorAll(".scopes button")) { const on = b.dataset.scope === state.scope; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
     const on = $(".scopes button.on");
     if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {} }
-    input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : wide() ? "Search, or type a reference like Alma 32:21" : "Search, or a reference";
+    input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : wide() && tabNow() === "search" ? "Search, or type a reference like Alma 32:21" : "Search, or a reference";
     $("#fSpeaker").value = state.speaker;
     $("#fFrom").value = state.from;
     $("#fTo").value = state.to;
@@ -382,15 +491,42 @@ import { esc, mb } from "./lib/format.js";
     for (const b of document.querySelectorAll("#fGroup button")) b.classList.toggle("on", b.dataset.group === state.group);
     const active = !!(state.speaker || state.from || state.to || state.book || state.group !== "passages");
     $("#filterBtn").classList.toggle("on", active);
-    $("#filterBtn").setAttribute("aria-pressed", String(active));
-    // which tab is open shows in the header
-    const tab = state.browse?.tab;
-    $("#askBtn").classList.toggle("on", tab === "ask");
-    $("#deckBtn").classList.toggle("on", tab === "deck");
-    $("#askBtn").setAttribute("aria-pressed", String(tab === "ask"));
-    $("#deckBtn").setAttribute("aria-pressed", String(tab === "deck"));
-    document.body.classList.toggle("tab-open", tab === "ask" || tab === "deck");
-    document.body.classList.toggle("shelf-studies", tab === "studies" && !state.q.trim());
+    $("#filterBtn").setAttribute("aria-label", active ? "Filters, some set" : "Filters");
+    syncPlace();
+  }
+  // Which of the four places is current: marked in the tab bar, named in the head (a real h1) and
+  // in the document's title, and on the body for app.css, which shows each place its own head.
+  const ICON_GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.3.9a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.3-.9-2 3.4 1.9 1.5a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.3-.9a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.3.9 2-3.4z"/></svg>';
+  let actsFor = null;
+  function syncPlace() {
+    const tab = tabNow();
+    document.body.dataset.tab = tab;
+    for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) {
+      const on = b.dataset.tab === tab;
+      b.classList.toggle("on", on);
+      if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    }
+    const shelf = tab === "library" ? state.browse?.tab || null : null;
+    document.body.classList.toggle("deep", !!shelf); // in a shelf its own heading leads, with Back beside it
+    document.body.classList.toggle("shelf-studies", shelf === "studies");
+    $("#placeTitle").textContent = TAB_NAME[tab];
+    measureBar();
+    // what sits at the end of the head: Settings in the Library on a phone (the rail has the gear on an iPad)
+    const want = tab === "library" && !wide() ? "gear" : "";
+    if (want !== actsFor) {
+      actsFor = want;
+      $("#barActs").replaceChildren(...(want === "gear" ? [el("button", { type: "button", class: "icon-btn gear-btn", "aria-label": "Settings", title: "Settings", html: ICON_GEAR, onclick: () => openSettings() })] : []));
+    }
+    syncTitle();
+  }
+  // The document's title: the page in front by name, else the place ("Search: faith", "Library")
+  function syncTitle() {
+    const tab = tabNow();
+    const paged = (state.docId && currentDoc && currentDoc.id === state.docId) || (state.studyId && currentStudy && currentStudy.id === state.studyId);
+    const page = paged && (!wide() || !readerPane.hidden) ? shortTitleOf(state.docId ? currentDoc : currentStudy) : "";
+    const shelf = tab === "library" && state.browse?.tab ? TAB_TITLE[state.browse.tab] || "" : "";
+    const title = page || (tab === "search" && state.q.trim() ? `Search: ${state.q.trim()}` : shelf || TAB_NAME[tab]);
+    if (document.title !== title) document.title = title;
   }
 
   // ------------------------------------------------------------ render ----
@@ -567,15 +703,17 @@ import { esc, mb } from "./lib/format.js";
   // A newer library on the server? Offer it. When the server has a delta from this device's
   // build, only what changed is downloaded and applied in place; otherwise, or if that fails,
   // the whole library is installed into the other slot and the app switches to it.
-  async function checkForUpdate() {
-    if (!navigator.onLine) return;
+  // asked: Settings' "Check for an update", which says what it found; the check at start is silent
+  async function checkForUpdate(asked = false) {
+    if (!navigator.onLine) { if (asked) toast("This device is offline; the library on it is the one in use."); return "offline"; }
     const active = store.get("active");
     let manifest;
-    try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { return; }
-    if (!active || manifest.version === active.version) return;
+    try { manifest = await call("manifest", { manifestUrl: MANIFEST_URL }); } catch (_) { if (asked) toast("Could not reach the library's server just now."); return "failed"; }
+    if (!active || manifest.version === active.version) { if (asked) toast("The library is up to date."); return "current"; }
+    if ($(".banner.library-update")) return "found";
     const delta = pickDelta(manifest, active.version);
     const when = new Date(manifest.built_at).toLocaleDateString([], { month: "short", day: "numeric" });
-    const banner = el("div", { class: "banner" }, [
+    const banner = el("div", { class: "banner library-update" }, [
       el("span", { text: delta
         ? `A newer library is available (built ${when}): ${delta.documents_changed} ${delta.documents_changed === 1 ? "page" : "pages"} changed, ${mb(delta.size)} to download.`
         : `A newer library is available (built ${when}, ${mb(manifest.bundle_size)}).` }),
@@ -583,6 +721,7 @@ import { esc, mb } from "./lib/format.js";
       el("button", { class: "icon-btn", "aria-label": "Later", text: "×", onclick: () => banner.remove() }),
     ]);
     $("header.bar").after(banner);
+    return "found";
   }
   async function updateNow(banner, manifest, delta = null) {
     const active = store.get("active");
@@ -710,6 +849,13 @@ import { esc, mb } from "./lib/format.js";
       if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow(), list: labelNow(true) }); // a new search from elsewhere is a move; refining one is not
         // results drawn at the start of the trail had no Back to show; now that the search is a step, they do
         const lt = !$(".list-trail", listPane) && listTrail(); if (lt) listPane.prepend(lt);
+      }
+      // on a wide screen the pane beside fresh results is not left blank: the best match opens in it,
+      // in this same entry, so Back still leaves the search in one step. A page already open stays.
+      if (!typeahead && !more && !silent && wide() && tabNow() === "search" && state.view !== "all" && state.group !== "documents" && !data.jump
+        && data.hits.length && !state.docId && !state.studyId && panelPane.hidden) {
+        const h = data.hits[0];
+        openDoc(h.doc_id, h.pid, { replace: true });
       }
       // the concordance is every match already: Claude's extra searches belong to the ranked list, and would redraw it over this one
       if (!typeahead && !more && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
@@ -1015,8 +1161,11 @@ import { esc, mb } from "./lib/format.js";
     ["manuals", "Manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
     ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Arriving, a series a night"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Arriving nightly"],
-    ["studies", "My studies", (st) => [st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own` : "Pages of your own", st.marks ? `${st.marks} ${st.marks === 1 ? "highlight or note" : "highlights and notes"}` : "your highlights and notes"].join(", ") + ", kept on this device", (st) => st.studies || st.marks ? [st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"}` : null, st.marks ? `${st.marks} marks` : null].filter(Boolean).join(", ") : "Pages, highlights, notes"],
+    // the two that are his own: rows under the shelves, not tiles among them
+    ["studies", "My studies", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own, kept on this device` : "Pages of your own, added from Files", (st) => st.studies ? `${st.studies} ${st.studies === 1 ? "page" : "pages"} of your own` : "Pages of your own"],
+    ["marks", "Highlights and notes", (st) => st.marks ? `${st.marks} ${st.marks === 1 ? "passage" : "passages"} marked, kept on this device` : "Tap a verse while reading, then a color or Note", (st) => st.marks ? `${st.marks} ${st.marks === 1 ? "passage" : "passages"} marked` : "None yet"],
   ];
+  const OWN = new Set(["studies", "marks"]);
   function jspPages(st) { return st.collections.filter((c) => c.slug.startsWith("jsp-")).reduce((a, c) => a + c.docs, 0); }
   function latestName(st, short = false) {
     const l = st.latest_conference;
@@ -1028,7 +1177,7 @@ import { esc, mb } from "./lib/format.js";
   // a shelf with nothing on it yet stays off the home screen (the conference shelf and the Papers say what is coming)
   function hasShelf(st, key) {
     if (key === "jsp") return st.collections.some((c) => c.slug.startsWith("jsp-") && c.docs > 0);
-    if (key === "conference" || key === "studies") return true;
+    if (key === "conference" || OWN.has(key)) return true;
     return count(st, key) > 0;
   }
   const TAB_TITLE = Object.fromEntries(SHELVES.map(([k, t]) => [k, t]));
@@ -1050,6 +1199,7 @@ import { esc, mb } from "./lib/format.js";
     nameEntry();
     try {
       if (!tab) return renderOverview(body, st);
+      if (tab === "search") return renderSearchHome(body);
       if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); return; }
       if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
@@ -1060,12 +1210,36 @@ import { esc, mb } from "./lib/format.js";
       else if (tab === "scriptures") await browseScriptures(body);
       else if (tab === "jsp") await browseJsp(body);
       else if (tab === "studies") await renderStudies(body);
+      else if (tab === "marks") await renderMarks(body);
       else await browseCollection(body, tab);
     } catch (e) {
       body.append(el("div", { class: "status error", text: e.message }));
     }
   }
   function setOverview(on) { document.body.classList.toggle("overview", !!on); }
+  // Search with nothing in the box yet: what the box takes, in a line, and the last few searches
+  // entered (kept on this device), each one tap away.
+  const ICON_RECENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.500V12l3 2"/></svg>'.replace("7.500", "7.5");
+  function rememberSearch(q) {
+    q = String(q || "").trim();
+    if (q.length < 2) return;
+    const was = store.get("recentSearches", []);
+    store.set("recentSearches", [q, ...(Array.isArray(was) ? was : []).filter((x) => x !== q)].slice(0, 8));
+  }
+  function renderSearchHome(body) {
+    const t = listTrail(); if (t) body.append(t);
+    const box = el("div", { class: "search-home" }, [
+      el("p", { class: "search-lede", text: "Words, a phrase in quotes, a question, or a reference like Alma 32:21." }),
+    ]);
+    const recent = store.get("recentSearches", []);
+    if (Array.isArray(recent) && recent.length) {
+      box.append(el("div", { class: "home-sec-head recent-head" }, [el("h2", { text: "Recent" }), el("button", { type: "button", class: "text-btn small", text: "Clear", onclick: () => { store.del("recentSearches"); renderHome(); } })]));
+      const list = el("div", { class: "recent-list" });
+      for (const q of recent) list.append(el("button", { type: "button", class: "recent-row", onclick: () => { state.q = q; syncControls(); rememberSearch(q); runSearch({ typeahead: false }); } }, [el("span", { class: "ic", html: ICON_RECENT }), el("span", { class: "t", text: q })]));
+      box.append(list);
+    }
+    body.append(box);
+  }
   function openShelf(key) {
     rememberScroll();
     leaveSearch();
@@ -1078,14 +1252,18 @@ import { esc, mb } from "./lib/format.js";
   }
 
   // The home screen: where you were, the shelves, the latest conference, a word about Ask.
-  async function renderOverview(body, st) {
+  async function renderOverview(root, st) {
+    // two groups: the shelves and what is yours, then what is new and Ask. Side by side on a wide
+    // screen, one after the other on a phone (app.css).
+    const body = el("div", { class: "home-col" }), side = el("div", { class: "home-col home-side" });
+    root.append(body, side);
     const last = store.get("lastRead");
     const deckN = window.Deck?.count ? window.Deck.count() : 0;
     if (last || deckN) {
       const sec = el("section", { class: "home-sec sec-continue" }, [el("h2", { text: "Continue" })]);
       if (last) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openDoc(last.id, last.pid || null) }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: last.title }), el("span", { class: "hc-s", text: [last.where, last.verse ? `at verse ${last.verse}` : null].filter(Boolean).join(" · ") })]), el("span", { class: "hc-go", text: "›" })]));
-      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openTab("deck") }, [
+      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => switchTab("deck") }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
       body.append(sec);
     }
@@ -1103,12 +1281,15 @@ import { esc, mb } from "./lib/format.js";
     } catch (_) { /* no lesson, no card */ }
     const shelves = el("section", { class: "home-sec sec-shelves" }, [el("div", { class: "home-sec-head" }, [el("h2", { text: "Shelves" }), el("span", { class: "hint", text: "Open one to browse it; the search box then searches only that shelf" })])]);
     const grid = el("div", { class: "shelf-grid" });
+    const yours = el("div", { class: "own-list" });
     for (const [key, title, sub, short] of SHELVES) {
       if (!hasShelf(st, key) && key !== "jsp") continue;
-      grid.append(el("button", { type: "button", class: "shelf-tile", onclick: () => openShelf(key) }, [el("span", { class: "st-t", text: title }), el("span", { class: "st-s", text: (wide() ? sub : short)(st) })]));
+      if (OWN.has(key)) yours.append(el("button", { type: "button", class: "shelf-tile own-row", onclick: () => openShelf(key) }, [el("span", { class: "own-main" }, [el("span", { class: "st-t", text: title }), el("span", { class: "st-s", text: (wide() ? sub : short)(st) })]), el("span", { class: "hc-go", "aria-hidden": "true", text: "›" })]));
+      else grid.append(el("button", { type: "button", class: "shelf-tile", onclick: () => openShelf(key) }, [el("span", { class: "st-t", text: title }), el("span", { class: "st-s", text: (wide() ? sub : short)(st) })]));
     }
     shelves.append(grid);
     body.append(shelves);
+    body.append(el("section", { class: "home-sec sec-yours" }, [el("h2", { text: "Yours" }), yours]));
     try {
       const latest = await api("recent");
       if (latest.conference && latest.talks.length) {
@@ -1117,14 +1298,14 @@ import { esc, mb } from "./lib/format.js";
         for (const t of latest.talks.slice(0, 6)) list.append(el("button", { class: "toc-row", "data-doc": t.id, onclick: () => openDoc(t.id, null) }, [el("div", { class: "t", text: t.title }), el("div", { class: "s", text: [t.author, t.session].filter(Boolean).join(" · ") })]));
         if (latest.talks.length > 6) list.append(el("button", { class: "toc-row more-talks", onclick: () => openShelf("conference") }, [el("div", { class: "t", text: `All ${latest.talks.length} talks ›` })]));
         sec.append(list);
-        body.append(sec);
+        side.append(sec);
       }
     } catch (_) { /* no conference yet */ }
     if (window.Ask) {
       const q = el("input", { type: "text", class: "ask-teaser-q", placeholder: "What have the prophets taught about covenants and identity?", "aria-label": "A question for the library" });
       const go = () => { rememberScroll(); state.browse = { tab: "ask", question: q.value.trim() }; state.q = ""; syncControls(); renderHome(); showList(); push(); };
       q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
-      body.append(el("section", { class: "home-sec sec-ask ask-teaser" }, [
+      side.append(el("section", { class: "home-sec sec-ask ask-teaser" }, [
         el("div", { class: "hc-t", text: "Ask the library" }),
         el("div", { class: "hc-s", text: "A question or a draft: Claude searches these shelves itself and answers with the passages, which you can open, present, or put on the deck." }),
         el("div", { class: "ask-teaser-row" }, [q, el("button", { type: "button", class: "primary", text: "Ask", onclick: go })]),
@@ -1265,7 +1446,7 @@ import { esc, mb } from "./lib/format.js";
       ...sizeTools(doc),
       el("button", { class: "icon-btn bar-extra", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       thinkBtn(),
-      doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
+      doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn cite-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
       el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => outside(e, doc.source_url), title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
       el("span", { class: "pane-switch-slot" }),
     ].filter(Boolean));
@@ -1282,30 +1463,7 @@ import { esc, mb } from "./lib/format.js";
       doc.next ? el("button", { text: `${doc.next.title} ›`, onclick: () => stepChapter(doc.next) }) : el("span"),
     ]);
     const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
-    // On a phone the tools sit at the bottom, under the thumb; the top bar keeps the way back and the crumb.
-    const sizeRow = el("div", { class: "size-row", hidden: true }, [
-      el("span", { text: "Text size" }),
-      el("button", { type: "button", "aria-label": "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
-      el("button", { type: "button", "aria-label": "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
-    ]);
-    const rfoot = el("div", { class: "reader-foot" }, [
-      footBtn("Present", ICON_PRESENT, () => startPresenting()),
-      el("span", { class: "slot-orig" }),
-      footBtn("Text size", "<span class='glyph' style='font-size:20px;font-weight:700'>A</span>", (e) => { sizeRow.hidden = !sizeRow.hidden; e.currentTarget.classList.toggle("on", !sizeRow.hidden); }),
-      doc.collection && doc.collection.startsWith("jsp-") ? footBtn("Cite", "<span class='glyph' style='font-size:18px;font-weight:700'>“”</span>", () => citePapers(doc)) : null,
-      footBtn("Add to deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
-        const units = selectedUnits();
-        if (!units.length) { toast("Tap a verse or paragraph to select it first."); return; }
-        const first = $(".doc .sel", readerPane);
-        const added = window.Deck?.addFromDoc(currentDoc, units);
-        clearSelection();
-        focusUnit(first);
-        deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
-      }),
-      footBtn("Think", ICON_THINK, () => thinkHere(), "Think it through with Claude"),
-      el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => outside(e, doc.source_url), "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
-    ]);
-    readerPane.replaceChildren(bar, body, nav, foot, sizeRow, rfoot);
+    readerPane.replaceChildren(bar, body, nav, foot);
     readerPane.classList.remove("has-study");
     releaseStudyUrl();
     readerPane.scrollTop = 0;
@@ -1650,7 +1808,7 @@ import { esc, mb } from "./lib/format.js";
     const frame = readerPane.querySelector(".study-frame");
     if (!frame) { readerPane.classList.remove("has-study"); return; }
     const top = frame.getBoundingClientRect().top;
-    const bottom = wide() ? readerPane.getBoundingClientRect().bottom : window.innerHeight;
+    const bottom = wide() ? readerPane.getBoundingClientRect().bottom : window.innerHeight - ($("#tabs")?.offsetHeight || 0); // a phone: down to the tab bar
     frame.style.height = Math.max(240, Math.floor(bottom - top)) + "px";
   }
   window.addEventListener("resize", fitStudyFrame);
@@ -1687,7 +1845,7 @@ import { esc, mb } from "./lib/format.js";
       : "Pages of your own, kept on this device: a study you built, a lesson, notes. Add an HTML, Markdown or text file from Files; it opens here, offline, and its links to the scriptures and to talks open the library's copy." });
     body.append(intro);
     body.append(el("div", { class: "studies-add" }, [el("button", { type: "button", class: "primary", text: list.length ? "Add a page" : "Add a page from Files", onclick: () => pick.click() })]));
-    if (!list.length) { await renderMarks(body); return; }
+    if (!list.length) return;
     const rows = el("div", { class: "study-list" });
     for (const rec of list) {
       rows.append(el("div", { class: "study-row" + (state.studyId === rec.id ? " on" : "") }, [
@@ -1705,7 +1863,6 @@ import { esc, mb } from "./lib/format.js";
       ]));
     }
     body.append(rows);
-    await renderMarks(body);
   }
 
   // ---- My studies in the library's flow ---------------------------------------
@@ -1818,7 +1975,7 @@ import { esc, mb } from "./lib/format.js";
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
     const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
-    sec.append(el("div", { class: "home-sec-head" }, [el("h2", { text: marks.length ? `Highlights and notes · ${marks.length}` : "Highlights and notes" }), allBtn]));
+    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked` : "Nothing marked yet" }), allBtn]));
     const list = el("div", { class: "mark-list" });
     const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
       let id = m.doc_id;
@@ -1872,20 +2029,7 @@ import { esc, mb } from "./lib/format.js";
           // built from the marks already listed, with no wait, so the share sheet opens inside the tap
           const name = `gospel-marks-${new Date().toISOString().slice(0, 10)}.json`;
           const text = window.Marks.exportJsonOf ? window.Marks.exportJsonOf(marks) : await window.Marks.exportJson();
-          // on an iPhone or iPad the share sheet (Save to Files, AirDrop) is the dependable way out of
-          // a home-screen app, as it is for the deck; a download link is the way elsewhere
-          if (navigator.maxTouchPoints > 0 && typeof File === "function") {
-            const file = new File([text], name, { type: "application/json" });
-            let can = false;
-            try { can = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
-            if (can) {
-              try { await navigator.share({ files: [file], title: "Highlights and notes" }); return; }
-              catch (err) { if (err && err.name === "AbortError") return; } // anything else: the download below
-            }
-          }
-          const blob = new Blob([text], { type: "application/json" });
-          const a = el("a", { href: URL.createObjectURL(blob), download: name });
-          document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+          await saveFile(name, text, "Highlights and notes");
         } catch (_) { toast("Could not export just now."); }
       } }) : null,
       el("button", { type: "button", class: "text-btn", text: "Import", title: "Bring in highlights and notes from a file", onclick: () => pick.click() }),
@@ -1894,8 +2038,141 @@ import { esc, mb } from "./lib/format.js";
     body.append(sec);
   }
 
+  // A JSON file handed to the device. On an iPhone or iPad the share sheet (Save to Files,
+  // AirDrop) is the dependable way out of a home-screen app, as it is for the deck; a download
+  // link is the way elsewhere.
+  async function saveFile(name, text, title) {
+    if (navigator.maxTouchPoints > 0 && typeof File === "function") {
+      const file = new File([text], name, { type: "application/json" });
+      let can = false;
+      try { can = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
+      if (can) {
+        try { await navigator.share({ files: [file], title }); return; }
+        catch (err) { if (err && err.name === "AbortError") return; } // anything else: the download below
+      }
+    }
+    const blob = new Blob([text], { type: "application/json" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  // ---- Settings: one screen behind the gear ---------------------------------
+  // The gear (the rail's foot on an iPad, the top of the Library on a phone, and the one on Ask)
+  // opens one screen, in the app's sheet, so Back and Escape close it: Claude (ask.js draws its
+  // own part), Reading, Library, Backup, About.
+  async function backupData() {
+    const out = { app: "gospel-library", kind: "backup", version: 1, exported: new Date().toISOString() };
+    out.marks = window.Marks ? await window.Marks.all() : [];
+    out.studies = window.Studies?.exportAll ? await window.Studies.exportAll() : [];
+    out.decks = window.Deck?.backup ? window.Deck.backup() : null;
+    // his words to Claude and what it was asked to remember; never the API key or the passphrase
+    out.ask = { instructions: window.Ask?.settings.instructions || "", notes: window.Ask?.settings.notes || "" };
+    out.reading = { size: store.get("readingSize") };
+    return out;
+  }
+  async function restoreBackup(text) {
+    const data = JSON.parse(text);
+    if (!data || typeof data !== "object") throw new Error("That file is not a backup from this app.");
+    if (data.kind === "marks" || Array.isArray(data)) { const n = await window.Marks.importJson(data); return n ? [`${n} ${n === 1 ? "mark" : "marks"}`] : []; }
+    if (data.app !== "gospel-library" || data.kind !== "backup") throw new Error("That file is not a backup from this app.");
+    const got = [];
+    if (Array.isArray(data.marks) && window.Marks) { const n = await window.Marks.importJson({ marks: data.marks }); if (n) got.push(`${n} ${n === 1 ? "mark" : "marks"}`); }
+    if (Array.isArray(data.studies) && window.Studies?.importAll) { const n = await window.Studies.importAll(data.studies); if (n) got.push(`${n} study ${n === 1 ? "page" : "pages"}`); }
+    if (data.decks && window.Deck?.restore) { const n = await window.Deck.restore(data.decks); if (n) got.push(`${n} ${n === 1 ? "deck" : "decks"} in My decks`); }
+    if (data.ask && window.Ask?.restore) got.push(...window.Ask.restore(data.ask));
+    return got;
+  }
+  function openSettings() {
+    if (!state.ready || overlay) return;
+    const head = el("h2", { text: "Settings", tabindex: "-1" });
+    const box = el("div", { class: "settings" }, [head]);
+    const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [el("h3", { text: title }), ...[].concat(kids).filter(Boolean)]); box.append(s); return s; };
+    const row = (label, value) => el("div", { class: "set-row" }, [el("span", { class: "set-lb", text: label }), typeof value === "string" ? el("span", { class: "set-val", text: value }) : value]);
+    if (window.Ask?.settingsBox) sec("claude", "Claude", window.Ask.settingsBox({ close: closeSheet }));
+    // Reading
+    const sizeNow = () => `${parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17} px`;
+    const sizeLb = el("span", { class: "set-size-now", "aria-live": "polite", text: sizeNow() });
+    const step = (d) => { resize(d); sizeLb.textContent = sizeNow(); };
+    sec("reading", "Reading", [
+      row("Text size", el("span", { class: "set-size" }, [
+        el("button", { type: "button", "aria-label": "Smaller text", onclick: () => step(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
+        sizeLb,
+        el("button", { type: "button", "aria-label": "Larger text", onclick: () => step(1), html: "<span style='font-size:21px;font-weight:600'>A</span>" }),
+      ])),
+      el("p", { class: "set-sample", text: "For behold, this life is the time for men to prepare to meet God." }),
+    ]);
+    // Library: filled in as the answers come
+    const libRows = el("div", { class: "set-rows" }, [row("On this device", "Counting…")]);
+    const checkBtn = el("button", { type: "button", class: "text-btn", text: "Check for an update", onclick: async () => {
+      checkBtn.disabled = true; checkBtn.textContent = "Checking…";
+      const found = await checkForUpdate(true);
+      checkBtn.disabled = false; checkBtn.textContent = "Check for an update";
+      if (found === "found") closeSheet(); // the offer is on the page under this screen
+    } });
+    sec("library", "Library", [libRows, el("div", { class: "set-acts" }, [checkBtn])]);
+    (async () => {
+      const rows = [];
+      try {
+        const st = await libraryStats();
+        const active = store.get("active") || {};
+        const built = st.meta?.bundle?.built_at || active.builtAt;
+        rows.push(row("Version", [built ? `Built ${new Date(built).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}` : "", active.version ? `version ${String(active.version).slice(0, 12)}` : ""].filter(Boolean).join(", ") || "Unknown"));
+        const sem = await semanticNote();
+        rows.push(row("On this device", [`${st.documents.toLocaleString()} pages`, st.verses ? `${st.verses.toLocaleString()} verses` : "", st.talks ? `${st.talks.toLocaleString()} talks` : "", st.originals ? "Hebrew and Greek" : "", sem ? "the search model" : ""].filter(Boolean).join(", ")));
+      } catch (_) { rows.push(row("On this device", "The library is not answering.")); }
+      try { const e = await navigator.storage?.estimate?.(); if (e && e.usage) rows.push(row("Size", `${mb(e.usage)} used on this device`)); } catch (_) {}
+      const keepRow = el("div", { class: "set-row" });
+      const drawKeep = async () => {
+        let kept = null;
+        try { kept = navigator.storage?.persisted ? await navigator.storage.persisted() : null; } catch (_) {}
+        keepRow.replaceChildren(el("span", { class: "set-lb", text: "Storage" }), el("span", { class: "set-val" }, [
+          kept === null ? "This browser does not say whether it keeps the library." : kept ? "Kept: the system will not clear the library or your marks to make room." : "Not promised yet: the system may clear it when the device runs short. Adding the app to the Home Screen helps. ",
+          kept === false ? el("button", { type: "button", class: "text-btn inline", text: "Ask again", onclick: async () => { try { await navigator.storage.persist(); } catch (_) {} drawKeep(); } }) : null,
+        ].filter(Boolean)));
+      };
+      await drawKeep();
+      rows.push(keepRow);
+      libRows.replaceChildren(...rows);
+    })();
+    // Backup
+    const pick = el("input", { type: "file", accept: ".json,application/json", hidden: true, "aria-hidden": "true" });
+    const said = el("p", { class: "set-said", role: "status" });
+    pick.addEventListener("change", async () => {
+      const file = pick.files && pick.files[0];
+      if (!file) return;
+      try { const got = await restoreBackup(await file.text()); said.textContent = got.length ? `Brought in: ${got.join(", ")}.` : "Nothing new in that file."; statsCache = null; if (tabNow() === "library" && sheet.hidden === false && !state.q.trim()) renderHome(); }
+      catch (err) { said.textContent = err instanceof SyntaxError ? "That file could not be read." : err.message || "That file could not be read."; }
+      pick.value = "";
+    });
+    sec("backup", "Backup", [
+      el("p", { class: "set-note", text: "One file with your highlights and notes, your study pages, your decks, your instructions to Claude and what it was asked to remember. The API key and the library passphrase are never in it." }),
+      el("div", { class: "set-acts" }, [
+        el("button", { type: "button", class: "primary", text: "Export everything", onclick: async () => {
+          try { await saveFile(`gospel-library-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await backupData(), null, 1), "Gospel Library backup"); said.textContent = "Exported. Keep the file somewhere other than this device."; }
+          catch (_) { said.textContent = "Could not export just now."; }
+        } }),
+        el("button", { type: "button", class: "text-btn", text: "Import", onclick: () => pick.click() }),
+        pick,
+      ]),
+      said,
+    ]);
+    // About
+    const ver = el("p", { class: "set-note" });
+    sec("about", "About", [
+      el("p", { class: "set-note", text: "A personal copy of the scriptures, general conference and the manuals, kept on this device and searched here; it works offline. The text and study helps are the Church's, copied from churchofjesuschrist.org and josephsmithpapers.org for personal study." }),
+      ver,
+    ]);
+    try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
+    $(".sheet-body", sheet).replaceChildren(box);
+    sheet.classList.add("page");
+    openSheet("Settings");
+    // the sheet puts the cursor in its first field; here that would raise the keyboard over the
+    // settings before anything is read, so the heading takes the focus instead
+    setTimeout(() => { try { head.focus({ preventScroll: true }); } catch (_) {} }, 60);
+  }
+
   // ---- Think it through, from anywhere ------------------------------------
-  // A lamp in the reader bar (in the bottom bar on a phone) for the page being read, and "Think
+  // A lamp in the reader bar (in its menu on a phone) for the page being read, and "Think
   // these through" on the line above a set of results: the page (with anything selected) or the
   // search goes to Claude on the Ask tab, which comes back with what the library holds that
   // connects to it, each passage a card for the deck. It was a floating pill once, and sat on
@@ -1918,10 +2195,6 @@ import { esc, mb } from "./lib/format.js";
     if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; } // on a phone the page gives way to the thinking; Back returns to it
     state.browse = { tab: "ask", think: window.Ask.hasKey() ? subject : null };
     renderHome(); showList(); push();
-  }
-
-  function footBtn(label, icon, onclick, aria = label) {
-    return el("button", { type: "button", class: "foot-btn", "aria-label": aria, onclick }, [el("span", { class: "ic", html: icon }), el("span", { class: "lb", text: label })]);
   }
 
   // Tap a verse or paragraph to select it for the deck; a bar offers what to do with the selection.
@@ -1993,11 +2266,16 @@ import { esc, mb } from "./lib/format.js";
   function fitSelectBar() {
     const bar = $(".select-bar", readerPane);
     if (!bar || bar.offsetParent === null) return;
-    bar.classList.remove("compact");
-    bar.classList.add("measuring");
-    const over = bar.scrollWidth > bar.clientWidth + 1;
-    bar.classList.remove("measuring");
-    bar.classList.toggle("compact", over);
+    // two folds: Present, Copy and Clear behind "more"; then, still too full (an iPad in portrait
+    // beside the rail), the count goes and Add to deck is "+ Deck", as on a phone
+    bar.classList.remove("compact", "snug");
+    for (const level of ["compact", "snug"]) {
+      bar.classList.add("measuring");
+      const over = overflows(bar);
+      bar.classList.remove("measuring");
+      if (!over) break;
+      bar.classList.add(level);
+    }
   }
   window.addEventListener("resize", fitSelectBar);
   // A small menu on a button, the pattern of the reader bar's Aa: a tap opens it, a tap elsewhere
@@ -2320,14 +2598,21 @@ import { esc, mb } from "./lib/format.js";
     const menu = el("div", { class: "size-menu", role: "menu", hidden: true }, [
       el("button", { type: "button", role: "menuitem", onclick: () => resize(-1) }, [el("span", { class: "g", html: glyph(14) }), "Smaller text"]),
       el("button", { type: "button", role: "menuitem", onclick: () => resize(1) }, [el("span", { class: "g", html: glyph(20) }), "Larger text"]),
-      el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]),
+      el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); btn.focus(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]), // the menu's button is what the stage gives the focus back to
       el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => { shut(); outside(e, doc.source_url); } }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
       el("button", { type: "button", role: "menuitem", class: "menu-think", onclick: () => { shut(); thinkHere(); } }, [el("span", { class: "g", html: ICON_THINK }), "Think it through"]),
-    ]);
-    const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size", title: "Text size", "aria-haspopup": "menu", "aria-expanded": "false", text: "Aa", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } });
+      // the Hebrew or Greek switch (original.js puts it in the bar) when the bar has no room for it
+      el("button", { type: "button", role: "menuitem", class: "menu-orig", onclick: (e) => { const ob = e.currentTarget.closest(".reader-bar")?.querySelector(".orig-btn"); shut(); ob?.click(); } }, [el("span", { class: "g", html: "<b></b>" }), el("span", { class: "orig-name", text: "" })]),
+      jsp ? el("button", { type: "button", role: "menuitem", class: "menu-cite", onclick: () => { shut(); citePapers(doc); } }, [el("span", { class: "g", html: "<b>“”</b>" }), "Cite this page"]) : null,
+    ].filter(Boolean));
+    // "Aa" while it holds the sizes alone; three dots once Present and the rest have folded into it
+    const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size and more", title: "Text size and more", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } }, [el("span", { class: "aa", text: "Aa" }), el("span", { class: "dots", html: ICON_MORE })]);
     const away = (e) => { if (!wrap.contains(e.target)) shut(); };
     const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
-    function openMenu() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.addEventListener("keydown", key); menu.querySelector("button")?.focus({ preventScroll: true }); }
+    function openMenu() {
+      const ob = wrap.closest(".reader-bar")?.querySelector(".orig-btn"), item = menu.querySelector(".menu-orig");
+      if (ob && item) { item.querySelector(".orig-name").textContent = ob.classList.contains("on") ? `Hide the ${ob.textContent}` : ob.textContent; item.querySelector(".g b").textContent = /Greek/.test(ob.textContent) ? "α" : "א"; }
+      menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.addEventListener("keydown", key); menu.querySelector("button")?.focus({ preventScroll: true }); }
     function shut() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); }
     const wrap = el("span", { class: "size-pop" }, [btn, menu]);
     return [
@@ -2339,20 +2624,30 @@ import { esc, mb } from "./lib/format.js";
     ];
   }
   // How much of the bar folds away: none, the sizes into Aa, then the match count's words and a
-  // tighter switch, then Present and the site into the menu, and last the lamp. Measured with nothing allowed to shrink
+  // tighter switch, then Present and the site into the menu, then the lamp and Cite, and last (a
+  // phone with the match arrows up) the chapter arrows, which the foot of the page also has, and
+  // Back's label, leaving its arrow. Measured with nothing allowed to shrink
   // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
-  const BAR_LEVELS = ["compact", "tight", "tighter", "tightest"];
+  const BAR_LEVELS = ["compact", "tight", "tighter", "tightest", "bare", "barest"];
   function fitReaderBar(bar) {
     if (!bar.querySelector(".size-pop")) return;
     bar.classList.remove(...BAR_LEVELS);
-    if (!wide() || bar.offsetParent === null) return;
+    if (bar.offsetParent === null) return;
     for (const level of BAR_LEVELS) {
       bar.classList.add("measuring");
-      const over = bar.scrollWidth > bar.clientWidth + 1;
+      const over = overflows(bar);
       bar.classList.remove("measuring");
       if (!over) return;
       bar.classList.add(level);
     }
+  }
+  // Does a bar's row run past its own padding? Measured where its last piece ends: scrollWidth
+  // leaves the end padding out once there is overflow, and forgave a bar that was 8px too full.
+  function overflows(bar) {
+    const edge = bar.getBoundingClientRect().right - (parseFloat(getComputedStyle(bar).paddingRight) || 0);
+    let right = -Infinity;
+    for (const c of bar.children) { const r = c.getBoundingClientRect(); if (r.width > 0) right = Math.max(right, r.right); }
+    return right > edge + 0.5;
   }
   function fitReaderBars() { for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar); }
   window.addEventListener("resize", fitReaderBars);
@@ -2663,6 +2958,7 @@ import { esc, mb } from "./lib/format.js";
   function hideNote() {
     const wasOpen = !sheet.hidden;
     sheet.hidden = true; $("#scrim")?.remove();
+    sheet.classList.remove("page");
     inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
     const vv = window.visualViewport;
@@ -2721,6 +3017,38 @@ import { esc, mb } from "./lib/format.js";
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
   $(".close", sheet).addEventListener("click", closeSheet);
+  // The grabber is real: drag it down and the sheet follows the finger; let go past a third of
+  // its height (or with a flick) and it goes, as Back or Escape would send it; less, and it
+  // settles back. A note half typed is kept, as everywhere.
+  (() => {
+    const grab = $(".handle", sheet);
+    let from = null;
+    grab.addEventListener("pointerdown", (e) => {
+      if (e.button > 0) return;
+      from = { y: e.clientY, t: e.timeStamp, dy: 0 };
+      sheet.classList.add("dragging");
+      try { grab.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    grab.addEventListener("pointermove", (e) => {
+      if (!from) return;
+      from.dy = Math.max(0, e.clientY - from.y);
+      sheet.style.transform = `translateY(${from.dy}px)`;
+    });
+    const end = (e) => {
+      if (!from) return;
+      const { dy, t } = from; from = null;
+      sheet.classList.remove("dragging");
+      const fast = dy > 24 && dy / Math.max(1, e.timeStamp - t) > 0.6;
+      if (e.type === "pointerup" && (dy > sheet.offsetHeight / 3 || fast) && !keepTyped()) {
+        const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        sheet.style.transform = "translateY(100%)";
+        setTimeout(() => { sheet.style.transform = ""; if (!sheet.hidden) closeSheet(); }, still ? 0 : 180);
+      } else sheet.style.transform = "";
+    };
+    grab.addEventListener("pointerup", end);
+    grab.addEventListener("pointercancel", end);
+  })();
 
   // ----------------------------------------------------------- controls ----
   input.addEventListener("input", () => {
@@ -2739,28 +3067,32 @@ import { esc, mb } from "./lib/format.js";
       const choice = await window.Deck.askAboutDeck({ kind: "search" });
       if (choice === "cancel") return;
     }
+    rememberSearch(state.q);
     runSearch({ typeahead: false });
   });
   $(".clear").addEventListener("click", () => { if (!state.ready) return; input.value = ""; state.q = ""; input.focus(); runSearch(); });
   for (const b of document.querySelectorAll(".scopes button")) {
     b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
   }
-  $("#homeBtn").addEventListener("click", () => { if (state.ready) goHome(); });
-  $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
-  function openTab(tab) {
-    if (!state.ready) return;
-    // a tap on the tab you are in does nothing (on a wide screen it brings the board back in front of the page)
-    if (state.browse?.tab === tab && !state.q.trim() && (wide() || !pageNow())) { if (tab === "deck" && wide() && panelPane.hidden) panel.restore(); return; }
-    const from = tabLeft();
-    rememberScroll();
-    leaveSearch();
-    state.q = "";
-    if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
-    state.browse = { tab };
-    syncControls(); renderHome(); showList(); tabStep(from);
+  $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); $("#filterBtn").setAttribute("aria-expanded", String(!filters.hidden)); });
+  for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) b.addEventListener("click", () => switchTab(b.dataset.tab));
+  $("#settingsBtn").addEventListener("click", () => { if (state.ready) openSettings(); });
+  function focusBox() { try { input.focus({ preventScroll: true }); input.select(); } catch (_) {} }
+  // The search box from the keyboard ("/", Cmd+F): where it is not on the screen (the Deck, Ask,
+  // a page on a phone) Search comes up first.
+  function focusSearch() {
+    if (input.offsetParent !== null) focusBox(); else switchTab("search").then(focusBox);
   }
-  $("#askBtn").addEventListener("click", () => openTab("ask"));
-  $("#deckBtn").addEventListener("click", () => openTab("deck"));
+  // The Library's search field: a tap on it is a step into Search, with the cursor in the box
+  // and the shelf you were in as the place to search.
+  input.addEventListener("click", () => {
+    if (!state.ready || tabNow() === "search") return;
+    rememberScroll();
+    state.browse = { tab: "search" };
+    syncControls(); renderHome(); showList(); push(); setEntry({ place: "search" });
+    focusBox();
+  });
+
   const applyFilters = () => {
     if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
@@ -2793,7 +3125,7 @@ import { esc, mb } from "./lib/format.js";
     // With a keyboard attached: Cmd+F or Cmd+K is the search box, Cmd+[ is Back (Ctrl on other keyboards)
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && state.ready) {
       const k = e.key.toLowerCase();
-      if ((k === "f" || k === "k") && sheet.hidden) { e.preventDefault(); input.focus(); input.select(); return; }
+      if ((k === "f" || k === "k") && sheet.hidden) { e.preventDefault(); focusSearch(); return; }
       if (k === "[") { e.preventDefault(); goBack(); return; }
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -2804,7 +3136,7 @@ import { esc, mb } from "./lib/format.js";
       if (to) { e.preventDefault(); stepChapter(to); }
       return;
     }
-    if (e.key === "/" && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
+    if (e.key === "/" && state.ready && sheet.hidden) { e.preventDefault(); focusSearch(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
   });
 
@@ -2970,7 +3302,7 @@ import { esc, mb } from "./lib/format.js";
     syncControls(); showList(); runSearch({ typeahead: false });
   }
   window.GL = {
-    api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet,
+    api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
     get ready() { return state.ready; },
     get skills() { return store.get("skills")?.data || null; },
@@ -2998,7 +3330,6 @@ import { esc, mb } from "./lib/format.js";
     try { navigator.storage?.persist?.().catch(() => {}); } catch (_) {} // 150 MB that should not be evicted
     api("speakers", {}).then((rows) => { const dl = $("#speakerList"); for (const r of rows) dl.append(el("option", { value: r.name })); }).catch(() => {});
     await render();
-    if (!state.q && !state.docId && wide()) input.focus();
     setTimeout(checkForUpdate, 1500);
     setTimeout(loadSkills, 400);
     setTimeout(loadSemantic, 2500);

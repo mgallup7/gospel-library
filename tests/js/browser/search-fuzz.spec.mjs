@@ -10,6 +10,7 @@ const ODD = [
 // being typed: the engine finds no reference in it, and the app keeps the card it had (runSearch).
 const REFS = [["Alma 32:21", "p21"], ["Alma 32;21", "p21"], ["alma32:21", "p21"], ["Alma 32:21-", "p21"], ["alma 32:21-23", "p21"], ["Alma 32", null]];
 
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const check = (c, m) => { if (!c) errors.push(m); };
@@ -44,7 +45,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
   // the box: typed, then Return. A query of a letter or none leaves no list, so only page errors count.
   for (const q of ODD) {
-    await page.fill("#q", q);
+    await box(page, q);
     await page.waitForTimeout(120);
     await page.press("#q", "Enter");
     await page.waitForTimeout(150);
@@ -52,7 +53,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForTimeout(600);
   await page.screenshot({ path: SHOTS + "search-fuzz-odd.png" });
   for (const [q, pid] of REFS) {
-    await page.fill("#q", "");
+    await box(page, "");
     await page.waitForTimeout(150);
     await page.type("#q", q, { delay: 10 });
     const card = await page.waitForSelector("#list .jump", { timeout: 5000 }).catch(() => null);
