@@ -2621,8 +2621,9 @@ import { esc, mb } from "./lib/format.js";
   const CHURCH_SITE = "https://www.churchofjesuschrist.org/";
   // Every shape of address becomes a whole one the same way (/study/..., //www..., http:...): a
   // path with no site is the Church's, which is where the library's pages and most notes point.
+  // (and an address of the Gospel Library app, gospellibrary://content/..., is the same page on the site)
   function linkUrl(href, base) {
-    try { return new URL(String(href || "").trim(), base || CHURCH_SITE); } catch (_) { return null; }
+    try { return new URL(String(href || "").trim().replace(/^gospellibrary:\/\/content\//i, CHURCH_SITE + "study/"), base || CHURCH_SITE); } catch (_) { return null; }
   }
   async function followLink(href, base) {
     const u = linkUrl(href, base);

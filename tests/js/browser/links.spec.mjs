@@ -31,6 +31,11 @@ const TABLE = [
   ["/study/scriptures/dc-testament/dc/76.22-24", "page /scriptures/dc-testament/dc/76 p22-p24"],
   ["/study/scriptures/pgp/js-h/1?lang=eng&id=p17#p17", "page /scriptures/pgp/js-h/1 p17"],
   ["/study/scriptures/bofm/alma?lang=eng", "book alma"],
+  // the verse by number, and the Gospel Library app's own form of an address
+  ["/study/scriptures/bofm/alma/32?verse=21", "page /scriptures/bofm/alma/32 p21"],
+  ["gospellibrary://content/scriptures/bofm/alma/32?verse=21", "page /scriptures/bofm/alma/32 p21"],
+  ["gospellibrary://content/scriptures/bofm/alma/32?verse=21-23", "page /scriptures/bofm/alma/32 p21-p23"],
+  ["/study/scriptures/bofm/ether/12.6,27?lang=eng", "page /scriptures/bofm/ether/12 p6 2 listed"],
   ["/study/scriptures/bofm?lang=eng", "book /scriptures/bofm"],
   ["/study/scriptures?lang=eng", "shelf scriptures"],
   ["https://www.josephsmithpapers.org/paper-summary/journal-1832-1834", "page /paper-summary/journal-1832-1834"],
@@ -67,6 +72,7 @@ const STUDY = `<!doctype html><html><head><meta charset="utf-8"><title>Every lin
 <h1>Every link</h1>
 <p><a id="verse" href="${SITE}/study/scriptures/bofm/alma/32?lang=eng&amp;id=p21#p21">verse</a>
 <a id="comma" href="/study/scriptures/bofm/alma/32.21,23-25?lang=eng">list</a>
+<a id="glapp" href="gospellibrary://content/scriptures/bofm/alma/32?verse=24">the app's own address</a>
 <a id="protorel" href="//www.churchofjesuschrist.org/study/scriptures/bofm/alma/32?id=p22">protocol-relative</a>
 <a id="oldest" href="https://scriptures.lds.org/en/alma/32/23">scriptures.lds.org</a>
 <a id="jsp" href="https://www.josephsmithpapers.org/paper-summary/journal-1832-1834/1">papers</a>
@@ -215,6 +221,10 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check(plain.refs.join("|") === "Alma 32:27|D&C 76:22-24" && plain.own === "My own link to Alma 32:28" && plain.note === "Alma 32:29" && /content:"Alma 32:21"/.test(plain.style), `study plain references: ${JSON.stringify(plain)}`);
   await frame().locator("#plain a").first().click();
   check(/Alma 32:27/.test(await peekTitle()), "study plain reference: no passage sheet");
+  await closeSheet();
+  // the Gospel Library app's own address, with the verse by number
+  await frame().locator("#glapp").click();
+  check(/Alma 32:24/.test(await peekTitle()), "study gospellibrary:// link: no passage sheet at the verse");
   await closeSheet();
 
   // ---- 3. a Markdown study ---------------------------------------------------

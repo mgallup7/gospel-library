@@ -1453,6 +1453,8 @@ const PAPERS_HOST = /(^|\.)josephsmithpapers\.org$/i;
 const SHELF_URI = { "/scriptures": ["scriptures", "Scriptures"], "/general-conference": ["general-conference", "General Conference"] };
 function resolve(href) {
   let u;
+  // the Gospel Library app's own addresses (gospellibrary://content/scriptures/bofm/alma/32?verse=21) name the same pages
+  href = String(href || "").trim().replace(/^gospellibrary:\/\/content\//i, "https://www.churchofjesuschrist.org/study/");
   try { u = new URL(String(href || "").trim(), "https://www.churchofjesuschrist.org"); } catch (_) { return { found: false, href }; }
   const papers = PAPERS_HOST.test(u.hostname);
   if (!/^https?:$/.test(u.protocol) || !(papers || CHURCH_HOST.test(u.hostname))) return { found: false, href };
@@ -1479,6 +1481,9 @@ function resolve(href) {
   };
   const idp = u.searchParams.get("id");
   if (idp) span(idp);
+  // ?verse=21 (and 21-23, or 21,23): the verse by its number
+  const vp = u.searchParams.get("verse");
+  if (!pid && vp && /^\d[\d,\s-]*$/.test(vp)) span(vp);
   // scriptures.lds.org/en/alma/32/21: the book by the name it still has in an address (1_ne is 1-ne)
   const old = /^scriptures\./i.test(u.hostname) ? path.match(/^\/[a-z]{2,3}\/([a-z0-9_]+)(?:\/(\d+)(?:\/([\d,-]+))?)?\/?$/i) : null;
   const oldBook = old ? S.books.find((b) => b.uri.endsWith("/" + old[1].toLowerCase().replace(/_/g, "-"))) : null;
