@@ -156,9 +156,16 @@ ${missing.length ? `Not on this device: ${missing.join("; ")}. A search there re
 
 Think with everything you know: the scriptures in their original languages, Church history, doctrine, the way these teachings fit together, and good judgment. The library is where the words come from: quote only passages the tools returned, and let them settle what a source actually says. When something you know is not among the passages found, say so plainly and do not quote it from memory.`;
   }
+  // The count is asked of the library again when it is more than a minute old, so a question
+  // sees a shelf that arrived with an update and the search box does not count on every Return.
+  let statsHeld = null, statsAt = 0;
+  async function libraryStats() {
+    if (!statsHeld || Date.now() - statsAt > 60000) { statsHeld = await GL().api("stats"); statsAt = Date.now(); }
+    return statsHeld;
+  }
   async function inventory() {
     try {
-      const stats = await GL().api("stats");
+      const stats = await libraryStats();
       let conferences = [];
       if (stats.talks) { try { conferences = (await GL().api("browse", { slug: "general-conference" })).books || []; } catch (_) {} }
       return inventoryText(stats, conferences);
@@ -219,12 +226,20 @@ When I ask for a draft, write it in my voice, not yours.`;
   ];
   const MAX_TOOL_CALLS = 14;
 
-  const PLANNER = `You plan searches against a full-text index (SQLite FTS5, porter stemming) of: the standard works, general conference talks 1971 to today, Preach My Gospel, Come Follow Me, the General Handbook, and the Topical Guide, Bible Dictionary and Guide to the Scriptures.
+  const PLANNER = `You plan searches against a full-text index (SQLite FTS5, porter stemming) of a personal gospel library. Its shelves, each with its scope: scriptures (the standard works), conference (general conference talks), pmg (Preach My Gospel), standards (Missionary Standards for Disciples of Jesus Christ: the booklet, its supplement and the service missionary edition), handbook (the General Handbook), cfm (Come, Follow Me), helps (the Topical Guide, Bible Dictionary and Guide to the Scriptures), jsp (the Joseph Smith Papers: journals, revelations and translations, histories, documents).
 
 Given the request (and any earlier turns), return JSON only, no prose:
 {"queries":[{"q":"...","scope":"all"}], "references":["Alma 32:21"]}
 
-Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put exact phrases in double quotes. Vary vocabulary between scriptural wording ("endure to the end") and modern wording ("perseverance"). Separate alternatives with OR inside one query when they are true synonyms. scope is one of: all, scriptures, conference, pmg, handbook, cfm, helps. Prefer conference when the request asks what prophets or apostles have said, scriptures for doctrine and quotations, pmg for missionary teaching, handbook for policy. "references" lists scripture citations the request names or clearly alludes to, or [] if none.`;
+Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put exact phrases in double quotes. Vary vocabulary between scriptural wording ("endure to the end") and modern wording ("perseverance"). Separate alternatives with OR inside one query when they are true synonyms. scope is one of: all, scriptures, conference, pmg, standards, handbook, cfm, helps, jsp. Prefer conference when the request asks what prophets or apostles have said, scriptures for doctrine and quotations, pmg for missionary teaching, standards for missionary conduct and rules, handbook for policy, jsp for what Joseph Smith wrote or recorded and for early Church history. Never plan a query in a scope that is listed below as not on this device. The original text comes first: when the request turns on what a Bible verse or word means, list that verse in "references" so it is opened first, and when the request names a Hebrew or Greek word add one query for it as "translit: chesed" or as its Strong's number ("H2617"). "references" lists scripture citations the request names or clearly alludes to, or [] if none.`;
+  // Which scopes this device can answer, for the planner: one line, from the same count.
+  function scopesNote(stats) {
+    if (!stats || !Array.isArray(stats.collections)) return "";
+    const has = (slug) => stats.collections.some((c) => (slug === "jsp" ? c.slug.startsWith("jsp-") : c.slug === slug) && c.docs > 0);
+    const all = [...SHELVES.filter(([, , , scope]) => scope).map(([slug, , , scope]) => [slug, scope]), ["jsp", "jsp"]];
+    const here = all.filter(([slug]) => has(slug)).map(([, scope]) => scope), missing = all.filter(([slug]) => !has(slug)).map(([, scope]) => scope);
+    return `On this device: ${here.join(", ") || "nothing yet"}.${missing.length ? ` Not on this device: ${missing.join(", ")}.` : ""}`;
+  }
 
   const GL = () => window.GL;
   const { el, esc, store } = window.GL || {};
@@ -240,6 +255,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   }
   let view = null;     // container element
   let busy = false;
+  let stopper = null;  // the AbortController of the answer being written; Stop aborts it
+  function setBusy(ctl) {
+    busy = !!ctl; stopper = ctl || null;
+    for (const b of document.querySelectorAll(".ask-go")) { b.textContent = busy ? "Stop" : b.dataset.label || "Ask"; b.classList.toggle("stop", busy); }
+  }
   let lastPassages = []; // passages shown with the latest answer
   let log = null;      // the answers so far; kept when the tab is left and returned to
 
@@ -295,12 +315,15 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         for (const x of modes.querySelectorAll("button")) x.classList.toggle("on", x === b);
         const m = b.dataset.mode;
         const k = m.startsWith("skill:") ? modeSkills().find((x) => `skill:${x.id}` === m) : null;
-        go.textContent = m === "ask" ? "Ask" : k ? "Write" : "Draft";
+        go.dataset.label = m === "ask" ? "Ask" : k ? "Write" : "Draft";
+        if (!busy) go.textContent = go.dataset.label;
         input.placeholder = k ? (k.placeholder || `What to write: ${k.description || k.name}`) : m === "draft" ? "A 10-minute zone conference training on obedience, with four scriptures and two conference quotes" : "What have the prophets said about covenants and identity?";
       });
     }
-    go.addEventListener("click", () => submit(input, modes, log));
-    input.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(input, modes, log); } });
+    // while an answer is being written the same button stops it
+    go.addEventListener("click", () => { if (busy) stopper?.abort(); else submit(input, modes, log); });
+    input.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !busy) { e.preventDefault(); submit(input, modes, log); } });
+    if (busy) { go.textContent = "Stop"; go.classList.add("stop"); }
     gear.addEventListener("click", () => openSettings(container, hint));
     box.append(el("div", { class: "ask-top" }, [modes, gear]), input, el("div", { class: "ask-actions" }, [go, el("button", { type: "button", class: "text-btn", text: "New thread", onclick: () => newThread(log) })]), hint, log);
     container.append(box);
@@ -313,7 +336,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
 
   // New thread clears the conversation and the answers on the screen; Undo puts both back.
   function newThread(log) {
-    if (busy) return;
+    if (busy) { GL().toast("Stop the answer first."); return; }
     const was = { thread, cards: [...log.children] };
     if (!was.thread.length && !was.cards.length) return;
     setThread([]);
@@ -517,7 +540,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       const choice = await window.Deck.askAboutDeck({ kind: mode === "ask" ? "question" : "request" });
       if (choice === "cancel" || busy) return;
     }
-    busy = true;
+    const ctl = new AbortController();
+    setBusy(ctl);
     if (!subject) input.value = "";
     const card = el("article", { class: "ask-card" + (subject ? " think-card" : "") });
     const q = el("div", { class: "ask-q", text: subject ? `Thinking it through: ${subject.label}` : text });
@@ -529,10 +553,51 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     // The passages first, the answer under them.
     card.append(q, status, inline, answer, sources, tools);
     log.prepend(card);
-    try {
-      const registry = new Registry();
-      const findings = new Findings(registry.list, subject ? subject.label : text);
-      findings.mount(inline);
+    const registry = new Registry();
+    const findings = new Findings(registry.list, subject ? subject.label : text);
+    findings.mount(inline);
+    const trail = [], proposals = [];
+    // thinking a page through joins the conversation too, so a follow-up question can refer to it
+    const turn = { role: "user", content: subject ? `(I thought this page through with you: ${subject.label}.)` : text };
+    let kept = null; // this exchange's answer as the thread holds it; a Continue replaces it
+    const conclude = (r) => {
+      lastPassages = registry.list;
+      const entry = { role: "assistant", content: withLabels(r.text, registry.list) };
+      setThread(kept && thread[thread.length - 1] === kept ? [...thread.slice(0, -1), entry] : [...thread, turn, entry]);
+      kept = entry;
+      status.remove();
+      sources.replaceChildren(); tools.replaceChildren(); card.querySelector(".think-questions")?.remove();
+      finish(answer, sources, tools, r.text, registry.list, input, modes, log, trail, proposals, registry.checkable());
+      findings.setCited([...new Set([...r.text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]);
+      if (subject) offerSection(tools, r.text, registry.list, findings);
+      // out of room: say so in plain words, and offer to go on from where it stopped
+      if (r.cut) sources.append(el("div", { class: "quote-note ask-cut" }, [
+        el("span", { text: "The answer ran out of room before it ended. " }),
+        el("button", { type: "button", class: "text-btn small", text: "Continue", onclick: () => {
+          if (busy) return;
+          const c = new AbortController();
+          setBusy(c);
+          status.classList.remove("error"); status.textContent = "Claude is writing on…"; q.after(status);
+          run((signal) => r.more(signal), c, false);
+        } }),
+      ]));
+    };
+    const run = async (work, c, first) => {
+      try { conclude(await work(c.signal)); }
+      catch (err) {
+        const stopped = err?.name === "StopError";
+        status.classList.toggle("error", !stopped);
+        status.textContent = stopped
+          ? `Stopped.${registry.list.length ? ` The ${registry.list.length} passages found so far are kept.` : ""}${first && !subject ? " Your question is back in the box." : ""}`
+          : friendlyError(err);
+        if (!status.isConnected) q.after(status);
+        findings.refresh();
+        // the question goes back in the box on any failure, so it is never typed twice
+        const box = (view && view.querySelector(".ask-input")) || input;
+        if (first && !subject && !box.value.trim()) box.value = text;
+      } finally { setBusy(null); }
+    };
+    await run(async (signal) => {
       if (!subject) {
         // A head start: what the library's own search finds, before Claude asks for anything.
         status.textContent = "Searching the library…";
@@ -540,22 +605,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         findings.refresh();
         status.textContent = head.length ? `${head.length} passages to start. Claude is searching further…` : "Claude is searching…";
       }
-      const trail = [], proposals = [];
-      const reply = await agent(text, mode, registry, findings, status, answer, trail, proposals);
-      lastPassages = registry.list;
-      // thinking a page through joins the conversation too, so a follow-up question can refer to it
-      setThread([...thread, { role: "user", content: subject ? `(I thought this page through with you: ${subject.label}.)` : text }, { role: "assistant", content: withLabels(reply, registry.list) }]);
-      status.remove();
-      finish(answer, sources, tools, reply, registry.list, input, modes, log, trail, proposals, registry.checkable());
-      findings.setCited([...new Set([...reply.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]);
-      if (subject) offerSection(tools, reply, registry.list, findings);
-    } catch (err) {
-      status.textContent = "";
-      status.classList.add("error");
-      status.textContent = friendlyError(err);
-    } finally {
-      busy = false;
-    }
+      return agent(text, mode, registry, findings, status, answer, trail, proposals, signal);
+    }, ctl, true);
   }
 
   // The Questions of a Think it through, by kind: [{ kind: "says" | "means" | "do" | null, label, text }].
@@ -628,11 +679,14 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     ]);
   }
 
+  // The status number decides, where there is one: words like "generate" contain "rate".
   function friendlyError(err) {
-    const m = String(err?.message || err);
-    if (/401|authentication|invalid x-api-key/i.test(m)) return "The API key was not accepted. Check it in settings (the gear).";
-    if (/429|rate/i.test(m)) return "Claude is rate-limited right now; try again in a moment.";
-    if (/402|credit|billing/i.test(m)) return "The Claude account has no credit. Add a payment method at console.anthropic.com.";
+    const m = String(err?.message || err), st = err?.status || 0;
+    if (st === 401 || /authentication|invalid x-api-key/i.test(m)) return "The API key was not accepted. Check it in settings (the gear).";
+    if (st === 404 && /model/i.test(m)) return "That model is no longer offered. Pick another in settings.";
+    if (st === 429) return "Claude is rate-limited right now. Your question is kept; try again in a moment.";
+    if (st === 402 || /credit balance|billing/i.test(m)) return "The Claude account has no credit. Add a payment method at console.anthropic.com.";
+    if (st === 529 || st >= 500 || err?.retryable) return "Claude is busy right now. Your question is kept; try again in a minute.";
     if (err?.name === "TimeoutError") return m;
     if (/Failed to fetch|NetworkError|load failed/i.test(m)) return "Could not reach Claude. Check the connection.";
     return `Something went wrong: ${m}`;
@@ -644,7 +698,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     if (!settings.planner) return { queries: [], references: [] };
     const history = thread.slice(-4).map((m) => `${m.role}: ${m.content.slice(0, 600)}`).join("\n");
     const user = (history ? `Earlier turns:\n${history}\n\n` : "") + `Request: ${text}`;
-    const out = await complete({ model: PLANNER_MODEL, system: PLANNER, messages: [{ role: "user", content: user }], max_tokens: 400, stream: false });
+    let note = "";
+    try { note = scopesNote(await libraryStats()); } catch (_) {}
+    // one quick call: if Claude is busy the search box goes on without it, so no retries
+    const out = await complete({ model: PLANNER_MODEL, system: PLANNER + (note ? `\n\n${note}` : ""), messages: [{ role: "user", content: user }], max_tokens: 400, stream: false, retries: 0 });
     const m = out.match(/\{[\s\S]*\}/);
     const plan = JSON.parse(m ? m[0] : out);
     const queries = (plan.queries || []).filter((q) => q && q.q).slice(0, 7).map((q) => ({ q: String(q.q).slice(0, 120), scope: String(q.scope || "all") }));
@@ -724,7 +781,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         if (!docId) return { error: `nothing found for "${reference}"` };
         const doc = await api("doc", { id: docId });
         if (!doc) return { error: "not found" };
-        const holder = el("div", { html: doc.body_html || "" });
+        // parsed into an inert document, never onto a live element: nothing in it can run or load
+        const holder = new DOMParser().parseFromString(doc.body_html || "", "text/html").body;
         const out = [];
         const units = [...holder.querySelectorAll("p.verse, .body-block p, .body-block li")].filter((n) => n.id);
         let started = !pid;
@@ -778,7 +836,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       for (const v of r.verses) {
         let cite = v.citation;
         if (v.text && v.doc_id && v.pid) { const p = this.add({ doc_id: v.doc_id, pid: v.pid, kind: "verse", citation: cite, label: cite, text: v.text, plain: v.text, verses: [{ n: v.verse, text: v.text }], collection: "scriptures" }); cite = `[${p.n}] ${cite}`; }
-        lines.push(`${cite}: ${v.words.map((w) => `${w.word} ${w.translit || ""} [${(w.gloss || "").trim()}]`).join("; ")}${v.text ? ` — ${v.text}` : ""}`);
+        lines.push(`${cite}: ${v.words.map((w) => `${w.word} ${w.translit || ""} [${(w.gloss || "").trim()}]`).join("; ")}${v.text ? ` (KJV: ${v.text})` : ""}`);
       }
     }
     lines.push(`\n${r.credit}`);
@@ -890,7 +948,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   // ------------------------------------------------------------------ agent --
   // Claude searches the library with tools until it is ready to answer; the
   // final text streams into the answer box.
-  async function agent(text, mode, registry, findings, statusEl, answerEl, trail = [], proposals = []) {
+  async function agent(text, mode, registry, findings, statusEl, answerEl, trail = [], proposals = [], signal = null) {
     const head = registry.list.map((p) => passageLine(p)).join("\n\n");
     const k = modeSkill(mode);
     const lead = [todayLine(), weekLine(k)].filter(Boolean).join(" ");
@@ -899,102 +957,127 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       : `${[lead, contextLine()].filter(Boolean).join("\n")}\n\n${mode === "ask" ? "Question" : "Request"}: ${text}` + (head ? `\n\nPassages already found by a first search (cite by number; search for more as needed):\n\n${head}` : "");
     // thinking a page through starts fresh: the page is the whole context
     const messages = [...(mode === "think" ? [] : thread).map((m) => ({ role: m.role, content: m.content })), { role: "user", content: first }];
-    let calls = 0, finalText = "";
+    let calls = 0;
+    let written = ""; // what a cut-off answer had said, shown ahead of its continuation
     const system = await systemFor(mode);
     const ask = (tool_choice) => {
       let buffer = "", pending = false, thought = "";
-      const flush = () => { pending = false; answerEl.innerHTML = markdown(buffer, registry.list, registry.own); };
+      const flush = () => { pending = false; answerEl.innerHTML = markdown(written + buffer, registry.list, registry.own); };
       return complete({
         // The tools list must be the same on every request of a turn: a thinking
         // block is bound to the tools it was made with, and a changed list is a 400.
         model: settings.model, system, messages, tools: TOOLS, tool_choice,
-        max_tokens: mode === "ask" ? 16000 : 20000, stream: true, thinking: settings.think,
+        max_tokens: mode === "ask" ? 16000 : 20000, stream: true, thinking: settings.think, signal,
+        onRetry: (n) => { statusEl.textContent = `Claude is busy. Trying again (${n} of ${RETRY_WAITS.length})…`; },
         onDelta: (t) => { buffer += t; if (!pending) { pending = true; requestAnimationFrame(flush); } },
         onThinking: (t) => { thought = (thought + t).slice(-2000); statusEl.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
       }).then((res) => { buffer = res.text; flush(); return res; });
     };
-    for (let turn = 0; turn < MAX_TOOL_CALLS + 4; turn++) {
-      const res = await ask();
-      finalText = res.text;
-      if (res.stop_reason !== "tool_use" || !res.tool_uses.length) break;
-      // run the tools, show what is being searched, feed results back
-      messages.push({ role: "assistant", content: res.blocks });
-      const results = [];
-      for (const tu of res.tool_uses) {
-        if (calls >= MAX_TOOL_CALLS) {
-          results.push({ type: "tool_result", tool_use_id: tu.id, content: "The search budget for this question is spent. Write the answer now from the passages already found, and do not call a tool again." });
-          continue;
+    // max_tokens ended the reply mid-answer: keep what is written, and let Continue go on from
+    // there in the same conversation, with the same passages. A tool call cut short is dropped
+    // (it has no result to pair with).
+    const cutOff = (res) => {
+      written += res.text;
+      const said = res.blocks.filter((b) => b.type !== "tool_use");
+      if (said.some((b) => b.type === "text")) messages.push({ role: "assistant", content: said });
+      return { text: written, cut: true, more: (sig) => { signal = sig; nudge(messages, "Continue from exactly where you stopped. Do not repeat what is already written and do not start again."); return work(); } };
+    };
+    const work = async () => {
+      let finalText = "";
+      for (let turn = 0; turn < MAX_TOOL_CALLS + 4; turn++) {
+        const res = await ask();
+        if (res.stop_reason === "max_tokens") return cutOff(res);
+        finalText = res.text;
+        if (res.stop_reason !== "tool_use" || !res.tool_uses.length) break;
+        // run the tools, show what is being searched, feed results back
+        messages.push({ role: "assistant", content: res.blocks });
+        const results = [];
+        for (const tu of res.tool_uses) {
+          if (signal?.aborted) throw stopError();
+          if (calls >= MAX_TOOL_CALLS) {
+            results.push({ type: "tool_result", tool_use_id: tu.id, content: "The search budget for this question is spent. Write the answer now from the passages already found, and do not call a tool again." });
+            continue;
+          }
+          calls++;
+          let content = "";
+          const step = { tool: tu.name, what: "", found: null };
+          trail.push(step);
+          try {
+            if (tu.name === "search") {
+              step.what = `${tu.input.query}${tu.input.scope && tu.input.scope !== "all" ? ` (${tu.input.scope})` : ""}${tu.input.speaker ? `, ${tu.input.speaker}` : ""}${tu.input.year_from || tu.input.year_to ? `, ${tu.input.year_from || ""}–${tu.input.year_to || ""}` : ""}${tu.input.edition ? `, in “${tu.input.edition}”` : ""}${tu.input.exclude_edition ? `, not “${tu.input.exclude_edition}”` : ""}`;
+              statusEl.textContent = `Searching: ${step.what}…`;
+              const out = await registry.search(tu.input);
+              step.found = out.length;
+              content = out.length ? (out.note ? out.note + "\n\n" : "") + out.map((p) => passageLine(p)).join("\n\n") : (out.note ? out.note : "No passages matched. Try other words or a different scope.");
+            } else if (tu.name === "find_all" || tu.name === "find_all_verses") {
+              const what = tu.input.phrase ? `“${tu.input.phrase}”` : tu.input.words;
+              step.what = `every passage with ${what}${tu.input.scope && tu.input.scope !== "all" ? ` in ${tu.input.scope}` : ""}`;
+              statusEl.textContent = `Finding ${step.what}…`;
+              step.what += `${tu.input.edition ? `, in “${tu.input.edition}”` : ""}${tu.input.exclude_edition ? `, not “${tu.input.exclude_edition}”` : ""}`;
+              const r = await registry.matches({ words: tu.input.words, phrase: tu.input.phrase, scope: tu.input.scope || tu.input.volume || "all", limit: tu.input.limit, edition: tu.input.edition, exclude_edition: tu.input.exclude_edition });
+              step.found = r.total;
+              const where = r.by_document.map((d) => `${d.title}${d.book_title ? ` [${d.book_title}]` : d.volume ? ` (${d.volume})` : ""} ${d.n}`).join("; ");
+              content = r.error ? `Error: ${r.error}` : `${r.total} passages match${where ? ` (${where})` : ""}${r.out.length < r.total ? `; showing the first ${r.out.length}. Narrow the scope or the wording for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.label}: ${p.text}`).join("\n");
+            } else if (tu.name === "read") {
+              step.what = `read ${tu.input.reference || `passage [${tu.input.passage}] in context`}`;
+              statusEl.textContent = `Reading ${tu.input.reference || `passage ${tu.input.passage}`}…`;
+              const r = await registry.read(tu.input);
+              step.found = r.out ? r.out.length : null;
+              content = r.error ? `Error: ${r.error}` : (r.title ? `${r.title}\n\n` : "") + r.out.map((p) => passageLine(p, 600)).join("\n\n");
+            } else if (tu.name === "original") {
+              step.what = `the original of ${tu.input.reference}`;
+              statusEl.textContent = `Reading the Hebrew or Greek of ${tu.input.reference}…`;
+              const r = await registry.original(tu.input);
+              step.found = r.verses ? r.verses.length : null;
+              if (r.language && step.what.startsWith("the original")) step.what = `the ${r.language} of ${tu.input.reference}`;
+              content = r.text;
+            } else if (tu.name === "lexicon") {
+              step.what = `lexicon ${tu.input.strongs}`;
+              statusEl.textContent = `Looking up ${tu.input.strongs}…`;
+              const r = await registry.lexicon(tu.input);
+              step.found = r.count ?? null;
+              content = r.text;
+            } else if (tu.name === "my_notes") {
+              step.what = tu.input.query ? String(tu.input.query) : "the most recent";
+              statusEl.textContent = "Looking in your notes and study pages…";
+              const r = await registry.myNotes(tu.input);
+              step.found = r.count;
+              content = r.text;
+            } else if (tu.name === "remember") {
+              const note = String(tu.input.note || "").replace(/\s+/g, " ").trim().slice(0, 400);
+              step.what = note;
+              if (note && !proposals.includes(note)) proposals.push(note);
+              content = note ? "Shown to him under the answer as a proposal, with Save and Dismiss. It is not saved unless he taps Save, so do not say that it has been." : "Error: give the note to propose.";
+            } else content = `Unknown tool ${tu.name}`;
+          } catch (err) { content = `Error: ${err.message}`; }
+          const cap = tu.name === "find_all" || tu.name === "find_all_verses" ? 170000 : 60000;
+          if (content.length > cap) content = content.slice(0, cap) + "\n…(truncated; ask for one volume at a time to see the rest)";
+          results.push({ type: "tool_result", tool_use_id: tu.id, content });
+          findings.refresh();
         }
-        calls++;
-        let content = "";
-        const step = { tool: tu.name, what: "", found: null };
-        trail.push(step);
-        try {
-          if (tu.name === "search") {
-            step.what = `${tu.input.query}${tu.input.scope && tu.input.scope !== "all" ? ` (${tu.input.scope})` : ""}${tu.input.speaker ? `, ${tu.input.speaker}` : ""}${tu.input.year_from || tu.input.year_to ? `, ${tu.input.year_from || ""}–${tu.input.year_to || ""}` : ""}${tu.input.edition ? `, in “${tu.input.edition}”` : ""}${tu.input.exclude_edition ? `, not “${tu.input.exclude_edition}”` : ""}`;
-            statusEl.textContent = `Searching: ${step.what}…`;
-            const out = await registry.search(tu.input);
-            step.found = out.length;
-            content = out.length ? (out.note ? out.note + "\n\n" : "") + out.map((p) => passageLine(p)).join("\n\n") : (out.note ? out.note : "No passages matched. Try other words or a different scope.");
-          } else if (tu.name === "find_all" || tu.name === "find_all_verses") {
-            const what = tu.input.phrase ? `“${tu.input.phrase}”` : tu.input.words;
-            step.what = `every passage with ${what}${tu.input.scope && tu.input.scope !== "all" ? ` in ${tu.input.scope}` : ""}`;
-            statusEl.textContent = `Finding ${step.what}…`;
-            step.what += `${tu.input.edition ? `, in “${tu.input.edition}”` : ""}${tu.input.exclude_edition ? `, not “${tu.input.exclude_edition}”` : ""}`;
-            const r = await registry.matches({ words: tu.input.words, phrase: tu.input.phrase, scope: tu.input.scope || tu.input.volume || "all", limit: tu.input.limit, edition: tu.input.edition, exclude_edition: tu.input.exclude_edition });
-            step.found = r.total;
-            const where = r.by_document.map((d) => `${d.title}${d.book_title ? ` [${d.book_title}]` : d.volume ? ` (${d.volume})` : ""} ${d.n}`).join("; ");
-            content = r.error ? `Error: ${r.error}` : `${r.total} passages match${where ? ` (${where})` : ""}${r.out.length < r.total ? `; showing the first ${r.out.length}. Narrow the scope or the wording for the rest.` : "."}\n\n` + r.out.map((p) => `[${p.n}] ${p.label}: ${p.text}`).join("\n");
-          } else if (tu.name === "read") {
-            step.what = `read ${tu.input.reference || `passage [${tu.input.passage}] in context`}`;
-            statusEl.textContent = `Reading ${tu.input.reference || `passage ${tu.input.passage}`}…`;
-            const r = await registry.read(tu.input);
-            step.found = r.out ? r.out.length : null;
-            content = r.error ? `Error: ${r.error}` : (r.title ? `${r.title}\n\n` : "") + r.out.map((p) => passageLine(p, 600)).join("\n\n");
-          } else if (tu.name === "original") {
-            step.what = `the original of ${tu.input.reference}`;
-            statusEl.textContent = `Reading the Hebrew or Greek of ${tu.input.reference}…`;
-            const r = await registry.original(tu.input);
-            step.found = r.verses ? r.verses.length : null;
-            if (r.language && step.what.startsWith("the original")) step.what = `the ${r.language} of ${tu.input.reference}`;
-            content = r.text;
-          } else if (tu.name === "lexicon") {
-            step.what = `lexicon ${tu.input.strongs}`;
-            statusEl.textContent = `Looking up ${tu.input.strongs}…`;
-            const r = await registry.lexicon(tu.input);
-            step.found = r.count ?? null;
-            content = r.text;
-          } else if (tu.name === "my_notes") {
-            step.what = tu.input.query ? String(tu.input.query) : "the most recent";
-            statusEl.textContent = "Looking in your notes and study pages…";
-            const r = await registry.myNotes(tu.input);
-            step.found = r.count;
-            content = r.text;
-          } else if (tu.name === "remember") {
-            const note = String(tu.input.note || "").replace(/\s+/g, " ").trim().slice(0, 400);
-            step.what = note;
-            if (note && !proposals.includes(note)) proposals.push(note);
-            content = note ? "Shown to him under the answer as a proposal, with Save and Dismiss. It is not saved unless he taps Save, so do not say that it has been." : "Error: give the note to propose.";
-          } else content = `Unknown tool ${tu.name}`;
-        } catch (err) { content = `Error: ${err.message}`; }
-        const cap = tu.name === "find_all" || tu.name === "find_all_verses" ? 170000 : 60000;
-        if (content.length > cap) content = content.slice(0, cap) + "\n…(truncated; ask for one volume at a time to see the rest)";
-        results.push({ type: "tool_result", tool_use_id: tu.id, content });
-        findings.refresh();
+        if (calls >= MAX_TOOL_CALLS) results.push({ type: "text", text: "That was the last search available for this question; write the answer from what has been found." });
+        // The newest tool result carries a second cache marker (the first is on the system
+        // prompt), so each round of the loop reads the rounds before it from the cache and pays
+        // in full only for what is new. Only the newest: four markers is the limit.
+        for (const m of messages) if (Array.isArray(m.content)) for (const b of m.content) if (b.type === "tool_result") delete b.cache_control;
+        const newest = results.filter((b) => b.type === "tool_result").pop();
+        if (newest) newest.cache_control = { type: "ephemeral" };
+        messages.push({ role: "user", content: results });
+        statusEl.textContent = `${registry.list.length} passages so far. Claude is thinking…`;
       }
-      if (calls >= MAX_TOOL_CALLS) results.push({ type: "text", text: "That was the last search available for this question; write the answer from what has been found." });
-      messages.push({ role: "user", content: results });
-      statusEl.textContent = `${registry.list.length} passages so far. Claude is thinking…`;
-    }
-    // The loop can end on a turn that only asked for tools, or one with no
-    // words in it; then one more request, with tools off, so the reply always
-    // ends in an answer.
-    if (!finalText.trim()) {
-      statusEl.textContent = `${registry.list.length} passages found. Claude is writing the answer…`;
-      nudge(messages, "Write the answer now from the passages already found. No more searches are available.");
-      finalText = (await ask({ type: "none" })).text;
-    }
-    return finalText;
+      // The loop can end on a turn that only asked for tools, or one with no
+      // words in it; then one more request, with tools off, so the reply always
+      // ends in an answer.
+      if (!finalText.trim()) {
+        statusEl.textContent = `${registry.list.length} passages found. Claude is writing the answer…`;
+        nudge(messages, "Write the answer now from the passages already found. No more searches are available.");
+        const res = await ask({ type: "none" });
+        if (res.stop_reason === "max_tokens") return cutOff(res);
+        finalText = res.text;
+      }
+      return { text: written + finalText, cut: false };
+    };
+    return work();
   }
 
   // Adds a line of instruction to the last user turn (a tool-result turn or the
@@ -1176,7 +1259,19 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     return e;
   }
 
-  async function complete({ model, system, messages, max_tokens, stream, onDelta, onThinking, tools, tool_choice, thinking }) {
+  function stopError() { const e = new Error("Stopped."); e.name = "StopError"; return e; }
+  // A wait that Stop can end.
+  function pause(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      signal?.addEventListener("abort", () => { clearTimeout(t); reject(stopError()); }, { once: true });
+    });
+  }
+  // An overloaded or failing server (529, any 5xx) is tried twice more, after these waits.
+  const RETRY_WAITS = [1500, 4000];
+
+  // signal: the caller's Stop. retries: how many more tries a busy server gets. onRetry(n): told before each.
+  async function complete({ model, system, messages, max_tokens, stream, onDelta, onThinking, tools, tool_choice, thinking, signal = null, retries = RETRY_WAITS.length, onRetry = null }) {
     const body = { model, system, messages, max_tokens, stream: !!stream };
     if (tools) body.tools = tools;
     if (tools && tool_choice) body.tool_choice = tool_choice;
@@ -1185,18 +1280,30 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     // answer together. Its thinking blocks come back signed and must be
     // returned unchanged on the next turn of a tool loop.
     if (thinking) { body.thinking = { type: "adaptive", display: "summarized" }; body.output_config = { effort: "high" }; }
-    // One timer: for a plain call it runs once; for a stream it starts again
-    // with every chunk that arrives.
-    const ctl = new AbortController();
-    let timer = null, timedOut = false;
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; ctl.abort(); }, stream ? STALL_TIMEOUT_MS : CALL_TIMEOUT_MS); };
-    arm();
-    try {
-      return await send(body, ctl.signal, stream ? arm : () => {}, { stream, onDelta, onThinking, tools });
-    } catch (err) {
-      throw timedOut ? timeoutError() : err;
-    } finally {
-      clearTimeout(timer);
+    for (let tries = 0; ; tries++) {
+      // One timer: for a plain call it runs once; for a stream it starts again
+      // with every chunk that arrives.
+      const ctl = new AbortController();
+      let timer = null, timedOut = false, stopped = false, delivered = false;
+      const onStop = () => { stopped = true; ctl.abort(); };
+      if (signal) { if (signal.aborted) throw stopError(); signal.addEventListener("abort", onStop, { once: true }); }
+      const arm = () => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; ctl.abort(); }, stream ? STALL_TIMEOUT_MS : CALL_TIMEOUT_MS); };
+      arm();
+      try {
+        return await send(body, ctl.signal, stream ? arm : () => {}, { stream, tools,
+          onDelta: (t) => { delivered = true; onDelta && onDelta(t); },
+          onThinking: (t) => { delivered = true; onThinking && onThinking(t); } });
+      } catch (err) {
+        if (stopped) throw stopError();
+        if (timedOut) throw timeoutError();
+        // a try that already put words on the page is not run again over them
+        if (!(tries < retries && err.retryable && !delivered)) throw err;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onStop);
+      }
+      onRetry && onRetry(tries + 1);
+      await pause(RETRY_WAITS[tries], signal);
     }
   }
 
@@ -1213,9 +1320,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       body: JSON.stringify(body),
     });
     if (!r.ok) {
-      let detail = "";
-      try { detail = (await r.json())?.error?.message || ""; } catch (_) {}
-      throw new Error(`${r.status} ${detail}`.trim());
+      let detail = "", type = "";
+      try { const j = await r.json(); detail = j?.error?.message || ""; type = j?.error?.type || ""; } catch (_) {}
+      const e = new Error(`${r.status} ${detail}`.trim());
+      e.status = r.status; e.type = type; e.retryable = r.status === 529 || r.status >= 500;
+      throw e;
     }
     if (!stream) {
       const data = await r.json();
@@ -1255,7 +1364,13 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
           if (b && b.type === "tool_use") { try { b.input = b.json ? JSON.parse(b.json) : {}; } catch (_) { b.input = {}; } delete b.json; }
         } else if (evt.type === "message_delta") {
           if (evt.delta?.stop_reason) stop_reason = evt.delta.stop_reason;
-        } else if (evt.type === "error") throw new Error(evt.error?.message || "stream error");
+        } else if (evt.type === "error") {
+          // an error sent down the stream: overloaded, or the server failing mid-reply
+          const e = new Error(evt.error?.message || "stream error");
+          e.type = evt.error?.type || ""; e.retryable = /overloaded_error|api_error/.test(e.type);
+          if (e.type === "overloaded_error") e.status = 529;
+          throw e;
+        }
       }
     }
     const clean = blocks.filter(Boolean).map((b) => (
@@ -1273,5 +1388,5 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     // the system blocks for a mode; the deck's chain calls it with its own paragraph
     system: systemFor,
     // for tests: the Think it through prompt, how its questions are read back, the inventory
-    thinkPrompt: MODE_THINK, thinkQuestions, inventoryText, core: CORE, tools: TOOLS, withLabels, Registry };
+    thinkPrompt: MODE_THINK, thinkQuestions, inventoryText, core: CORE, tools: TOOLS, withLabels, Registry, friendlyError };
 })();

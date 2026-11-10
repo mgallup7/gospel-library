@@ -5,7 +5,9 @@
 // them, the typed question stays), hold his standing instructions and his notes, and a note
 // Claude proposes is saved only when he taps Save. Ask and Draft carry one line of context (the
 // page open, what is selected, the deck); his own notes are reachable with a tool; the thread
-// survives a reload, and New thread can be undone.
+// survives a reload, and New thread can be undone. Stop ends an answer and keeps its passages;
+// a busy server is tried twice more and the question goes back in the box; an answer cut off
+// by max_tokens says so and continues.
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const check = (c, m) => { if (!c) errors.push(m); };
@@ -22,13 +24,21 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     if (!body.stream) return route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify({ content: [{ type: "text", text: '{"queries":[{"q":"faith hope","scope":"all"}],"references":[]}' }], stop_reason: "end_turn" }) });
     const last = body.tool_choice?.type === "none";
     const said = JSON.stringify(body.messages || []);
+    // the question of this turn (earlier turns ride along as history and must not pick the reply)
+    const now = [...(body.messages || [])].reverse().find((m) => m.role === "user" && typeof m.content === "string" && /\n\n(Question|Request): /.test(m.content))?.content || "";
     const text = (t) => [{ type: "message_start" }, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }, { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } }, { type: "content_block_stop", index: 0 }, { type: "message_delta", delta: { stop_reason: "end_turn" } }, { type: "message_stop" }];
     const tool = (name, input) => [{ type: "message_start" }, { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: `tu_${requests.length}`, name, input: {} } }, { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } }, { type: "content_block_stop", index: 0 }, { type: "message_delta", delta: { stop_reason: "tool_use" } }, { type: "message_stop" }];
     const stream = (events) => route.fulfill({ status: 200, headers: { ...cors, "content-type": "text/event-stream" }, body: sse(events) });
+    // never answers: for Stop
+    if (/STOP-TEST/.test(now)) return;
+    // always overloaded
+    if (/BUSY-TEST/.test(now)) return route.fulfill({ status: 529, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }) });
+    // out of room mid-answer, then the rest when asked to continue
+    if (/CUT-TEST/.test(now)) return stream(/Continue from exactly where you stopped/.test(said) ? text(" and the second half.") : text("The first half").map((e) => (e.type === "message_delta" ? { type: "message_delta", delta: { stop_reason: "max_tokens" } } : e)));
     // a question about his own notes: Claude looks in them, then quotes one
-    if (/NOTES-TEST/.test(said)) return stream(/tool_result/.test(said) ? text('Your note says "NOTE-MARK faith is not a perfect knowledge of things".') : tool("my_notes", { query: "faith knowledge" }));
+    if (/NOTES-TEST/.test(now)) return stream(/tool_result/.test(said) ? text('Your note says "NOTE-MARK faith is not a perfect knowledge of things".') : tool("my_notes", { query: "faith knowledge" }));
     // a question that states a preference: Claude proposes a note, then answers
-    if (/REMEMBER-TEST/.test(said)) return stream(/tool_result/.test(said) ? text("Noted for this answer.") : tool("remember", { note: "Zone conference talks run twelve minutes." }));
+    if (/REMEMBER-TEST/.test(now)) return stream(/tool_result/.test(said) ? text("Noted for this answer.") : tool("remember", { note: "Zone conference talks run twelve minutes." }));
     // Think it through: the answer at once, under its headings, with the three kinds of question
     const think = JSON.stringify(body.system || "").includes("thinking a page through");
     if (think) {
@@ -81,7 +91,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const lastUser = final.messages?.[final.messages.length - 1];
   check(lastUser?.role === "user" && JSON.stringify(lastUser.content).includes("Write the answer now"), "the last request asks for the answer");
   check(!(await page.$(".ask-card .ask-status")), "the status line is gone once the answer is in");
-  check(await page.evaluate(() => !document.querySelector(".ask-go").disabled), "Ask is ready for the next question");
+  check(await page.evaluate(() => !document.querySelector(".ask-go").disabled && document.querySelector(".ask-go").textContent === "Ask"), "Ask is ready for the next question");
+  // the loop's cost: one cache marker on the system prompt, one on the newest tool result
+  const marked = (final.messages || []).flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.cache_control);
+  const lastResults = (final.messages?.at(-1)?.content || []).filter((b) => b.type === "tool_result");
+  check(marked.length === 1 && marked[0] === lastResults.at(-1), `one cache marker in the messages, on the newest tool result (got ${marked.length})`);
+  check((final.system || []).filter((b) => b.cache_control).length === 1, "and one on the system prompt");
   await page.screenshot({ path: SHOTS + "ask-capped.png" });
 
   // every request carries his standing instructions (the neutral starter until he edits them),
@@ -138,6 +153,41 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check(await page.evaluate(() => /^\d{4}-\d\d-\d\d: Zone conference talks run twelve minutes\.$/.test(JSON.parse(localStorage.getItem("gospel.askNotes") || '""'))), "Save keeps the note, dated");
   await page.evaluate(() => { localStorage.removeItem("gospel.askInstructions"); });
 
+  // Stop: the button turns into Stop while an answer is on its way; pressing it ends the answer,
+  // keeps the passages found, and puts the question back
+  await page.fill(".ask-input", "STOP-TEST faith and hope");
+  await page.click(".ask-go");
+  await page.waitForFunction(() => document.querySelector(".ask-go")?.textContent === "Stop" && /Claude is searching/.test(document.querySelector(".ask-log")?.textContent || ""), null, { timeout: 15000 }).catch(() => null);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: SHOTS + "ask-stop.png" });
+  await page.click(".ask-go");
+  await page.waitForFunction(() => /Stopped\./.test(document.querySelector(".ask-log")?.textContent || ""), null, { timeout: 5000 }).catch(() => null);
+  const stopCard = await page.evaluate(() => { const c = [...document.querySelectorAll(".ask-card")].find((x) => /STOP-TEST/.test(x.textContent)); return c ? { status: c.querySelector(".ask-status")?.textContent || "", found: c.querySelectorAll(".finding").length } : null; });
+  check(!!stopCard && /^Stopped\. The \d+ passages found so far are kept\. Your question is back in the box\.$/.test(stopCard.status) && stopCard.found > 0, `Stop keeps the passages and says so: ${JSON.stringify(stopCard)}`);
+  check((await page.inputValue(".ask-input")) === "STOP-TEST faith and hope" && (await page.textContent(".ask-go")) === "Ask", "the question is back in the box and the button is Ask again");
+
+  // a busy server: two more tries, then a plain line, and the question is kept
+  await page.fill(".ask-input", "BUSY-TEST faith");
+  let before = requests.length;
+  await page.click(".ask-go");
+  await page.waitForFunction(() => /Claude is busy right now\. Your question is kept; try again in a minute\./.test(document.querySelector(".ask-log")?.textContent || ""), null, { timeout: 20000 }).catch(() => null);
+  check(/Claude is busy right now\. Your question is kept/.test(await page.textContent(".ask-log")), "529 ends in a plain line");
+  check(requests.length - before === 3, `one try and two more (got ${requests.length - before})`);
+  check((await page.inputValue(".ask-input")) === "BUSY-TEST faith", "and the question is back in the box");
+
+  // an answer that runs out of room says so, and Continue finishes it in place
+  await page.fill(".ask-input", "CUT-TEST faith");
+  await page.click(".ask-go");
+  await page.waitForSelector(".ask-card .ask-cut", { timeout: 20000 }).catch(() => null);
+  check(/ran out of room before it ended/.test(await page.textContent(".ask-card .ask-cut").catch(() => "")), "a cut-off answer says so");
+  await page.click(".ask-card .ask-cut button").catch(() => {});
+  await page.waitForFunction(() => /The first half and the second half\./.test(document.querySelector(".ask-log")?.textContent || ""), null, { timeout: 20000 }).catch(() => null);
+  check(/The first half and the second half\./.test(await page.textContent(".ask-log")) && !(await page.$(".ask-card .ask-cut")), "Continue finishes the answer in place");
+  check(await page.evaluate(() => { const t = JSON.parse(localStorage.getItem("gospel.askThread") || "[]"); return t.filter((m) => /CUT-TEST/.test(m.content)).length === 1 && t.at(-1).content === "The first half and the second half."; }), "and the thread holds the whole answer once");
+
+  // library HTML is parsed inertly: nothing in it runs
+  check(await page.evaluate(async () => { const s = window.Ask.subjectFor({ doc: { title: "x", body_html: '<p>one</p><img src="x" onerror="window.__ran = 1"><p>two</p>' } }); await new Promise((r) => setTimeout(r, 300)); return !window.__ran && /one\ntwo/.test(s.content); }), "an onerror in a page's HTML does not run");
+
   // the page he has open, what he selected in it and his own note on it go along
   await page.evaluate(async () => { const s = await GL.api("search", { q: "Alma 32" }); GL.openDoc(s.jump.doc_id, "p21"); });
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
@@ -157,23 +207,23 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
   // the thread is kept on the device with each [n] replaced by its passage, and comes back after a reload
   const kept = await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.askThread") || "[]"));
-  check(kept.length === 6 && kept[0].content === "What is faith?", `three exchanges kept (got ${kept.length})`);
+  check(kept.length === 8 && kept[0].content === "What is faith?", `the exchanges that finished are kept (got ${kept.length})`);
   check(!/\[\d+\]/.test(kept[1]?.content || "") && /true \([^)]+\d\)\.$/.test(kept[1]?.content || ""), `the old [n] became its passage: ${kept[1]?.content}`);
   await page.goto(BASE + "#");
   await page.reload();
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 60000 });
   await page.click("#askBtn");
   await page.waitForSelector(".ask-input", { timeout: 10000 });
-  check((await page.$$(".ask-card.kept")).length === 3, `the answers are back after a reload (got ${(await page.$$(".ask-card.kept")).length})`);
+  check((await page.$$(".ask-card.kept")).length === 4, `the answers are back after a reload (got ${(await page.$$(".ask-card.kept")).length})`);
   check(/What is faith\?/.test(await page.textContent(".ask-log")), "with their questions");
   // New thread clears them, and Undo brings them back
   await page.click(".ask .text-btn:has-text('New thread')");
   check((await page.$$(".ask-card")).length === 0 && await page.evaluate(() => !localStorage.getItem("gospel.askThread")), "New thread clears the answers and the stored thread");
   await page.click(".toast .toast-action");
-  check((await page.$$(".ask-card")).length === 3 && await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.askThread") || "[]").length === 6), "Undo brings the thread back");
+  check((await page.$$(".ask-card")).length === 4 && await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.askThread") || "[]").length === 8), "Undo brings the thread back");
 
   // with it on (the default), Return in the search box asks for more searches; off, it sends nothing
-  let before = requests.length;
+  before = requests.length;
   await page.fill("#q", "what did the prophets teach about faith and hope");
   await page.press("#q", "Enter");
   await page.waitForTimeout(2500);

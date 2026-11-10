@@ -254,3 +254,88 @@ test("my_notes finds his notes and study pages by words, and gives the marked pa
   // nothing matching says so, and names how much there is
   assert.match((await reg.myNotes({ query: "zebra" })).text, /Nothing in his 2 highlights and notes or his 1 study pages/);
 });
+
+// ---- when Claude is busy, when he presses Stop, and what the errors say ----
+const busy = (status = 529, type = "overloaded_error") => new Response(JSON.stringify({ type: "error", error: { type, message: "Overloaded" } }), { status });
+
+test("a busy server (529, 5xx) is tried twice more, then the error says the question is kept", async () => {
+  let n = 0;
+  const twice = load((opts) => (++n <= 2 ? Promise.resolve(busy()) : sse(textEvents(["ok"]))(opts)));
+  const told = [];
+  const res = await twice.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, onRetry: (k) => told.push(k) });
+  assert.equal(res, "ok");
+  assert.equal(twice.calls.length, 3);
+  assert.deepEqual(told, [1, 2]);
+  const always = load(() => Promise.resolve(busy(503, "api_error")));
+  await assert.rejects(always.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true }), (err) => {
+    assert.equal(err.status, 503);
+    assert.equal(always.Ask.friendlyError(err), "Claude is busy right now. Your question is kept; try again in a minute.");
+    return true;
+  });
+  assert.equal(always.calls.length, 3, "one try and two more");
+  // an error that is not the server's load is not tried again
+  const bad = load(() => Promise.resolve(new Response(JSON.stringify({ error: { type: "invalid_request_error", message: "max_tokens: too large" } }), { status: 400 })));
+  await assert.rejects(bad.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true }), /400 max_tokens/);
+  assert.equal(bad.calls.length, 1);
+});
+
+test("an overload sent down the stream is tried again, unless words had already reached the page", async () => {
+  const overloaded = { type: "error", error: { type: "overloaded_error", message: "Overloaded" } };
+  let n = 0;
+  const early = load((opts) => (++n === 1 ? sse([{ type: "message_start" }, overloaded])(opts) : sse(textEvents(["ok"]))(opts)));
+  assert.equal(await early.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true }), "ok");
+  assert.equal(early.calls.length, 2);
+  const late = load(sse([...textEvents(["Faith "]).slice(0, 3), overloaded]));
+  let got = "";
+  await assert.rejects(late.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, onDelta: (t) => { got += t; } }), (err) => err.status === 529 && /busy right now/.test(late.Ask.friendlyError(err)));
+  assert.equal(got, "Faith ");
+  assert.equal(late.calls.length, 1, "not run again over words already shown");
+});
+
+test("the planner does not wait on a busy server, and names every shelf and what is here", async () => {
+  const stats = { collections: [{ slug: "scriptures", docs: 1582 }, { slug: "jsp-journals", docs: 8 }, { slug: "general-conference", docs: 0 }] };
+  const { Ask, calls } = load(() => Promise.resolve(busy()), {}, { api: async () => stats });
+  await assert.rejects(Ask.plan("faith and works"), /529/);
+  assert.equal(calls.length, 1);
+  const sys = calls[0].body.system;
+  assert.match(sys, /standards \(Missionary Standards for Disciples of Jesus Christ/);
+  assert.match(sys, /jsp \(the Joseph Smith Papers/);
+  assert.match(sys, /scope is one of: all, scriptures, conference, pmg, standards, handbook, cfm, helps, jsp\./);
+  assert.match(sys, /The original text comes first/);
+  assert.match(sys, /\n\nOn this device: scriptures, jsp\. Not on this device: conference, pmg, standards, cfm, handbook, helps\.$/);
+  assert.doesNotMatch(sys, /1971/);
+});
+
+test("Stop ends a call at once, and ends the wait before another try", async () => {
+  const hung = load(never);
+  const ctl = new AbortController();
+  const p = hung.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, signal: ctl.signal });
+  setTimeout(() => ctl.abort(), 5);
+  await assert.rejects(p, { name: "StopError" });
+  const waiting = load(() => Promise.resolve(busy()));
+  const ctl2 = new AbortController();
+  const p2 = waiting.Ask.complete({ model: "m", messages: [], max_tokens: 10, stream: true, signal: ctl2.signal, onRetry: () => ctl2.abort() });
+  await assert.rejects(p2, { name: "StopError" });
+  assert.equal(waiting.calls.length, 1);
+});
+
+test("errors are named by their status number, in plain words", () => {
+  const { Ask } = load(() => { throw new Error("no call"); });
+  const err = (status, message, extra = {}) => Object.assign(new Error(`${status} ${message}`.trim()), { status }, extra);
+  assert.equal(Ask.friendlyError(err(404, "model: claude-old-1")), "That model is no longer offered. Pick another in settings.");
+  assert.match(Ask.friendlyError(err(429, "Too many requests")), /rate-limited/);
+  // words that merely contain "rate" or the digits 429 are not a rate limit
+  assert.equal(Ask.friendlyError(new Error("could not generate request 4290")), "Something went wrong: could not generate request 4290");
+  assert.match(Ask.friendlyError(err(401, "invalid x-api-key")), /key was not accepted/);
+  assert.match(Ask.friendlyError(err(400, "Your credit balance is too low")), /no credit/);
+  assert.match(Ask.friendlyError(err(500, "Internal server error")), /busy right now\. Your question is kept/);
+});
+
+test("the lexicon's lines reach the model without an em dash", async () => {
+  const api = async (method) => (method === "lexicon" ? { strongs: "H2617", entry: { lemma: "\u05d7\u05e1\u05d3", translit: "chesed", gloss: "kindness" }, count: 1, verses_total: 1, books: [], glosses: [], credit: "STEP Bible",
+    verses: [{ citation: "Genesis 19:19", verse: 19, text: "thou hast magnified thy mercy", doc_id: 3, pid: "p19", words: [{ word: "\u05d7\u05e1\u05d3", translit: "chesed", gloss: "kindness" }] }] } : null);
+  const { Ask } = load(() => { throw new Error("no call"); }, {}, { api });
+  const r = await new Ask.Registry().lexicon({ strongs: "H2617" });
+  assert.match(r.text, /\[1\] Genesis 19:19: \S+ chesed \[kindness\] \(KJV: thou hast magnified thy mercy\)/);
+  assert.doesNotMatch(r.text, /\u2014/);
+});

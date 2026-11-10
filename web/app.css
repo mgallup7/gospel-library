@@ -675,6 +675,7 @@ body.presenting { overflow: hidden; }
 .ask-actions { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; }
 .ask .primary { height: 44px; padding: 0 18px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .ask .primary:disabled { opacity: .5; }
+.ask .primary.stop { background: var(--chrome-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--rule); }
 .ask-hint { font-size: 13px; color: var(--ink-3); line-height: 1.45; margin: 4px 0 14px; }
 .ask-card { padding: 14px 0 6px; border-top: 1px solid var(--rule); }
 .ask-q { font: 600 15px/1.4 var(--sans); color: var(--ink-2); margin-bottom: 8px; }
