@@ -75,10 +75,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
       // the PowerPoint is not built behind an edit; it is built as the pointer comes to Download
       await page.waitForTimeout(4600);
-      check((await page.textContent(".board-row .primary")) === "Download PowerPoint", "the file should not be built a few seconds after an edit");
+      check(!(await page.evaluate(() => document.querySelector(".board-row .primary").classList.contains("ready"))), "the file should not be built a few seconds after an edit");
       await page.hover(".board-row .primary");
-      await page.waitForFunction(() => document.querySelector(".board-row .primary").textContent === "Save PowerPoint", null, { timeout: 15000 }).catch(() => {});
-      check((await page.textContent(".board-row .primary")) === "Save PowerPoint", "the file should be built when the pointer comes to Download");
+      await page.waitForFunction(() => document.querySelector(".board-row .primary").classList.contains("ready"), null, { timeout: 15000 }).catch(() => {});
+      check(await page.evaluate(() => document.querySelector(".board-row .primary").classList.contains("ready")), "the file should be built when the pointer comes to Download");
+      check((await page.textContent(".board-row .primary")) === "Download PowerPoint", "the button keeps one name, built or not");
     }
     await ctx.close();
   }

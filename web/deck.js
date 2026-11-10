@@ -2834,7 +2834,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // is built just before it is wanted (as the finger comes down on Download,
   // and when More opens), and when it is still not ready at the tap, the share
   // sheet is tried once the file is; if the browser says the tap is spent, the
-  // button has become "Save PowerPoint" for one more tap.
+  // a toast says "Tap again to share" and the same button takes one more tap.
   const PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   let prepared = null;   // { updated, theme, blob, name, file }
   let preparing = null;
@@ -2863,7 +2863,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   function syncDownloadButton() {
     if (!ui) return;
     const ready = isPrepared();
-    ui.download.textContent = ready && !ui.download.disabled ? "Save PowerPoint" : "Download PowerPoint";
+    // one name for the button, built or not: a change of name read as "it has not saved"
+    ui.download.textContent = "Download PowerPoint";
     ui.download.classList.toggle("ready", ready);
   }
   function canShareFile(file) { try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) { return false; } }
@@ -2875,7 +2876,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       say(reportLine());
       navigator.share({ files: [p.file], title: p.name }).catch((err) => {
         if (err && err.name === "AbortError") return;
-        if (late && err && err.name === "NotAllowedError") { say(`${reportLine()} Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.`); return; }
+        if (late && err && err.name === "NotAllowedError") { GL().toast("Tap again to share."); say(`${reportLine()} The file is ready. Tap Download PowerPoint again, then choose Save to Files, PowerPoint, Keynote or AirDrop.`); return; }
         fallbackDownload(p);
       });
       return;
@@ -2888,7 +2889,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const a = el("a", { href: url, download: p.name });
       document.body.append(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-      say(`${reportLine()} ${p.name} is on its way to your downloads; if it did not appear, tap Save PowerPoint once more.`);
+      say(`${reportLine()} ${p.name} is on its way to your downloads; if it did not appear, tap Download PowerPoint once more.`);
     } catch (err) {
       say(`Could not hand the file over: ${err.message}`);
     }
@@ -2904,7 +2905,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     syncDownloadButton();
     // Built after the tap (the build began as the finger came down, so it is often a fraction of
     // a second later): the share sheet is tried, and where the browser wants a fresh tap for it,
-    // the button now says Save PowerPoint. Elsewhere the download starts.
+    // a toast asks for one more tap on the same button. Elsewhere the download starts.
     handOver(prepared, { late: true });
   }
 
