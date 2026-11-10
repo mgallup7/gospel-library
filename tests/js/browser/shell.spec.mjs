@@ -37,8 +37,8 @@ export default async function run(browser, { BASE: UPSTREAM, SHOTS }) {
     await page.goto(BASE);
     await page.waitForSelector("div.setup");
     await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
-    const cached = await page.evaluate(async () => ({ keys: await caches.keys(), n: (await (await caches.open("gospel-shell-v35")).keys()).length }));
-    if (!cached.keys.includes("gospel-shell-v35")) errors.push(`caches: ${cached.keys.join(", ")}`);
+    const cached = await page.evaluate(async () => ({ keys: await caches.keys(), n: (await (await caches.open("gospel-shell-v36")).keys()).length }));
+    if (!cached.keys.includes("gospel-shell-v36")) errors.push(`caches: ${cached.keys.join(", ")}`);
     if (cached.n < 24) errors.push(`only ${cached.n} shell files cached`);
     const preload = await page.evaluate(() => [...document.querySelectorAll('link[rel="modulepreload"]')].map((l) => l.getAttribute("href")));
     if (preload.join(" ") !== "./app.js ./lib/cite.js ./lib/markdown.js ./lib/chunk.js ./lib/checks.js ./lib/step.js ./lib/refs.js ./lib/format.js") errors.push(`modulepreload: ${preload.join(" ")}`);
@@ -72,7 +72,7 @@ export default async function run(browser, { BASE: UPSTREAM, SHOTS }) {
     const text = await page.textContent(".banner.shell-update span");
     if (text !== "A new version is ready.") errors.push(`notice says: ${text}`);
     // the old set still answers until Reload is tapped
-    if (!(await page.evaluate(async () => (await caches.keys()).includes("gospel-shell-v35")))) errors.push("the old shell was dropped before Reload");
+    if (!(await page.evaluate(async () => (await caches.keys()).includes("gospel-shell-v36")))) errors.push("the old shell was dropped before Reload");
     await page.screenshot({ path: OUT + "ipad-notice.png" });
     await page.setViewportSize({ width: 393, height: 852 });
     await page.waitForTimeout(200);
@@ -81,7 +81,7 @@ export default async function run(browser, { BASE: UPSTREAM, SHOTS }) {
     await page.waitForSelector("div.setup");
     await page.waitForTimeout(500);
     const after = await page.evaluate(async () => ({ keys: await caches.keys(), notice: document.querySelectorAll(".banner.shell-update").length, controlled: !!navigator.serviceWorker.controller }));
-    if (!after.keys.includes("gospel-shell-vtest") || after.keys.includes("gospel-shell-v35")) errors.push(`after Reload: ${after.keys.join(", ")}`);
+    if (!after.keys.includes("gospel-shell-vtest") || after.keys.includes("gospel-shell-v36")) errors.push(`after Reload: ${after.keys.join(", ")}`);
     if (after.notice) errors.push("the notice is still there after Reload");
     if (!after.controlled) errors.push("the page is not controlled after Reload");
   }
