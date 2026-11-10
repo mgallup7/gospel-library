@@ -55,7 +55,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const head = await page.evaluate(() => {
       const card = document.querySelector(".bcard[data-id='c0']");
       const tap = (n) => { const r = n.getBoundingClientRect(), b = getComputedStyle(n, "::before"); const grow = -parseFloat(b.top) || 0; return Math.min(r.width, r.height) + 2 * grow; };
-      return { buttons: card.querySelectorAll(".bc-head button:not(.port):not(.bc-cite)").length, grip: tap(card.querySelector(".bc-grip")), more: tap(card.querySelector(".bc-more")), touch: getComputedStyle(card.querySelector(".bc-grip")).touchAction };
+      return { buttons: card.querySelectorAll(".bc-head button:not(.port):not(.port-word):not(.bc-cite)").length, grip: tap(card.querySelector(".bc-grip")), more: tap(card.querySelector(".bc-more")), touch: getComputedStyle(card.querySelector(".bc-grip")).touchAction };
     });
     check(head.buttons === 2, `a card's head should hold the handle and one more button (${head.buttons})`);
     check(head.grip >= 44 && head.more >= 44, `the handle and the more button should take a 44px tap (${head.grip}, ${head.more})`);

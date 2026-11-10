@@ -829,9 +829,11 @@ import { database } from "./lib/idb.js";
     const moreBox = el("div", { class: "board-more", hidden: true }, [themes, moreRow]);
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
+    // said once, under the head, when a deck first has two phrases to connect; gone for good after the first link
+    const linkHint = el("p", { class: "deck-hint link-hint", role: "note", hidden: true, text: "Drag a dot to another phrase to connect them, or tap Link." });
     const thinkBox = el("div", { class: "board-think", hidden: true });
     const actions = el("div", { class: "board-row" }, [download, present, more]);
-    const head = el("div", { class: "board-head" }, [top, actions, moreBox, thinkBox]);
+    const head = el("div", { class: "board-head" }, [top, actions, linkHint, moreBox, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -852,7 +854,7 @@ import { database } from "./lib/idb.js";
       swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
       cancelLink();
     }, true);
-    ui = { head, title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow: moreBox, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { head, title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow: moreBox, banner, hint, linkHint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
@@ -935,6 +937,9 @@ import { database } from "./lib/idb.js";
     ui.think.disabled = count() < 2;
     ui.md.disabled = empty;
     syncDownloadButton();
+    board.classList.toggle("can-link", count() > 1);
+    const phrases = deck.items.reduce((n, it) => n + (it.type === "passage" ? (it.hl || []).length : 0), 0);
+    ui.linkHint.hidden = !(phrases >= 2 && !deck.links.length && !store.get("deckLinkHintDone"));
     // how to highlight and link is said in the empty state; after that it is under More, on request
     ui.hint.hidden = empty || !howTo;
     ui.hint.textContent = empty ? ""
@@ -991,7 +996,15 @@ import { database } from "./lib/idb.js";
     // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
     if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
     const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
-    card.append(el("div", { class: "bc-head" }, [grip, meta, tools, port]));
+    // the dot has a name beside it once there is another passage to link to (app.css shows it
+    // on a board that can link; syncHead says when that is): a tap on the word
+    // starts a link from this passage (the same as "Link to…" on a phrase), and with a link
+    // already under way the tap is this card's, which finishes it here
+    const word = el("button", { type: "button", class: "port-word", text: "Link", title: "Link this passage to another: tap, then tap the other passage (or drag the dot)", "aria-label": `Link ${it.citation} to another passage`, onclick: (e) => {
+      if (linking) return;
+      e.stopPropagation(); linking = { id: it.id, hl: null }; active = null; pending = null; draw();
+    } });
+    card.append(el("div", { class: "bc-head" }, [grip, meta, tools, word, port]));
     card.append(textEl(it));
     // the talk and conference sit under the words, the way an attribution follows a quote
     if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
@@ -1502,6 +1515,7 @@ import { database } from "./lib/idb.js";
     if (!link) return;
     if (made) link.made = made; // the one-word highlight this link brought: it leaves with the link
     active = null; pending = null;
+    store.set("deckLinkHintDone", true); // he has linked once: the line that says how is not needed again
     holding = true;
     save();
     did("Linked.");
