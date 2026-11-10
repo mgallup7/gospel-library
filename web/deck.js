@@ -117,17 +117,39 @@ import { esc } from "./lib/format.js";
   let savedDecks = []; // [{id, title, updated, deck}], newest first
   const bc = typeof BroadcastChannel === "function" ? new BroadcastChannel(DB) : null;
 
+  let dirty = false;    // a change the database does not have yet
+  let firstWanted = 0;  // when the oldest of those changes was made
   async function writeCurrent() {
-    clearTimeout(writeTimer); writeTimer = null;
+    clearTimeout(writeTimer); writeTimer = null; firstWanted = 0;
     if (!loaded) { writeWanted = true; return; }
     writeWanted = false;
-    if (noDb) { store.set("deck", deck); return; }
-    try { await tx("current", "readwrite", (s) => s.put(deck, "deck")); bc?.postMessage({ what: "current", updated: deck.updated }); }
-    catch (err) { warn(err); }
+    const stamp = deck.updated;
+    if (noDb) { store.set("deck", deck); dirty = false; return; }
+    try {
+      await tx("current", "readwrite", (s) => s.put(deck, "deck"));
+      if (deck.updated === stamp) dirty = false;
+      bc?.postMessage({ what: "current", updated: deck.updated });
+    } catch (err) { warn(err); }
   }
-  function scheduleWrite() { clearTimeout(writeTimer); writeTimer = setTimeout(writeCurrent, 400); }
-  // A deck being typed into when the page goes away is written at once.
-  const flushNow = () => { if (writeTimer) writeCurrent(); };
+  // A change is written a moment after it is made: at once for a card added, moved or removed,
+  // after a pause in typing, and never more than a second and a half behind steady typing (a
+  // wait that started again at every key was never reached by someone who kept typing).
+  function scheduleWrite(typing = false) {
+    dirty = true;
+    const now = Date.now();
+    if (!firstWanted) firstWanted = now;
+    clearTimeout(writeTimer);
+    writeTimer = setTimeout(writeCurrent, typing ? Math.max(0, Math.min(400, firstWanted + 1500 - now)) : 30);
+  }
+  // The page going away (a reload, the app sent to the background) with a change not yet in the
+  // database: the write is started, and since the browser may not let it finish, a copy goes to
+  // localStorage, which is written before this returns. The next start takes the newer of the
+  // two (see ready) and clears the copy. A deck too big for localStorage has only the first.
+  const flushNow = () => {
+    if (!dirty && !writeTimer) return;
+    writeCurrent();
+    if (loaded && !noDb) { try { localStorage.setItem("gospel.deck", JSON.stringify(deck)); } catch (_) {} }
+  };
   window.addEventListener("pagehide", flushNow);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushNow(); });
 
@@ -171,9 +193,18 @@ import { esc } from "./lib/format.js";
     }
     savedDecks = (saved || []).filter((d) => d && d.id && d.deck);
     sortSaved();
+    // A stored deck that cannot be read (damaged, or a shape this version does not know) is kept
+    // aside under another key and a new deck starts, so the changes made from here on are saved.
+    let stored = null;
+    try { stored = migrate(current); }
+    catch (err) {
+      console.warn("the stored deck could not be read:", err?.message);
+      try { if (noDb) store.set("deck-unreadable", current); else await tx("current", "readwrite", (s) => s.put(current, "deck-unreadable")); } catch (_) {}
+      setTimeout(() => GL()?.toast("The deck kept on this device could not be read. It was set aside and a new one started."), 800);
+    }
     // Anything added in the moment before the stored deck arrived joins it rather than replacing it.
     const early = deck;
-    deck = migrate(current) || deck;
+    deck = stored || deck;
     if (early !== deck && early.items.length) {
       for (const it of early.items) if (!(it.type === "passage" && has(it.doc_id, it.pid))) deck.items.push(it);
       deck.links.push(...early.links);
@@ -185,7 +216,12 @@ import { esc } from "./lib/format.js";
     if (writeWanted) writeCurrent();
     draw(); updateBadge();
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
-  })();
+  })().catch((err) => {
+    // whatever went wrong on the way in, the deck in memory must still be written from here on
+    console.warn("the deck did not load:", err?.message);
+    loaded = true;
+    try { forgetPast(); draw(); updateBadge(); } catch (_) {}
+  });
 
   // Another tab saved: take its newer deck rather than writing over it later.
   if (bc) bc.onmessage = async (e) => {
@@ -203,7 +239,7 @@ import { esc } from "./lib/format.js";
   function save({ redraw = true } = {}) {
     deck.updated = Date.now();
     keep(!redraw);
-    scheduleWrite();
+    scheduleWrite(!redraw);
     updateBadge();
     if (redraw) draw();
     else if (ui) { syncDownloadButton(); schedulePrepare(); syncUndo(); }
@@ -264,7 +300,7 @@ import { esc } from "./lib/format.js";
     pending = active = linking = null; closeEditor();
     lastJson = snap(); lastEntry = null;
     for (const u of undone) { try { u.extra?.(); } catch (_) {} }
-    scheduleWrite(); updateBadge(); draw();
+    scheduleWrite(); updateBadge(); draw(); // written at once, like any other change
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
     return true;
   }
@@ -746,6 +782,10 @@ import { esc } from "./lib/format.js";
   let swallowTap = false;
   function draw() {
     if (!ui) return;
+    // A redraw replaces the dot being dragged (a passage added from the other pane, marks
+    // arriving, another tab), and its pointer events with it: the drag ends here, cancelled,
+    // rather than leaving the board deaf to taps.
+    if (drag) drag.end(null, true);
     syncHead();
     drawCards();
     raf(drawLines);
@@ -1039,7 +1079,8 @@ import { esc } from "./lib/format.js";
       if (!drag || drag.port !== port) return;
       port.removeEventListener("pointermove", onMove);
       port.removeEventListener("pointerup", onEnd);
-      port.removeEventListener("pointercancel", onEnd);
+      port.removeEventListener("pointercancel", onLost);
+      port.removeEventListener("lostpointercapture", onLost);
       try { port.releasePointerCapture(drag.pointerId); } catch (_) {}
       if (drag.loop) cancelAnimationFrame(drag.loop);
       temp.remove();
@@ -1058,9 +1099,11 @@ import { esc } from "./lib/format.js";
       else if (!hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
     };
     drag.end = onEnd;
+    const onLost = (ev) => onEnd(ev, true); // the browser took the pointer away (a system gesture, the dot removed)
     port.addEventListener("pointermove", onMove);
     port.addEventListener("pointerup", onEnd);
-    port.addEventListener("pointercancel", onEnd);
+    port.addEventListener("pointercancel", onLost);
+    port.addEventListener("lostpointercapture", onLost);
     // Scroll the pane when the finger nears its edge, so far-away passages can be reached.
     const scroller = scrollerOf(ui.canvas);
     const step = () => {
@@ -2319,7 +2362,9 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   window.Deck = {
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
-    ready, flush: () => writeCurrent(), // ready: the stored deck has arrived; flush: write now rather than a moment later
+    // ready: the stored deck has arrived. flush: write now rather than a moment later; its promise
+    // settles when the database has the deck, so a reload the app starts itself can await it.
+    ready, flush: () => writeCurrent(),
     undo: () => undo(), canUndo, // the last change to the deck taken back (true when it was); whether there is one
     // an empty deck, as "Yes, delete it and start over" leaves it, written before the promise settles
     reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },

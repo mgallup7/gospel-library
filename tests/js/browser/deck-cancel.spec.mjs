@@ -260,11 +260,57 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click(".dsheet button:has-text('Go on without saving it')");
     await settle();
     check((await state()).items.length === 0, "Start a new deck should empty the deck");
-    await page.waitForTimeout(5600); // the toast has gone; the board's own Undo is still there
-    await shot("04-new-deck");
+    await shot("04-new-deck"); // the board's own Undo is there for when the toast has gone
     await page.click(".board-empty button:has-text('Undo the last change')");
     await settle();
-    check((await state()).items.length === 4, "the board's Undo should bring the deck back after the toast has gone");
+    check((await state()).items.length === 4, "the board's Undo should bring the deck back");
+
+    // ---- a redraw in the middle of a drag (a passage added from the other pane) ends the drag
+    // and leaves the board taking taps
+    await dragFrom(word("c", 1), { release: false });
+    await page.evaluate(() => { window.added = window.Deck.addQuestion("Added while a dot was being dragged").id; });
+    await page.mouse.up();
+    await settle();
+    check(!(await page.evaluate(() => !!document.querySelector(".board.dragging, .board-lines .temp"))), "a redraw during a drag should end the drag");
+    await page.evaluate(() => window.Deck.removeIds([window.added]));
+    await page.click(word("c", 2));
+    check((await page.locator(".bcard[data-id='c'] .w.first").count()) === 1, "the board should take taps after a drag that a redraw ended");
+    await page.keyboard.press("Escape");
+
+    if (name === "ipad") {
+      // ---- an edit survives a reload that follows it at once, and so does steady typing
+      const reload = async () => { await page.reload(); await page.waitForFunction(() => window.GL?.ready && window.Deck, null, { timeout: 60000 }); await page.evaluate(() => window.Deck.ready); };
+      const before = (await state()).items.length;
+      await page.click(".board .board-foot button:has-text('+ Slide text')");
+      await reload();
+      check((await state()).items.length === before + 1, `a card added just before a reload should be kept: ${(await state()).items.length} of ${before + 1}`);
+      await page.click("#deckBtn");
+      await page.waitForSelector(".board .bcard.note textarea", { timeout: 10000 });
+      await page.click(".bcard.note .bc-card-text");
+      await page.keyboard.type("Typed steadily, with no pause long enough for the old wait to end.", { delay: 35 });
+      await reload();
+      check((await state()).items.some((i) => i.type === "note" && /old wait to end\.$/.test(i.text || "")), "words typed steadily up to a reload should be kept");
+      check(await page.evaluate(() => localStorage.getItem("gospel.deck") === null), "the copy made as the page went away should be taken in and cleared");
+
+      // ---- a stored deck that cannot be read is set aside, and the deck is still saved afterwards
+      await page.evaluate(async () => {
+        await window.Deck.flush();
+        const db = await new Promise((res, rej) => { const r = indexedDB.open("gospel-decks"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+        await new Promise((res, rej) => { const t = db.transaction("current", "readwrite"); t.objectStore("current").put({ id: "bad", items: [null], links: [] }, "deck"); t.oncomplete = res; t.onerror = rej; });
+        db.close();
+      });
+      await reload();
+      await page.evaluate(async () => { window.Deck.addQuestion("Still saved?"); await window.Deck.flush(); });
+      const kept = await page.evaluate(async () => {
+        const db = await new Promise((res, rej) => { const r = indexedDB.open("gospel-decks"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+        const get = (k) => new Promise((res) => { const r = db.transaction("current").objectStore("current").get(k); r.onsuccess = () => res(r.result); });
+        const out = { deck: await get("deck"), aside: await get("deck-unreadable") };
+        db.close();
+        return out;
+      });
+      check(kept.aside && kept.aside.id === "bad", "an unreadable deck should be kept aside under its own key");
+      check(kept.deck && kept.deck.items.some((i) => i && i.text === "Still saved?"), "and the deck should be written again after it");
+    }
 
     await ctx.close();
   }
