@@ -1533,7 +1533,13 @@ import { esc, mb } from "./lib/format.js";
   window.addEventListener("message", (e) => {
     const frame = readerPane.querySelector(".study-frame");
     if (!frame || e.source !== frame.contentWindow || !e.data || typeof e.data !== "object") return;
-    if (e.data.type === "gospel:link" && typeof e.data.href === "string") followLink(e.data.href);
+    if (e.data.type === "gospel:link" && typeof e.data.href === "string") {
+      // a link with no site in it ("other.html", "../alma/33") pointed at a file beside the page
+      // where it was written; nothing here knows where that was
+      const h = e.data.href.trim();
+      if (h && !/^[a-z][a-z0-9+.-]*:/i.test(h) && !h.startsWith("/")) toast("That link leads to a file beside this page, which is not on this device.");
+      else if (h) followLink(h);
+    }
     else if (e.data.type === "gospel:scroll") studyScroll = Number(e.data.y) || 0;
   });
   // The shelf: the pages on this device, and a way to add one
@@ -1937,7 +1943,10 @@ import { esc, mb } from "./lib/format.js";
       return;
     }
     if (href.startsWith("#")) { e.preventDefault(); focusParagraph(href.slice(1)); return; }
-    if (href.startsWith("/") || /^https?:/i.test(href)) { e.preventDefault(); followLink(href); }
+    // every web link, a relative one too (read against the page's own address on its site, not the
+    // app's, which would reload the app somewhere it has no page); mail and phone links are the browser's
+    const u = href.trim() ? linkUrl(href, currentDoc && currentDoc.source_url) : null;
+    if (u && /^https?:$/.test(u.protocol)) { e.preventDefault(); followLink(u.href); }
   }
   // Every link goes through here: the library's own copy when it holds the page (a verse shows
   // in a sheet first, a page or a book opens), the web otherwise.
@@ -1951,7 +1960,11 @@ import { esc, mb } from "./lib/format.js";
   }
   async function followLink(href, base) {
     const u = linkUrl(href, base);
-    if (!u || !/^https?:$/.test(u.protocol)) return;
+    if (!u) return;
+    // mail and phone links belong to the device. The link was tapped where it cannot act (a
+    // study's frame is shut in), so a real link is clicked here in its place, at once.
+    if (/^(mailto|tel|sms):$/.test(u.protocol)) { const a = el("a", { href: u.href, hidden: true }); document.body.append(a); a.click(); a.remove(); return; }
+    if (!/^https?:$/.test(u.protocol)) return;
     const url = u.href;
     if (toastEl?.querySelector("a.toast-action")) { outsideAsk++; toastClose(); } // the offer for the link before this one
     if (!CHURCH.test(url)) { openOutside(url); return; }
@@ -1996,8 +2009,27 @@ import { esc, mb } from "./lib/format.js";
     return out.join(", ");
   }
   // A verse someone linked to, read where you are; Open goes to the chapter.
+  // When the verse takes the place of a footnote in the sheet, Back returns to the note (and the
+  // next Back closes the sheet). The note is kept here. Back with the sheet up pops its marker
+  // entry and the listener above closes it; this one puts the note back with a marker of its
+  // own. Browsers differ on which of the two hears Back first, so it answers either way.
+  let noteUnder = null;
+  window.addEventListener("popstate", () => {
+    const n = noteUnder; noteUnder = null;
+    if (!n || n.url !== location.href || history.state?.overlay || sheet.getAttribute("aria-label") !== "Passage") return;
+    if (!sheet.hidden && overlay === "sheet") { // heard first: the sheet stays up, and the other listener leaves this Back alone
+      $(".sheet-body", sheet).replaceChildren(...n.nodes);
+      sheet.setAttribute("aria-label", n.label);
+      history.pushState({ ...(history.state || {}), overlay: "sheet" }, "", location.href);
+      poppingOverlay = true;
+    } else if (sheet.hidden && !overlay) { // heard second: the sheet has just been closed, and opens again on the note
+      $(".sheet-body", sheet).replaceChildren(...n.nodes);
+      openSheet(n.label);
+    }
+  }, true);
   async function peekPassage(res) {
     const bodyEl = $(".sheet-body", sheet);
+    noteUnder = !sheet.hidden && sheet.getAttribute("aria-label") === "Footnote" ? { label: "Footnote", url: location.href, nodes: [...bodyEl.childNodes] } : null;
     bodyEl.replaceChildren(el("div", { class: "status", text: "Opening…" }));
     openSheet("Passage");
     let ctx = null;
@@ -2007,7 +2039,7 @@ import { esc, mb } from "./lib/format.js";
     const start = Number(from.slice(1)), end = listed ? Number(listed[listed.length - 1].slice(1)) : res.pid_end && /^p\d+$/.test(res.pid_end) ? Number(res.pid_end.slice(1)) : start;
     try { ctx = await api("context", { doc_id: res.doc_id, pid: from, before: 0, after: Math.max(0, Math.min(listed ? 40 : 12, end - start)) }); } catch (_) { ctx = null; }
     if (sheet.hidden) return;
-    const open = async () => { hideNote(); await openDoc(res.doc_id, res.pid); markListed(res); };
+    const open = async () => { noteUnder = null; hideNote(); await openDoc(res.doc_id, res.pid); markListed(res); };
     if (!ctx) { open(); return; }
     const verses = ctx.paragraphs.filter((x) => x.kind !== "heading" && (!listed || listed.includes(x.pid)));
     bodyEl.replaceChildren(
@@ -2457,10 +2489,12 @@ import { esc, mb } from "./lib/format.js";
     $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;
-      e.preventDefault();
       const href = a.getAttribute("href") || "";
+      const u = linkUrl(href, currentDoc && currentDoc.source_url);
+      if (u && /^(mailto|tel|sms):$/.test(u.protocol)) return; // the tap itself opens Mail or the phone
+      e.preventDefault();
       if (href.startsWith("#")) { closeSheet(); focusParagraph(href.slice(1)); return; }
-      followLink(href);
+      if (u) followLink(u.href);
     };
   }
   // hideNote takes the sheet down and leaves history alone: for the moment before a move, whose
@@ -2476,7 +2510,7 @@ import { esc, mb } from "./lib/format.js";
     if (wasOpen && sheetOpener && sheetOpener.isConnected) { try { sheetOpener.focus({ preventScroll: true }); } catch (_) {} }
     sheetOpener = null;
   }
-  function closeSheet() { const had = overlay === "sheet"; hideNote(); if (had) dropOverlay("sheet"); }
+  function closeSheet() { const had = overlay === "sheet"; noteUnder = null; hideNote(); if (had) dropOverlay("sheet"); }
   // A dialog over the page (the sheet, the stage) is modal: aria-modal on it, and everything else
   // in the body inert while it is open, so VoiceOver and Tab stay inside it. The toast stays live
   // (its Undo must stay reachable). inertBehind(node, false) undoes exactly what it did; the stage

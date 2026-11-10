@@ -75,8 +75,8 @@ import { findReferences } from "./lib/refs.js";
   function decode(s) { const d = document.createElement("textarea"); d.innerHTML = s; return d.value; }
 
   // ---- the page, ready for the frame -------------------------------------
-  // The hand-off script: any link to the web goes to the app, which opens the local copy
-  // when the library holds it; the page's own #links scroll within the page.
+  // The hand-off script: every link goes to the app, which opens the local copy when the
+  // library holds it; the page's own #links scroll within the page.
   const HANDOFF = `<script>(function(){
 document.addEventListener("click",function(e){
   var a=e.target&&e.target.closest?e.target.closest("a[href]"):null; if(!a) return;
@@ -87,7 +87,12 @@ document.addEventListener("click",function(e){
     var d=t.tagName==="DETAILS"?t:t.querySelector("details"); if(d) d.open=true;
     t.scrollIntoView({block:"start"}); return;
   }
-  if(/^(https?:)?\\/\\//i.test(h)||h.indexOf("/study/")===0||h.indexOf("/scriptures/")===0||h.indexOf("/")===0){ e.preventDefault(); e.stopPropagation(); parent.postMessage({type:"gospel:link",href:h},"*"); }
+  if(/^javascript:/i.test(h)) return; // the page's own script
+  // every other link is the app's to follow: the frame cannot go anywhere itself (a relative
+  // link would blank it, mail and phone links are shut in). A page with a base says where its
+  // relative links lead, so those go over whole.
+  e.preventDefault(); e.stopPropagation();
+  parent.postMessage({type:"gospel:link",href:document.querySelector("base[href]")?a.href:h},"*");
 },true);
 var t=null; addEventListener("scroll",function(){clearTimeout(t);t=setTimeout(function(){parent.postMessage({type:"gospel:scroll",y:scrollY},"*");},150);},{passive:true});
 addEventListener("message",function(e){if(e.data&&e.data.type==="gospel:scrollTo")scrollTo(0,e.data.y||0);
@@ -95,7 +100,7 @@ addEventListener("message",function(e){if(e.data&&e.data.type==="gospel:scrollTo
 })();</script>`;
   function frameHtml(rec) {
     if (rec.kind === "html") {
-      const html = rec.html || "";
+      const html = withReferences(rec.html || "");
       if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + HANDOFF);
       if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + "<head>" + HANDOFF + "</head>");
       return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${HANDOFF}</head><body>${html}</body></html>`;
@@ -135,15 +140,31 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
   // way a link written by hand would be; nothing inside a link already, or in code, is touched.
   function linkify(html) {
     const doc = new DOMParser().parseFromString(`<!doctype html><body>${html}`, "text/html");
-    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.parentElement.closest("a, code, script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    linkIn(doc, true);
+    return doc.body.innerHTML;
+  }
+  // A page of HTML is the owner's own, so it is given back as written unless it names a passage
+  // in plain words; then those words become links and nothing else in it changes. Addresses
+  // written out are left as its author left them, and so is anything a script or a form owns.
+  function withReferences(html) {
+    if (!html || !findReferences(html.replace(/<[^>]*>/g, " ")).length) return html; // nothing to link: not even parsed
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc.body || !linkIn(doc, false)) return html;
+    return (doc.doctype ? "<!doctype html>" : "") + doc.documentElement.outerHTML;
+  }
+  const NOT_WORDS = "a, code, script, style, noscript, template, textarea, button, select, title, svg, math, [contenteditable]";
+  function linkIn(doc, urls) {
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.parentElement.closest(NOT_WORDS) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
     const nodes = [];
+    let made = 0;
     while (walker.nextNode()) nodes.push(walker.currentNode);
     for (const node of nodes) {
       const text = node.nodeValue;
       const spans = [];
-      for (const m of text.matchAll(URL_RE)) spans.push({ start: m.index, end: m.index + m[0].length, href: m[0] });
+      if (urls) for (const m of text.matchAll(URL_RE)) spans.push({ start: m.index, end: m.index + m[0].length, href: m[0] });
       for (const r of findReferences(text)) if (!spans.some((s) => r.start < s.end && s.start < r.end)) spans.push(r);
       if (!spans.length) continue;
+      made += spans.length;
       spans.sort((a, b) => a.start - b.start);
       const frag = doc.createDocumentFragment();
       let last = 0;
@@ -158,13 +179,13 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
       frag.append(text.slice(last));
       node.replaceWith(frag);
     }
-    return doc.body.innerHTML;
+    return made;
   }
   // What the app keeps of a study to search it and to know which chapters it links to: its words,
   // its headings (where each begins in the words, and its id, so a match opens at the nearest one)
   // and its links (each with where it sits in the words).
   function index(rec) {
-    const html = rec.kind === "html" ? rec.html || "" : bodyOf(rec);
+    const html = rec.kind === "html" ? withReferences(rec.html || "") : bodyOf(rec);
     const doc = new DOMParser().parseFromString(html, "text/html");
     for (const junk of doc.querySelectorAll("script, style, noscript, template")) junk.remove();
     let text = "";
