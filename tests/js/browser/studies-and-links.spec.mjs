@@ -109,15 +109,20 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(/Malachi 3:1\b/.test(nm), `l5 sheet says ${nm}`);
     await page.click("#sheet .close");
 
-    // l6 and l7: not in the library -> a new tab on the web
+    // l6 and l7: not in the library -> a toast that says so, with a real link to the web
+    // (nothing opens by itself: the tap inside the frame is not a gesture the app can spend)
     step = "l6"; popups = [];
     await page.frameLocator("#reader .study-frame").locator("#l6").click();
-    await page.waitForTimeout(700);
-    check(popups.length === 1, `l6 popups: ${popups}`);
-    popups = [];
+    await page.waitForSelector("#toast.show a.toast-action", { timeout: 5000 });
+    let out = await page.evaluate(() => { const a = document.querySelector("#toast a.toast-action"); return { href: a.href, target: a.target, rel: a.rel, text: document.querySelector("#toast").textContent }; });
+    check(out.href === "https://www.churchofjesuschrist.org/study/manual/preach-my-gospel-2023?lang=eng" && out.target === "_blank" && out.rel === "noopener", `l6 toast link: ${JSON.stringify(out)}`);
+    check(/Not in your library/.test(out.text) && /churchofjesuschrist\.org/.test(out.text), `l6 toast says: ${out.text}`);
+    check(popups.length === 0, `l6 popups: ${popups}`);
     await page.frameLocator("#reader .study-frame").locator("#l7").click();
-    await page.waitForTimeout(700);
-    check(popups.length === 1, `l7 popups: ${popups}`);
+    await page.waitForFunction(() => document.querySelector("#toast.show a.toast-action")?.href === "https://example.com/elsewhere", null, { timeout: 5000 }).catch(() => check(false, "l7 toast link missing"));
+    out = await page.evaluate(() => document.querySelector("#toast").textContent);
+    check(/example\.com/.test(out), `l7 toast says: ${out}`);
+    check(popups.length === 0, `l7 popups: ${popups}`);
     // l8 stays inside the page and scrolls to its target
     popups = [];
     const fr0 = page.frames().find((f) => f.url().startsWith("blob:"));

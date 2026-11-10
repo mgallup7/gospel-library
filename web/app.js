@@ -1860,7 +1860,9 @@ import { esc, mb } from "./lib/format.js";
   let toastEl = null, toastTimer = null, toastAct = null;
   function toastClose() { clearTimeout(toastTimer); toastAct = null; toastEl?.classList.remove("show"); }
   function toastArm(ms) { clearTimeout(toastTimer); toastTimer = setTimeout(toastClose, ms); }
-  function toast(text, { action, onAction } = {}) {
+  // With href the action is a real link to the web in a new tab: the tap on it is its own gesture,
+  // which Safari wants before it opens anything. more: [{ action, onAction or href }] adds others.
+  function toast(text, { action, onAction, href, more } = {}) {
     if (!toastEl) {
       toastEl = el("div", { id: "toast", class: "toast", role: "status", "aria-live": "polite", "aria-atomic": "true" });
       // a finger or the focus on its button keeps it from going away under them
@@ -1872,13 +1874,18 @@ import { esc, mb } from "./lib/format.js";
       void toastEl.offsetWidth; // laid out hidden first, so the first toast slides in like the rest
     }
     const t = toastEl;
-    toastAct = action ? () => { toastClose(); try { onAction?.(); } catch (_) {} } : null;
-    t.className = "toast show" + (action ? " has-action" : "");
-    t.replaceChildren(...[el("span", { text }), action ? el("button", { type: "button", class: "toast-action", text: action, onclick: () => toastAct?.() }) : null].filter(Boolean));
-    toastArm(action ? 5000 : 1800);
+    const press = (fn) => () => { toastClose(); try { fn?.(); } catch (_) {} };
+    toastAct = action ? press(href ? null : onAction) : null;
+    const control = (a, first) => a.href
+      ? el("a", { class: "toast-action", href: a.href, target: "_blank", rel: "noopener", text: a.action, onclick: () => setTimeout(toastClose, 0) })
+      : el("button", { type: "button", class: "toast-action", text: a.action, onclick: first ? () => toastAct?.() : press(a.onAction) });
+    const extra = action && Array.isArray(more) ? more.filter((a) => a && a.action) : [];
+    t.className = "toast show" + (action ? " has-action" : "") + (extra.length ? " has-more" : "");
+    t.replaceChildren(...[el("span", { text }), action ? control({ action, href }, true) : null, ...extra.map((a) => control(a, false))].filter(Boolean));
+    toastArm(action ? (href || extra.length ? 8000 : 5000) : 1800);
   }
   document.addEventListener("keydown", (e) => {
-    if (!toastAct || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
+    if (!toastAct || toastEl?.querySelector("a.toast-action") || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z")) return;
     const a = document.activeElement;
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return; // a field's own undo comes first
     e.preventDefault();
@@ -1940,7 +1947,7 @@ import { esc, mb } from "./lib/format.js";
     if (!CHURCH.test(url)) { openOutside(url); return; }
     let res = null;
     try { res = await api("resolve", { href: url }); } catch (_) { res = null; }
-    if (!res || !res.found) { openOutside(url); return; }
+    if (!res || !res.found) { openOutside(url, true); return; }
     if (res.kind === "book") { openBook(res); return; }
     if (res.pid && /^p\d+$/.test(res.pid) && res.collection === "scriptures" && !(currentDoc && currentDoc.id === res.doc_id && state.docId === res.doc_id)) { peekPassage(res); return; }
     hideNote();
@@ -1985,12 +1992,39 @@ import { esc, mb } from "./lib/format.js";
       ].filter(Boolean)),
     );
   }
-  // A page the library does not hold: on the web, if there is a web
-  function openOutside(url) {
-    if (!/^https?:\/\//i.test(String(url || ""))) return; // only a web address leaves the app (a study page could hand over anything)
-    if (!navigator.onLine) { toast("That page is not in the library, and you are offline."); return; }
-    window.open(url, "_blank", "noopener");
+  // A page the library does not hold. Nothing is opened from here: by the time the library has
+  // answered, the tap is over (a tap inside a study's frame never reached this window at all),
+  // and Safari, the home-screen app above all, quietly refuses a window opened after it. The
+  // toast says the page is not here, names the site, and carries a real link: that tap opens it.
+  // church: the address is on one of the sites the library copies, so it could have been held.
+  const OFFLINE = "That page is not in the library, and you are offline.";
+  let outsideAsk = 0;
+  function openOutside(url, church = false) {
+    let u = null;
+    try { u = new URL(String(url || "")); } catch (_) { return; }
+    if (!/^https?:$/.test(u.protocol)) return; // only a web address leaves the app (a study page could hand over anything)
+    if (!navigator.onLine) { toast(OFFLINE); return; }
+    const host = u.hostname.replace(/^www\./, "");
+    const say = (text, action) => toast(text, { action, href: u.href });
+    say(church ? "Not in your library." : "That link leaves the library.", `Open on ${host}`);
+    // navigator.onLine says yes on Wi-Fi with no internet behind it; one small request to the
+    // site tells. If it fails while this toast is still up, the toast says so. The link stays,
+    // since a content blocker can refuse the request while the site itself is fine.
+    const ask = ++outsideAsk;
+    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 4000);
+    fetch(u.origin + "/favicon.ico", { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit", signal: stop.signal })
+      .catch(() => { if (ask === outsideAsk && toastEl?.classList.contains("show") && toastEl.querySelector("a.toast-action")?.href === u.href) say(`Not in your library, and ${host} is not answering.`, "Try anyway"); })
+      .finally(() => clearTimeout(timer));
   }
+  // The reader's own links to the source site are real links, which a tap opens with no help.
+  // Offline they would open a dead tab, so the tap gets the message instead; the toast's link too.
+  document.addEventListener("click", (e) => {
+    if (navigator.onLine) return;
+    const a = e.target.closest?.('a[target="_blank"][href^="http"]');
+    if (!a || a.closest(".doc, .sheet-body")) return; // a link in the words of a page goes through followLink
+    e.preventDefault(); e.stopPropagation();
+    toast(OFFLINE);
+  }, true);
 
   function focusParagraph(pid, { scroll = true } = {}) {
     if (!pid || !currentDoc) return;
