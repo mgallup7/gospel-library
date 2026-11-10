@@ -101,7 +101,8 @@ import { esc, mb } from "./lib/format.js";
   //   #                       the library (home)
   //   #scriptures?b.book=alma a shelf, with how far into it you are
   //   #search?q=faith&scope=… results
-  //   #ask  #deck             the two tabs
+  //   #search                 Search with an empty box (its scope rides along)
+  //   #ask  #deck             Ask and the Deck
   // and the page open in the reader rides along on any of them as &doc=123&p=p21, or one of
   // your own pages as &s=<id> (an old #read/123 address still opens). On a phone the page
   // covers the list.
@@ -121,6 +122,7 @@ import { esc, mb } from "./lib/format.js";
     } else if (state.browse?.tab) {
       base = state.browse.tab;
       for (const k of BROWSE_KEYS) if (state.browse[k]) p.set(`b.${k}`, String(state.browse[k]));
+      if (base === "search" && state.scope !== "all") p.set("scope", state.scope);
     }
     if (state.docId) { p.set("doc", String(state.docId)); if (state.pid) p.set("p", state.pid); }
     else if (state.studyId) p.set("s", state.studyId);
@@ -149,7 +151,7 @@ import { esc, mb } from "./lib/format.js";
       state.browse = { tab: base };
       for (const k of BROWSE_KEYS) { const v = p.get(`b.${k}`); if (v !== null) state.browse[k] = k === "year" ? Number(v) : k === "all" ? v === "true" : v; }
       if (!p.get("scope") && TAB_SCOPE[base]) state.scope = TAB_SCOPE[base];
-    } else state.browse = null;
+    } else state.browse = searching ? { tab: "search" } : null; // Search is where an emptied box comes back to
     state.docId = p.get("doc") ? Number(p.get("doc")) : null;
     state.pid = p.get("p") || null;
     state.studyId = !state.docId && p.get("s") ? p.get("s") : null;
@@ -176,6 +178,7 @@ import { esc, mb } from "./lib/format.js";
     if (state.q.trim().length >= 2) return state.view === "all" ? "Every match" : "Results";
     if (tab === "ask") return "Ask";
     if (tab === "deck") return "Deck";
+    if (tab === "search") return "Search";
     if (tab) return (shelfDepth(state.browse) && shelfNamed?.key === browseKey(state.browse) && shelfNamed.name) || TAB_TITLE[tab] || "Shelf";
     return "Library";
   }
@@ -191,7 +194,7 @@ import { esc, mb } from "./lib/format.js";
     history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, prevList: cur.prevList || null, ...patch }, "", location.href);
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
-  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); }
+  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); syncTitle(); }
   // Where the view was scrolled, kept on the entry being left. A path that redraws before it pushes
   // calls this first; push() then keeps that reading instead of measuring the new view.
   let leavingScroll = null;
@@ -253,10 +256,18 @@ import { esc, mb } from "./lib/format.js";
     if (here() > 0) history.back();
     else goHome();
   }
+  // The four places. Which one this is follows from the address: words in the box (or the empty
+  // Search) are Search, #deck and #ask are themselves, and everything else, shelves and pages, is
+  // the Library.
+  const TAB_NAME = { library: "Library", search: "Search", deck: "Deck", ask: "Ask" };
+  function tabNow() {
+    const t = state.browse?.tab;
+    return state.q.trim() || t === "search" ? "search" : t === "deck" || t === "ask" ? t : "library";
+  }
   // Home, Ask and the Deck are destinations, not steps: going from one to another takes its place
   // in the trail, so Back from any of them still leads to where you were before the first. A page
   // the move closes or covers is a step all the same: Back must bring it back.
-  const atTab = () => !state.q.trim() && (!state.browse?.tab || state.browse.tab === "ask" || state.browse.tab === "deck");
+  const atTab = () => !state.q.trim() && (!state.browse?.tab || state.browse.tab === "ask" || state.browse.tab === "deck" || state.browse.tab === "search");
   const pageNow = () => (state.docId ? `d${state.docId}` : state.studyId ? `s${state.studyId}` : null);
   const tabLeft = () => ({ top: atTab(), page: pageNow(), shown: !readerPane.hidden });
   function tabStep(from) {
@@ -374,7 +385,7 @@ import { esc, mb } from "./lib/format.js";
     for (const b of document.querySelectorAll(".scopes button")) { const on = b.dataset.scope === state.scope; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
     const on = $(".scopes button.on");
     if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (_) {} }
-    input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : wide() ? "Search, or type a reference like Alma 32:21" : "Search, or a reference";
+    input.placeholder = state.scope && state.scope !== "all" ? `Search ${SCOPE_NAME[state.scope] || state.scope}…` : wide() && tabNow() === "search" ? "Search, or type a reference like Alma 32:21" : "Search, or a reference";
     $("#fSpeaker").value = state.speaker;
     $("#fFrom").value = state.from;
     $("#fTo").value = state.to;
@@ -382,15 +393,42 @@ import { esc, mb } from "./lib/format.js";
     for (const b of document.querySelectorAll("#fGroup button")) b.classList.toggle("on", b.dataset.group === state.group);
     const active = !!(state.speaker || state.from || state.to || state.book || state.group !== "passages");
     $("#filterBtn").classList.toggle("on", active);
-    $("#filterBtn").setAttribute("aria-pressed", String(active));
-    // which tab is open shows in the header
-    const tab = state.browse?.tab;
-    $("#askBtn").classList.toggle("on", tab === "ask");
-    $("#deckBtn").classList.toggle("on", tab === "deck");
-    $("#askBtn").setAttribute("aria-pressed", String(tab === "ask"));
-    $("#deckBtn").setAttribute("aria-pressed", String(tab === "deck"));
-    document.body.classList.toggle("tab-open", tab === "ask" || tab === "deck");
-    document.body.classList.toggle("shelf-studies", tab === "studies" && !state.q.trim());
+    $("#filterBtn").setAttribute("aria-label", active ? "Filters, some set" : "Filters");
+    syncPlace();
+  }
+  // Which of the four places is current: marked in the tab bar, named in the head (a real h1) and
+  // in the document's title, and on the body for app.css, which shows each place its own head.
+  const ICON_GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.3.9a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.3-.9-2 3.4 1.9 1.5a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.3-.9a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.3.9 2-3.4z"/></svg>';
+  let actsFor = null;
+  function syncPlace() {
+    const tab = tabNow();
+    document.body.dataset.tab = tab;
+    for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) {
+      const on = b.dataset.tab === tab;
+      b.classList.toggle("on", on);
+      if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    }
+    const shelf = tab === "library" ? state.browse?.tab || null : null;
+    document.body.classList.toggle("deep", !!shelf); // in a shelf its own heading leads, with Back beside it
+    document.body.classList.toggle("shelf-studies", shelf === "studies");
+    $("#placeTitle").textContent = TAB_NAME[tab];
+    measureBar();
+    // what sits at the end of the head: Settings in the Library on a phone (the rail has the gear on an iPad)
+    const want = tab === "library" && !wide() ? "gear" : "";
+    if (want !== actsFor) {
+      actsFor = want;
+      $("#barActs").replaceChildren(...(want === "gear" ? [el("button", { type: "button", class: "icon-btn gear-btn", "aria-label": "Settings", title: "Settings", html: ICON_GEAR, onclick: () => openSettings() })] : []));
+    }
+    syncTitle();
+  }
+  // The document's title: the page in front by name, else the place ("Search: faith", "Library")
+  function syncTitle() {
+    const tab = tabNow();
+    const paged = (state.docId && currentDoc && currentDoc.id === state.docId) || (state.studyId && currentStudy && currentStudy.id === state.studyId);
+    const page = paged && (!wide() || !readerPane.hidden) ? shortTitleOf(state.docId ? currentDoc : currentStudy) : "";
+    const shelf = tab === "library" && state.browse?.tab ? TAB_TITLE[state.browse.tab] || "" : "";
+    const title = page || (tab === "search" && state.q.trim() ? `Search: ${state.q.trim()}` : shelf || TAB_NAME[tab]);
+    if (document.title !== title) document.title = title;
   }
 
   // ------------------------------------------------------------ render ----
@@ -1050,6 +1088,7 @@ import { esc, mb } from "./lib/format.js";
     nameEntry();
     try {
       if (!tab) return renderOverview(body, st);
+      if (tab === "search") return renderSearchHome(body);
       if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); return; }
       if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
@@ -1066,6 +1105,13 @@ import { esc, mb } from "./lib/format.js";
     }
   }
   function setOverview(on) { document.body.classList.toggle("overview", !!on); }
+  // Search with nothing in the box yet: what the box takes, in a line.
+  function renderSearchHome(body) {
+    const t = listTrail(); if (t) body.append(t);
+    body.append(el("div", { class: "search-home" }, [
+      el("p", { class: "search-lede", text: "Words, a phrase in quotes, a question, or a reference like Alma 32:21." }),
+    ]));
+  }
   function openShelf(key) {
     rememberScroll();
     leaveSearch();
@@ -1265,7 +1311,7 @@ import { esc, mb } from "./lib/format.js";
       ...sizeTools(doc),
       el("button", { class: "icon-btn bar-extra", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       thinkBtn(),
-      doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
+      doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn cite-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
       el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => outside(e, doc.source_url), title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
       el("span", { class: "pane-switch-slot" }),
     ].filter(Boolean));
@@ -1282,30 +1328,7 @@ import { esc, mb } from "./lib/format.js";
       doc.next ? el("button", { text: `${doc.next.title} ›`, onclick: () => stepChapter(doc.next) }) : el("span"),
     ]);
     const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
-    // On a phone the tools sit at the bottom, under the thumb; the top bar keeps the way back and the crumb.
-    const sizeRow = el("div", { class: "size-row", hidden: true }, [
-      el("span", { text: "Text size" }),
-      el("button", { type: "button", "aria-label": "Smaller text", onclick: () => resize(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
-      el("button", { type: "button", "aria-label": "Larger text", onclick: () => resize(1), html: "<span style='font-size:20px;font-weight:600'>A</span>" }),
-    ]);
-    const rfoot = el("div", { class: "reader-foot" }, [
-      footBtn("Present", ICON_PRESENT, () => startPresenting()),
-      el("span", { class: "slot-orig" }),
-      footBtn("Text size", "<span class='glyph' style='font-size:20px;font-weight:700'>A</span>", (e) => { sizeRow.hidden = !sizeRow.hidden; e.currentTarget.classList.toggle("on", !sizeRow.hidden); }),
-      doc.collection && doc.collection.startsWith("jsp-") ? footBtn("Cite", "<span class='glyph' style='font-size:18px;font-weight:700'>“”</span>", () => citePapers(doc)) : null,
-      footBtn("Add to deck", "<span class='glyph' style='font-size:24px'>+</span>", () => {
-        const units = selectedUnits();
-        if (!units.length) { toast("Tap a verse or paragraph to select it first."); return; }
-        const first = $(".doc .sel", readerPane);
-        const added = window.Deck?.addFromDoc(currentDoc, units);
-        clearSelection();
-        focusUnit(first);
-        deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
-      }),
-      footBtn("Think", ICON_THINK, () => thinkHere(), "Think it through with Claude"),
-      el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => outside(e, doc.source_url), "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
-    ]);
-    readerPane.replaceChildren(bar, body, nav, foot, sizeRow, rfoot);
+    readerPane.replaceChildren(bar, body, nav, foot);
     readerPane.classList.remove("has-study");
     releaseStudyUrl();
     readerPane.scrollTop = 0;
@@ -1895,7 +1918,7 @@ import { esc, mb } from "./lib/format.js";
   }
 
   // ---- Think it through, from anywhere ------------------------------------
-  // A lamp in the reader bar (in the bottom bar on a phone) for the page being read, and "Think
+  // A lamp in the reader bar (in its menu on a phone) for the page being read, and "Think
   // these through" on the line above a set of results: the page (with anything selected) or the
   // search goes to Claude on the Ask tab, which comes back with what the library holds that
   // connects to it, each passage a card for the deck. It was a floating pill once, and sat on
@@ -1918,10 +1941,6 @@ import { esc, mb } from "./lib/format.js";
     if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; } // on a phone the page gives way to the thinking; Back returns to it
     state.browse = { tab: "ask", think: window.Ask.hasKey() ? subject : null };
     renderHome(); showList(); push();
-  }
-
-  function footBtn(label, icon, onclick, aria = label) {
-    return el("button", { type: "button", class: "foot-btn", "aria-label": aria, onclick }, [el("span", { class: "ic", html: icon }), el("span", { class: "lb", text: label })]);
   }
 
   // Tap a verse or paragraph to select it for the deck; a bar offers what to do with the selection.
@@ -2323,8 +2342,10 @@ import { esc, mb } from "./lib/format.js";
       el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]),
       el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => { shut(); outside(e, doc.source_url); } }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
       el("button", { type: "button", role: "menuitem", class: "menu-think", onclick: () => { shut(); thinkHere(); } }, [el("span", { class: "g", html: ICON_THINK }), "Think it through"]),
-    ]);
-    const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size", title: "Text size", "aria-haspopup": "menu", "aria-expanded": "false", text: "Aa", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } });
+      jsp ? el("button", { type: "button", role: "menuitem", class: "menu-cite", onclick: () => { shut(); citePapers(doc); } }, [el("span", { class: "g", html: "<b>“”</b>" }), "Cite this page"]) : null,
+    ].filter(Boolean));
+    // "Aa" while it holds the sizes alone; three dots once Present and the rest have folded into it
+    const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size and more", title: "Text size and more", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } }, [el("span", { class: "aa", text: "Aa" }), el("span", { class: "dots", html: ICON_MORE })]);
     const away = (e) => { if (!wrap.contains(e.target)) shut(); };
     const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
     function openMenu() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.addEventListener("keydown", key); menu.querySelector("button")?.focus({ preventScroll: true }); }
@@ -2339,16 +2360,18 @@ import { esc, mb } from "./lib/format.js";
     ];
   }
   // How much of the bar folds away: none, the sizes into Aa, then the match count's words and a
-  // tighter switch, then Present and the site into the menu, and last the lamp. Measured with nothing allowed to shrink
+  // tighter switch, then Present and the site into the menu, then the lamp and Cite, and last (a
+  // phone with the match arrows up) the chapter arrows, which the foot of the page also has, and
+  // Back's label, leaving its arrow. Measured with nothing allowed to shrink
   // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
-  const BAR_LEVELS = ["compact", "tight", "tighter", "tightest"];
+  const BAR_LEVELS = ["compact", "tight", "tighter", "tightest", "bare", "barest"];
   function fitReaderBar(bar) {
     if (!bar.querySelector(".size-pop")) return;
     bar.classList.remove(...BAR_LEVELS);
-    if (!wide() || bar.offsetParent === null) return;
+    if (bar.offsetParent === null) return;
     for (const level of BAR_LEVELS) {
       bar.classList.add("measuring");
-      const over = bar.scrollWidth > bar.clientWidth + 1;
+      const over = bar.scrollWidth > bar.clientWidth;
       bar.classList.remove("measuring");
       if (!over) return;
       bar.classList.add(level);
@@ -2745,22 +2768,40 @@ import { esc, mb } from "./lib/format.js";
   for (const b of document.querySelectorAll(".scopes button")) {
     b.addEventListener("click", () => { if (!state.ready) return; state.scope = b.dataset.scope; syncControls(); runSearch({ typeahead: false }); });
   }
-  $("#homeBtn").addEventListener("click", () => { if (state.ready) goHome(); });
-  $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
+  $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); $("#filterBtn").setAttribute("aria-expanded", String(!filters.hidden)); });
   function openTab(tab) {
     if (!state.ready) return;
+    if (tab === "library") { goHome(); return; }
     // a tap on the tab you are in does nothing (on a wide screen it brings the board back in front of the page)
-    if (state.browse?.tab === tab && !state.q.trim() && (wide() || !pageNow())) { if (tab === "deck" && wide() && panelPane.hidden) panel.restore(); return; }
+    if (state.browse?.tab === tab && !state.q.trim() && (wide() || !pageNow())) { if (tab === "deck" && wide() && panelPane.hidden) panel.restore(); if (tab === "search") focusBox(); return; }
     const from = tabLeft();
     rememberScroll();
     leaveSearch();
     state.q = "";
     if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
     state.browse = { tab };
+    if (tab === "search") state.scope = "all";
     syncControls(); renderHome(); showList(); tabStep(from);
+    if (tab === "search") { setEntry({ place: "search" }); focusBox(); }
   }
-  $("#askBtn").addEventListener("click", () => openTab("ask"));
-  $("#deckBtn").addEventListener("click", () => openTab("deck"));
+  for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) b.addEventListener("click", () => openTab(b.dataset.tab));
+  $("#settingsBtn").addEventListener("click", () => { if (state.ready) openSettings(); });
+  function focusBox() { try { input.focus({ preventScroll: true }); input.select(); } catch (_) {} }
+  // The search box from the keyboard ("/", Cmd+F): where it is not on the screen (the Deck, Ask,
+  // a page on a phone) Search comes up first.
+  function focusSearch() {
+    if (input.offsetParent !== null) focusBox(); else openTab("search");
+  }
+  // The Library's search field: a tap on it is a step into Search, with the cursor in the box
+  // and the shelf you were in as the place to search.
+  input.addEventListener("click", () => {
+    if (!state.ready || tabNow() === "search") return;
+    rememberScroll();
+    state.browse = { tab: "search" };
+    syncControls(); renderHome(); showList(); push(); setEntry({ place: "search" });
+    focusBox();
+  });
+  function openSettings() { /* the Settings screen arrives with its own step */ }
   const applyFilters = () => {
     if (!state.ready) return;
     state.speaker = $("#fSpeaker").value.trim(); state.from = $("#fFrom").value.trim(); state.to = $("#fTo").value.trim(); state.book = $("#fBook").value.trim();
@@ -2793,7 +2834,7 @@ import { esc, mb } from "./lib/format.js";
     // With a keyboard attached: Cmd+F or Cmd+K is the search box, Cmd+[ is Back (Ctrl on other keyboards)
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && state.ready) {
       const k = e.key.toLowerCase();
-      if ((k === "f" || k === "k") && sheet.hidden) { e.preventDefault(); input.focus(); input.select(); return; }
+      if ((k === "f" || k === "k") && sheet.hidden) { e.preventDefault(); focusSearch(); return; }
       if (k === "[") { e.preventDefault(); goBack(); return; }
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -2804,7 +2845,7 @@ import { esc, mb } from "./lib/format.js";
       if (to) { e.preventDefault(); stepChapter(to); }
       return;
     }
-    if (e.key === "/" && !document.body.classList.contains("setup")) { e.preventDefault(); input.focus(); input.select(); }
+    if (e.key === "/" && state.ready && sheet.hidden) { e.preventDefault(); focusSearch(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
   });
 
@@ -2998,7 +3039,6 @@ import { esc, mb } from "./lib/format.js";
     try { navigator.storage?.persist?.().catch(() => {}); } catch (_) {} // 150 MB that should not be evicted
     api("speakers", {}).then((rows) => { const dl = $("#speakerList"); for (const r of rows) dl.append(el("option", { value: r.name })); }).catch(() => {});
     await render();
-    if (!state.q && !state.docId && wide()) input.focus();
     setTimeout(checkForUpdate, 1500);
     setTimeout(loadSkills, 400);
     setTimeout(loadSemantic, 2500);

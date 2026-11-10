@@ -68,76 +68,160 @@ a { color: var(--accent); }
 mark { background: var(--mark); color: var(--mark-ink); border-radius: 2px; padding: 0 1px; }
 [hidden] { display: none !important; }
 
-/* ---- top bar -------------------------------------------------------- */
+/* ---- the four places: a bar along the bottom on a phone, a rail down the left on an iPad ---- */
+/* The wide layout (two panes, the rail) is "(min-width: 760px) and (min-height: 500px)" throughout,
+   and the phone's is its complement: an iPhone on its side is 852 wide and 393 high, and reads as a
+   phone. app.js wide() asks the same question. */
+:root {
+  /* the bar and the rail grow with the reading size, as the reader's small type does */
+  --tabs-h: calc(clamp(49px, calc(var(--reading-size) * 2.9), 66px) + var(--safe-bottom));
+  --rail-w: 0px;
+  --title-h: clamp(44px, calc(var(--reading-size) * 2.6), 60px);
+}
+.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
+  height: var(--tabs-h); padding: 0 calc(4px + var(--safe-right)) var(--safe-bottom) calc(4px + var(--safe-left));
+  display: flex; align-items: stretch;
+  background: color-mix(in srgb, var(--chrome) 92%, transparent);
+  backdrop-filter: saturate(180%) blur(14px); -webkit-backdrop-filter: saturate(180%) blur(14px);
+  border-top: 1px solid var(--rule);
+}
+.tab {
+  flex: 1 1 0; min-width: 0; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  color: var(--ink-3); font-size: var(--ui-11); font-weight: 500; line-height: 1.1; letter-spacing: .01em;
+}
+.tab-ic { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 28px; border-radius: 10px; }
+.tab-ic svg { width: 24px; height: 24px; }
+.tab.on { color: var(--accent); font-weight: 600; }
+.tab:active .tab-ic { background: var(--chrome-2); }
+.tab:focus-visible { outline-offset: -3px; border-radius: 12px; }
+.tabs-gap, .tab-gear { display: none; }
+/* the deck's count rides on its icon */
+.tab .deck-count { position: absolute; top: 3px; left: calc(50% + 6px); min-width: 17px; height: 17px; padding: 0 4.5px; border-radius: 9px; font: 600 11px/17px var(--sans); box-shadow: 0 0 0 2px var(--chrome); }
+body.presenting .tabs, body.first-run .tabs { display: none; }
+body { padding-bottom: var(--tabs-h); }
+body.first-run { padding-bottom: 0; }
+@media (min-width: 760px) and (min-height: 500px) {
+  :root { --tabs-h: 0px; --rail-w: clamp(72px, calc(var(--reading-size) * 4.24), 100px); }
+  body { padding-bottom: 0; padding-left: calc(var(--rail-w) + var(--safe-left)); }
+  body.first-run { padding-left: 0; }
+  .tabs {
+    right: auto; top: 0; width: calc(var(--rail-w) + var(--safe-left)); height: auto;
+    padding: calc(10px + var(--safe-top)) 0 calc(10px + var(--safe-bottom)) var(--safe-left);
+    flex-direction: column; align-items: stretch; gap: 4px;
+    background: var(--chrome); backdrop-filter: none; -webkit-backdrop-filter: none;
+    border-top: 0; border-right: 1px solid var(--rule);
+  }
+  .tab { flex: none; height: clamp(58px, calc(var(--reading-size) * 3.4), 78px); gap: 3px; }
+  .tab-ic { width: 52px; height: 32px; }
+  .tab.on .tab-ic { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+  .tabs-gap { display: block; flex: 1; }
+  .tab-gear { display: flex; }
+  .tab .deck-count { top: 1px; left: calc(50% + 8px); }
+}
+
+/* ---- the head of each place: its name, the search box, the shelves to search ---- */
 .bar {
-  position: sticky; top: 0; z-index: 20;
-  padding: calc(var(--safe-top) + 8px) calc(12px + var(--safe-right)) 8px calc(12px + var(--safe-left));
-  background: var(--chrome);
-  border-bottom: 1px solid var(--rule);
+  position: sticky; top: calc(-1 * var(--title-h)); z-index: 20; /* the name scrolls away; the box under it stays */
+  padding: calc(var(--safe-top) + 6px) calc(16px + var(--safe-right)) 8px calc(16px + var(--safe-left));
+  background: var(--paper);
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  grid-template-areas: "home search filters" "scopes scopes scopes";
-  gap: 8px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title acts" "search search" "scopes scopes";
+  column-gap: 10px;
   align-items: center;
 }
+#placeTitle { grid-area: title; margin: 0; height: var(--title-h); display: flex; align-items: center; font: 700 clamp(28px, calc(var(--reading-size) * 1.7), 40px)/1.1 var(--serif); letter-spacing: -.015em; color: var(--ink); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-acts { grid-area: acts; display: flex; align-items: center; gap: 2px; margin-right: -8px; }
+.bar-acts:empty { display: none; }
+.bar-acts .icon-btn { width: 44px; height: 44px; color: var(--accent); }
+.bar-acts .icon-btn svg { width: 24px; height: 24px; }
 .icon-btn {
   width: 40px; height: 40px; border-radius: 10px;
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--ink-2);
 }
 .icon-btn:active, .text-btn:active { background: var(--chrome-2); }
-/* The wide layout (two panes) is "(min-width: 760px) and (min-height: 500px)" throughout, and the
-   phone's is its complement: an iPhone on its side is 852 wide and 393 high, and reads as a phone.
-   app.js wide() asks the same question. */
-/* 44pt to touch, whatever is drawn: an icon is 40px (36 in the header) and its hit area reaches past it */
+/* 44pt to touch, whatever is drawn: an icon is 40px and its hit area reaches past it */
 .icon-btn { position: relative; }
 .icon-btn::after { content: ""; position: absolute; inset: -2px; }
-.bar-btns .icon-btn::after { inset: -2px -4px; }
 .icon-btn svg { width: 22px; height: 22px; }
-#homeBtn { grid-area: home; }
-.bar-btns { grid-area: filters; display: flex; gap: 0; align-items: center; }
-.bar-btns .text-btn { padding: 0 8px; font-size: 14px; border-radius: 8px; height: 32px; }
-.bar-btns .text-btn.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
-.bar-btns .icon-btn.on { color: var(--accent); background: var(--paper); box-shadow: 0 0 0 1px var(--rule); border-radius: 8px; }
-body.tab-open .scopes { display: none; }
-.bar-btns .icon-btn { width: 36px; }
 .text-btn { padding: 0 12px; height: 40px; border-radius: 10px; color: var(--accent); font-weight: 600; }
 .text-btn.on { background: var(--accent); color: var(--accent-ink); }
 .smart-line .text-btn.small { position: relative; }
 .smart-line .text-btn.small::after { content: ""; position: absolute; inset: -8px 0; }
-.search { grid-area: search; position: relative; }
+.search { grid-area: search; position: relative; margin-bottom: 2px; }
+.search-ic { position: absolute; left: 12px; top: 50%; width: 18px; height: 18px; margin-top: -9px; color: var(--ink-3); pointer-events: none; }
 .search input {
-  width: 100%; height: 40px;
-  padding: 0 38px 0 14px;
+  width: 100%; height: 44px;
+  padding: 0 42px 0 38px;
   font: 17px/1 var(--sans);
   color: var(--ink);
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
+  background: var(--chrome);
+  border: 1px solid transparent;
+  border-radius: 12px;
   -webkit-appearance: none; appearance: none;
 }
+.search input:focus { background: var(--paper); border-color: var(--accent); outline: none; }
 .search input::-webkit-search-cancel-button { -webkit-appearance: none; }
 .search input::placeholder { color: var(--ink-3); }
 .search .clear {
-  position: absolute; right: 4px; top: 4px; width: 32px; height: 32px; border-radius: 8px;
-  color: var(--ink-3); font-size: 22px; line-height: 1;
+  position: absolute; right: 2px; top: 0; width: 44px; height: 44px; border-radius: 10px;
+  color: var(--ink-2); font-size: 22px; line-height: 1;
 }
-.search .clear::after { content: ""; position: absolute; inset: -6px; }
-/* The strip is drawn 38px high as before; it is padded 3px above and below (pulled back by the
-   margin, painted only on its content) so each button's 44pt hit area fits inside the scroller. */
+.search input:placeholder-shown + .clear { display: none; }
+/* The shelves to search and the filters, in Search alone: one row. The shelves scroll under a
+   fade at the edge that says there are more; Filters stays put at the end. */
+.scope-row { grid-area: scopes; display: none; align-items: center; gap: 6px; margin: 6px calc(-16px - var(--safe-right)) 0 calc(-16px - var(--safe-left)); padding: 0 calc(12px + var(--safe-right)) 0 0; min-width: 0; }
+body[data-tab="search"] .scope-row { display: flex; }
 .scopes {
-  grid-area: scopes;
-  display: flex; gap: 2px;
-  background: var(--chrome-2); background-clip: content-box; border-radius: 12px; padding: 3px 0; margin: -3px 0;
+  flex: 1 1 auto; min-width: 0;
+  display: flex; gap: 6px; padding: 0 22px 0 calc(16px + var(--safe-left));
   overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 .scopes::-webkit-scrollbar { display: none; }
 .scopes button {
-  flex: 1 0 auto; height: 34px; margin: 2px 0; padding: 0 12px; border-radius: 7px; font-size: 14px; color: var(--ink-2); white-space: nowrap; position: relative;
+  flex: 0 0 auto; height: 34px; margin: 5px 0; padding: 0 13px; border-radius: 17px; font-size: 14px; color: var(--ink-2); white-space: nowrap; position: relative;
+  background: var(--chrome);
 }
-.scopes button:first-child { margin-left: 2px; } .scopes button:last-child { margin-right: 2px; }
 .scopes button::after { content: ""; position: absolute; inset: -5px 0; }
-.scopes button.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
+.scopes button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.filter-btn { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px 0 10px; border-radius: 17px; font-size: 14px; font-weight: 600; color: var(--accent); box-shadow: inset 0 0 0 1px var(--rule); position: relative; }
+.filter-btn::after { content: ""; position: absolute; inset: -5px 0; }
+.filter-btn svg { width: 18px; height: 18px; }
+.filter-btn.on { background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
+.filter-btn[aria-expanded="true"] { background: var(--chrome-2); }
+/* Deck and Ask have no box of their own: the head is the name alone */
+body[data-tab="deck"] .search, body[data-tab="ask"] .search { display: none; }
+body[data-tab="deck"] .bar, body[data-tab="ask"] .bar { position: static; padding-bottom: 0; }
+body:not([data-tab="search"]) #filters { display: none; }
+/* deeper in a shelf the shelf's own heading says where you are, with Back beside it; the place's
+   name stays for a screen reader */
+@media (max-width: 759px), (max-height: 499px) {
+  body.deep #placeTitle, body.deep .bar-acts { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  body.deep .bar { top: 0; }
+  body[data-tab="search"] .bar { border-bottom: 1px solid var(--rule); padding-bottom: 6px; }
+  .filter-btn span { display: none; }
+  .filter-btn { width: 40px; padding: 0; justify-content: center; }
+}
+@media (min-width: 760px) and (min-height: 500px) {
+  .bar {
+    padding: calc(var(--safe-top) + 8px) calc(20px + var(--safe-right)) 8px 20px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "title search acts" "scopes scopes scopes";
+    column-gap: 20px;
+    border-bottom: 1px solid var(--rule);
+  }
+  #placeTitle { height: 44px; min-width: 96px; font-size: clamp(24px, calc(var(--reading-size) * 1.45), 34px); }
+  .search { margin: 0; justify-self: end; width: min(100%, 420px); }
+  body[data-tab="search"] .search { justify-self: stretch; width: auto; }
+  .bar-acts { margin-right: -6px; }
+  .scope-row { margin: 8px calc(-20px - var(--safe-right)) 0 -20px; padding-right: calc(16px + var(--safe-right)); }
+  .scopes { padding-left: 20px; }
+  body[data-tab="deck"] .bar, body[data-tab="ask"] .bar { padding-bottom: 8px; }
+}
 
 /* filters drawer */
 .filters {
@@ -161,10 +245,10 @@ body.tab-open .scopes { display: none; }
 main {
   display: grid;
   grid-template-columns: 1fr;
-  min-height: calc(100vh - var(--bar-h) - var(--safe-top));
+  min-height: calc(100vh - var(--bar-h) - var(--safe-top) - var(--tabs-h));
 }
 .pane { min-width: 0; }
-#list { padding-bottom: calc(40px + var(--safe-bottom)); }
+#list { padding-bottom: calc(40px + max(0px, var(--safe-bottom) - var(--tabs-h))); }
 #reader, #panel { background: var(--paper); }
 /* Page | Deck: which of the two mounted panes fills the right side on a wide screen */
 .pane-switch-slot:empty { display: none; }
@@ -173,8 +257,8 @@ main {
 .pane-switch button.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
 /* On a phone, reading takes the whole screen: the reader bar carries the way back and the bottom bar the tools. */
 @media (max-width: 759px), (max-height: 499px) {
-  body.reading .scopes, body.reading #filters { display: none; }
-  body.reading .reader-bar { top: var(--bar-real, calc(var(--bar-h) + var(--safe-top))); } /* the search header stays; Back sits under it, not behind it */
+  body.reading .bar, body.reading #filters { display: none; } /* the reader's own bar says where you are */
+  body.reading .reader-bar { padding-top: calc(6px + var(--safe-top)); }
 }
 @media (min-width: 760px) and (min-height: 500px) {
   html, body { height: 100%; overflow: hidden; }
@@ -185,8 +269,6 @@ main {
   .pane { overflow-y: auto; -webkit-overflow-scrolling: touch; }
   #list { border-right: 1px solid var(--rule); }
   .back { display: none !important; }
-  body.page-open .scopes { display: none; } /* reading: the header is the search box alone, as on a phone */
-  body.page-open .bar { grid-template-areas: "home search filters"; }
 }
 
 /* ---- results -------------------------------------------------------- */
@@ -270,8 +352,6 @@ main {
 .ask-teaser-q { flex: 1; height: 40px; min-width: 0; padding: 0 12px; font: 16px var(--sans); color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; -webkit-appearance: none; appearance: none; }
 .ask-teaser .primary { height: 40px; padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .home-foot { font-size: 13px; color: var(--ink-3); line-height: 1.4; }
-body.overview .scopes { display: none; }
-body.shelf-studies .scopes { display: none; } /* your own pages and marks: no shelf for the search to keep to */
 @media (min-width: 760px) and (min-height: 500px) {
   body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
   body.overview main:has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
@@ -308,6 +388,9 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
 .crumbs button { color: var(--accent); }
 .crumbs span::before { content: "/"; margin: 0 6px 0 0; color: var(--ink-3); }
 .empty { padding: 28px 16px; font: 16px/1.5 var(--serif); color: var(--ink-2); }
+/* Search before a word is typed */
+.search-home { padding: 6px 16px 24px; }
+.search-lede { margin: 10px 0 0; font: 16px/1.5 var(--serif); color: var(--ink-2); max-width: 34em; }
 
 /* ---- reader --------------------------------------------------------- */
 .reader-bar {
@@ -338,8 +421,19 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
 .reader-bar.tighter .bar-extra { display: none; }
 .reader-bar.tighter .size-menu .menu-extra { display: flex; }
 .size-menu .menu-think { display: none; }
-.reader-bar.tightest .think-btn { display: none; }
+.reader-bar.tightest .think-btn, .reader-bar.tightest .cite-btn { display: none; }
 .reader-bar.tightest .size-menu .menu-think { display: flex; }
+.size-menu .menu-cite { display: none; }
+.reader-bar.tightest .size-menu .menu-cite { display: flex; }
+.reader-bar.bare .chap-nav { display: none; }
+.reader-bar.barest .trail-back .lb { display: none; }
+.reader-bar.barest .trail-back { padding-right: 4px; }
+/* the menu's button: "Aa" while it holds the sizes alone, three dots once the rest has folded in */
+.size-pop-btn .dots { display: none; }
+.size-pop-btn .dots svg { display: block; }
+.reader-bar.tighter .size-pop-btn .aa { display: none; }
+.reader-bar.tighter .size-pop-btn .dots { display: inline-flex; }
+.reader-bar.tighter .size-pop-btn { color: var(--accent); }
 /* measuring what the bar needs: nothing shrinks, and the crumb keeps enough to be read */
 .reader-bar.measuring > * { flex-shrink: 0 !important; }
 .reader-bar.measuring .crumb { flex: 0 0 auto; max-width: 150px; } /* the chapter's name whole, a long title to a readable length */
@@ -412,36 +506,16 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
 .doc-nav button:last-child { text-align: right; }
 .doc-foot { max-width: 68ch; margin: 0 auto; padding: 0 20px 30px; font-size: var(--ui-13); color: var(--ink-3); }
 
-/* the phone's bottom bar: present, the original language, text size, to deck, the site */
-.reader-foot { display: none; }
-.size-row { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 6px 14px; font-size: var(--ui-13); color: var(--ink-2); border-top: 1px solid var(--rule); background: var(--chrome); position: sticky; bottom: calc(66px + var(--safe-bottom)); z-index: 4; }
-.size-row span { margin-right: auto; }
-.size-row button { width: 40px; height: 36px; border-radius: 8px; color: var(--accent); background: var(--paper); border: 1px solid var(--rule); }
+/* On a phone the reader bar keeps Back, the name and the arrows; the rest folds into its menu
+   (app.js fitReaderBar), and the four places stay along the bottom. */
 @media (max-width: 759px), (max-height: 499px) {
-  .reader-bar .icon-btn:not(.back), .reader-bar .orig-btn, .reader-bar .text-btn:not(.back) { display: none; }
   .reader-bar .matchnav { margin-left: auto; padding-left: 4px; flex: none; }
   .reader-bar .matchnav > span:first-child { display: none; } /* the arrows alone: the room is the chapter's name's */
-  .reader-foot {
-    position: sticky; bottom: 0; z-index: 4;
-    display: flex; align-items: stretch; justify-content: space-around; gap: 2px;
-    padding: 6px calc(6px + var(--safe-right)) calc(8px + var(--safe-bottom)) calc(6px + var(--safe-left));
-    background: color-mix(in srgb, var(--chrome) 94%, transparent);
-    backdrop-filter: saturate(180%) blur(12px); -webkit-backdrop-filter: saturate(180%) blur(12px);
-    border-top: 1px solid var(--rule);
-  }
-  .foot-btn { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 56px; height: 52px; border-radius: 10px; color: var(--accent); font-size: var(--ui-11); font-weight: 600; text-decoration: none; }
-  .foot-btn .ic { height: 24px; display: inline-flex; align-items: center; justify-content: center; }
-  .foot-btn .ic svg { width: 22px; height: 22px; }
-  .foot-btn .glyph { line-height: 24px; }
-  .foot-btn:active, .foot-btn.on { background: var(--chrome-2); }
-  .foot-btn.on { color: var(--ink); }
-  .slot-orig { display: none; }
   .doc { padding-bottom: 24px; }
 }
 
 /* Think it through: a lamp in the reader bar, and in the bottom bar on a phone */
 .reader-bar .think-btn { color: var(--accent); flex: none; }
-@media (max-width: 759px), (max-height: 499px) { .reader-bar .icon-btn.think-btn.on-phone { display: inline-flex; } }
 .think-card .ask-q { color: var(--accent); }
 /* Think it through: its three questions, each a question card for the deck in one tap */
 .think-questions { margin: 12px 0 4px; border-top: 1px solid var(--rule); font-family: var(--sans); }
@@ -546,14 +620,13 @@ body.shelf-studies .scopes { display: none; } /* your own pages and marks: no sh
 .hl-dot[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 4px var(--ink-2); } /* the color the selection carries */
 /* Touch targets of 44pt around controls drawn smaller: the look stays, a clear box around each
    takes the tap (the dots' boxes overlap a little; the nearer dot's wins). */
-.hl-dot, .doc .note-mark, .trail-back, .bar-btns .text-btn, .pane-switch button { position: relative; } /* the sheet's close is already placed absolutely */
+.hl-dot, .doc .note-mark, .trail-back, .pane-switch button { position: relative; } /* the sheet's close is already placed absolutely */
 .hl-dot::after { content: ""; position: absolute; inset: -11px; border-radius: 50%; }
 .hl-dot:last-child::after { right: -4px; } /* the Note button beside it keeps its own taps */
 @media (min-width: 760px) and (min-height: 500px) { .hl-dots { gap: 18px; margin: 0 4px; } .hl-dot:last-child::after { right: -11px; } } /* room on a wide bar for each dot to own a 44pt square */
 .doc .note-mark::after { content: ""; position: absolute; inset: -11px -8px; }
 .sheet .close::after { content: ""; position: absolute; inset: -5px; }
 .trail-back::after { content: ""; position: absolute; inset: -4px 0; }
-.bar-btns .text-btn::after { content: ""; position: absolute; inset: -6px 0; }
 .pane-switch button::after { content: ""; position: absolute; inset: -8px 0; }
 .select-bar .short { display: none; }
 @media (max-width: 759px), (max-height: 499px) {
@@ -690,7 +763,7 @@ body.presenting { overflow: hidden; }
   main:has(#list .ask-page):has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
   #list:has(.ask-page) > .home { min-height: 100%; }
 }
-@media (max-width: 759px), (max-height: 499px) { #list:has(.ask-page) > .home { min-height: calc(100dvh - var(--bar-real, calc(var(--bar-h) + var(--safe-top)))); } }
+@media (max-width: 759px), (max-height: 499px) { #list:has(.ask-page) > .home { min-height: calc(100dvh - var(--bar-real, calc(var(--bar-h) + var(--safe-top))) - var(--tabs-h)); } }
 #list:has(.ask-page) { padding-bottom: 0; }
 #list:has(.ask-page) > .home { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: 0; }
 #list:has(.ask-page) > .home > div:has(> .ask-page) { flex: 1; display: flex; flex-direction: column; }
@@ -700,7 +773,7 @@ body.presenting { overflow: hidden; }
 .ask-page .ask-log { flex: 1; }
 .ask-page .ask-log:empty { display: none; }
 .ask-page:has(.ask-log > *) .ask-hint { display: none; }
-.ask-dock { position: sticky; bottom: 0; z-index: 4; margin-top: 10px; padding: 8px 0 calc(12px + var(--safe-bottom)); background: var(--paper); }
+.ask-dock { position: sticky; bottom: var(--tabs-h); z-index: 4; margin-top: 10px; padding: 8px 0 calc(12px + max(0px, var(--safe-bottom) - var(--tabs-h))); background: var(--paper); }
 .ask-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .ask-top-tools { display: flex; align-items: center; gap: 2px; flex: none; }
 .ask-gear svg { width: 20px; height: 20px; }
@@ -790,17 +863,13 @@ body.presenting { overflow: hidden; }
 #reader:has(> .select-bar) > * { flex: none; }
 #reader:has(> .select-bar) > .doc, #reader:has(> .select-bar) > .doc-nav, #reader:has(> .select-bar) > .doc-foot { width: 100%; }
 #reader > .select-bar { order: 1; }
-#reader > .size-row, #reader > .reader-foot { order: 2; }
 /* a verse reached by the arrow keys clears the sticky bars above and below it */
 .doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: 64px 0 90px; }
-@media (max-width: 759px), (max-height: 499px) { .doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: calc(var(--bar-real, 66px) + 56px) 0 150px; } }
+@media (max-width: 759px), (max-height: 499px) { .doc p.verse, .doc .body-block p[id], .doc .body-block li[id] { scroll-margin: calc(var(--safe-top) + 64px) 0 calc(var(--tabs-h) + 90px); } }
 .select-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 6px; padding: 10px calc(14px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(14px + var(--safe-left)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
-/* On a phone the selection bar sits on the bottom bar. While it is up the selection's own "+ Deck"
-   is the one way to the deck, so the bottom bar's Add to deck steps aside; Present (the chapter, as
-   a kept selection still allows), Text size and Site stay where the thumb expects them. */
+/* On a phone the selection bar sits on the tab bar, which keeps the safe area under it. */
 @media (max-width: 759px), (max-height: 499px) {
-  #reader .select-bar { bottom: calc(68px + var(--safe-bottom)); }
-  #reader:has(> .select-bar) > .reader-foot .foot-btn[aria-label="Add to deck"] { display: none; }
+  #reader .select-bar { bottom: var(--tabs-h); padding-bottom: 10px; }
 }
 .select-bar .n { flex: 1; font-size: var(--ui-13); color: var(--ink-2); white-space: nowrap; }
 .select-bar .text-btn { white-space: nowrap; height: 44px; }
@@ -816,12 +885,8 @@ body.presenting { overflow: hidden; }
 .select-bar.measuring .n { flex: 0 0 auto; }
 .select-bar .primary, .deck .primary, .deck-summary .primary { height: 44px; padding: 0 14px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .deck .primary:disabled, .deck .text-btn:disabled { opacity: .45; }
-.toast { position: fixed; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translate(-50%, 10px); z-index: 60; padding: 10px 16px; border-radius: 10px; background: var(--ink); color: var(--paper); font: 14px var(--sans); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
-main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(--safe-bottom)); } /* above a selection bar that stays up */
-@media (max-width: 759px), (max-height: 499px) {
-  body.reading .toast { bottom: calc(84px + var(--safe-bottom)); } /* above the reader's bottom bar */
-  main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(144px + var(--safe-bottom)); } /* and the selection bar */
-}
+.toast { position: fixed; left: calc(50% + var(--rail-w) / 2); bottom: calc(18px + max(var(--tabs-h), var(--safe-bottom))); transform: translate(-50%, 10px); z-index: 60; padding: 10px 16px; border-radius: 10px; background: var(--ink); color: var(--paper); font: 14px var(--sans); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + max(var(--tabs-h), var(--safe-bottom))); } /* above a selection bar that stays up, itself above the tab bar */
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 /* the one toast stays in the page between messages: hidden from touch and VoiceOver once it fades */
 .toast:not(.show) { visibility: hidden; pointer-events: none; transition: opacity .2s, transform .2s, visibility 0s .2s; }
@@ -835,7 +900,7 @@ a.toast-action { display: inline-flex; align-items: center; }
 .toast.has-more > span { flex: 1 1 100%; padding: 8px 12px 0 0; }
 /* the deck count on the header button */
 #deckBtn { display: inline-flex; align-items: center; gap: 5px; }
-.deck-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 600 11px/18px var(--sans); text-align: center; font-variant-numeric: tabular-nums; }
+.deck-count { display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 600 11px/18px var(--sans); text-align: center; font-variant-numeric: tabular-nums; }
 .deck { padding: 10px 16px 30px; }
 .deck-title, .deck-subtitle { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); color: var(--ink); -webkit-appearance: none; }
 .deck-title { font: 600 20px var(--serif); margin-bottom: 6px; }

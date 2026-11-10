@@ -327,14 +327,14 @@ import { esc } from "./lib/format.js";
   const linksOn = (it) => deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id).length;
 
   function count() { return deck.items.filter((i) => i.type === "passage").length; }
-  // The header button carries the count as a small pill, so the teacher sees the deck grow
+  // The Deck tab carries the count as a small pill on its icon, so the teacher sees the deck grow
   // from any screen; the label says it in words for VoiceOver.
   function updateBadge() {
     const b = $("#deckBtn");
     if (!b) return;
     const n = count();
-    b.replaceChildren("Deck");
-    if (n) b.append(Object.assign(document.createElement("span"), { className: "deck-count", textContent: String(n) }));
+    b.querySelector(".deck-count")?.remove();
+    if (n) (b.querySelector(".tab-ic") || b).append(Object.assign(document.createElement("span"), { className: "deck-count", textContent: String(n) }));
     b.setAttribute("aria-label", n ? `Deck, ${n} ${n === 1 ? "passage" : "passages"}` : "Deck");
   }
   const byId = (id) => deck.items.find((i) => i.id === id) || null;
