@@ -49,6 +49,18 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Gospel teaches), each a question card on the deck in a tap, and a deck
   section to build from it, in one tap. The deck's own
   "Think it through" still studies a chain of passages already on the deck.
+- Four places, always in reach: Library, Search, Deck and Ask, in a tab bar
+  along the bottom of an iPhone and a rail down the left of an iPad, the
+  current one marked and named at the top. Each keeps its place while you
+  are in another; a tap on the tab you are in goes to its top.
+- Settings, from the gear (on the rail, or beside "Library" on a phone): the
+  text size, which the whole interface follows and not the page alone; what
+  is on the device and whether the system has promised to keep it; your
+  instructions to Claude; and the keyboard shortcuts, which "?" also lists.
+- Export everything: one file from Settings with your highlights and notes,
+  your study pages, your decks, your instructions to Claude and what it was
+  asked to remember, to keep somewhere other than the device; Import brings
+  it back. The API key and the passphrase are never in it.
 - A Back that says where it leads. Every place has an address (a shelf and
   how far into it you are, a search, a page, Ask, Deck), so "‹ Alma 32" or
   "‹ Results" in the reader bar, and at the top of every list on a phone,

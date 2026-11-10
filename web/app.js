@@ -96,6 +96,14 @@ import { esc, mb } from "./lib/format.js";
   const panelPane = el("section", { id: "panel", class: "pane", hidden: true });
   readerPane.after(panelPane);
 
+  // What changed, said aloud: one polite live region that is never seen, made before anything
+  // happens so VoiceOver is already listening to it ("3 verses selected"). The toast is the other
+  // live region; this one is for changes that need no words on the screen.
+  const sayEl = el("div", { id: "say", class: "vh", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+  document.body.append(sayEl, el("div", { id: "selSay", hidden: true, text: "Selected" })); // the second: what a selected verse is described by
+  let sayTimer = null;
+  function say(text) { clearTimeout(sayTimer); sayEl.textContent = ""; sayTimer = setTimeout(() => { sayEl.textContent = text; }, 60); } // emptied first, so the same words twice are read twice
+
   // ----------------------------------------------------------- routing ----
   // Hash routes, so the app works from any static host. Every place has an address:
   //   #                       the library (home)
@@ -430,6 +438,7 @@ import { esc, mb } from "./lib/format.js";
   }
   function refreshTrailButtons() {
     for (const b of document.querySelectorAll(".trail-back")) if (!b.closest(".head-back")) b.replaceWith(trailButton());
+    syncPanelBar();
     for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
   }
   // A shelf's own heading: Back, except beside an open page or the board on a wide screen, where that
@@ -515,6 +524,7 @@ import { esc, mb } from "./lib/format.js";
     const want = tab === "library" && !wide() ? "gear" : "";
     if (want !== actsFor) {
       actsFor = want;
+      $("header.bar").classList.toggle("no-acts", want !== "gear"); // app.css: the box runs to the edge when nothing sits at the end of the head
       $("#barActs").replaceChildren(...(want === "gear" ? [el("button", { type: "button", class: "icon-btn gear-btn", "aria-label": "Settings", title: "Settings", html: ICON_GEAR, onclick: () => openSettings() })] : []));
     }
     syncTitle();
@@ -556,13 +566,13 @@ import { esc, mb } from "./lib/format.js";
   }
   function showList() {
     listPane.hidden = false;
-    if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; window.scrollTo(0, 0); } // a list starts at its top (a restore puts it back after)
+    if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; syncPanes(); window.scrollTo(0, 0); } // a list starts at its top (a restore puts it back after)
     document.body.classList.toggle("reading", !wide() && !readerPane.hidden);
     syncControls();
   }
   function showReader() {
     listPane.hidden = !wide();
-    if (wide()) placePanes(); else { readerPane.hidden = false; panelPane.hidden = true; }
+    if (wide()) placePanes(); else { readerPane.hidden = false; panelPane.hidden = true; syncPanes(); }
     document.body.classList.toggle("reading", !wide());
     window.scrollTo(0, 0);
     measureBar();
@@ -581,6 +591,7 @@ import { esc, mb } from "./lib/format.js";
   function showTooOld(v) {
     readerPane.hidden = true;
     listPane.hidden = false;
+    syncPanes();
     document.body.classList.add("first-run");
     listPane.replaceChildren(el("div", { class: "setup" }, [
       el("h1", { text: "Update this iPhone or iPad first" }),
@@ -633,6 +644,7 @@ import { esc, mb } from "./lib/format.js";
   async function renderSetup(status, done) {
     readerPane.hidden = true;
     listPane.hidden = false;
+    syncPanes();
     document.body.classList.add("first-run");
     const box = el("div", { class: "setup" });
     const head = el("h1", { text: "Your library" });
@@ -1194,6 +1206,7 @@ import { esc, mb } from "./lib/format.js";
     const body = el("div", { id: "homeBody", class: "home" + (tab ? "" : " overview") });
     frag.append(body);
     listPane.replaceChildren(frag);
+    syncList();
     let st;
     try { st = await libraryStats(); }
     catch (e) { body.append(el("div", { class: "status error", text: `The library is not answering (${e.message}).` })); return; }
@@ -1202,7 +1215,7 @@ import { esc, mb } from "./lib/format.js";
     try {
       if (!tab) return renderOverview(body, st);
       if (tab === "search") return renderSearchHome(body);
-      if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); return; }
+      if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div", { class: "ask-host" }); body.append(host); window.Ask?.render(host, { question, think }); return; }
       if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
         el("span", { class: "head-back" }, [headBack()]),
@@ -1216,9 +1229,29 @@ import { esc, mb } from "./lib/format.js";
       else await browseCollection(body, tab);
     } catch (e) {
       body.append(el("div", { class: "status error", text: e.message }));
-    }
+    } finally { syncList(); }
   }
   function setOverview(on) { document.body.classList.toggle("overview", !!on); }
+  // What the list holds and which panes are up, said as classes on the body beside "overview" and
+  // "pane-up", for app.css to lay the place out by. They stood as :has() rules on main and body,
+  // which the browser checked again on every change anywhere in the page (a connection drawn on a
+  // deck with links cost ten times what it does without them).
+  function syncList() {
+    const b = document.body.classList;
+    b.toggle("ask-up", !!listPane.querySelector(".ask-page"));
+    b.toggle("search-top", !!listPane.querySelector(".search-home"));
+  }
+  let saidSel = 0; // the count last said aloud (updateSelectBar)
+  function syncPanes() {
+    const b = document.body.classList;
+    b.toggle("list-only", readerPane.hidden && panelPane.hidden);
+    const bar = !!readerPane.querySelector(":scope > .select-bar");
+    readerPane.classList.toggle("selecting", bar); // the pane is a column while the bar is up, the bar ordered last
+    b.toggle("sel-up", bar && !readerPane.hidden);
+    if (!bar) saidSel = 0; // a page drawn over a selection: the next one is said from nothing
+  }
+  // the list emptied or refilled by a search, the concordance or the setup screens
+  new MutationObserver(syncList).observe(listPane, { childList: true });
   // Search with nothing in the box yet: what the box takes, in a line, and the last few searches
   // entered (kept on this device), each one tap away.
   const ICON_RECENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.500V12l3 2"/></svg>'.replace("7.500", "7.5");
@@ -2084,8 +2117,30 @@ import { esc, mb } from "./lib/format.js";
     if (data.ask && window.Ask?.restore) got.push(...window.Ask.restore(data.ask));
     return got;
   }
-  function openSettings() {
-    if (!state.ready || overlay) return;
+  // The keys the app answers to, as a list: "?" shows it, and so does a row in Settings (which
+  // it then leads back to). The same sheet as Settings, so Escape, Back and the scrim close it.
+  const KEYS = [
+    ["Anywhere", [["/  or  ⌘F  or  ⌘K", "Search"], ["⌘[", "Back"], ["⌘Z", "Undo (the last add, mark or deck change)"], ["Esc", "Close a sheet, leave a field, let a selection go"], ["?", "This list"]]],
+    ["Reading", [["←  →", "Previous and next chapter"], ["Tab", "To the verses, then on to the bars"], ["↑  ↓", "From verse to verse"], ["Return  or  Space", "Select the verse, or let it go"], ["P", "Present from here"]]],
+    ["Presenting", [["→  Space  ↓", "Next"], ["←  ↑  Delete", "Previous"], ["+  −", "Larger and smaller"], ["B  or  .", "Blank the screen, and bring it back"], ["Esc", "Stop presenting"]]],
+  ];
+  function openShortcuts(fromSettings = false) {
+    if (!state.ready || (overlay && !fromSettings)) return;
+    const head = el("h2", { text: "Keyboard shortcuts", tabindex: "-1" });
+    const box = el("div", { class: "settings keys" }, [
+      fromSettings ? el("button", { type: "button", class: "text-btn keys-back", text: "‹ Settings", onclick: () => openSettings(true) }) : null,
+      head,
+      el("p", { class: "set-note", text: "With a keyboard attached. On other keyboards Ctrl stands in for ⌘." }),
+      ...KEYS.map(([title, rows]) => el("section", { class: "set-sec" }, [el("h3", { text: title }), el("dl", { class: "key-list" }, rows.flatMap(([k, what]) => [el("dt", {}, k.split("  ").map((part) => (part === "or" ? el("span", { class: "or", text: "or" }) : el("kbd", { text: part })))), el("dd", { text: what })]))])),
+    ].filter(Boolean));
+    $(".sheet-body", sheet).replaceChildren(box);
+    sheet.classList.add("page");
+    sheet.scrollTop = 0;
+    openSheet("Keyboard shortcuts");
+    setTimeout(() => { try { head.focus({ preventScroll: true }); } catch (_) {} }, 60);
+  }
+  function openSettings(again = false) {
+    if (!state.ready || (overlay && !again)) return;
     const head = el("h2", { text: "Settings", tabindex: "-1" });
     const box = el("div", { class: "settings" }, [head]);
     const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [el("h3", { text: title }), ...[].concat(kids).filter(Boolean)]); box.append(s); return s; };
@@ -2158,6 +2213,10 @@ import { esc, mb } from "./lib/format.js";
       ]),
       said,
     ]);
+    sec("keys", "Keyboard", [
+      el("p", { class: "set-note", text: "With a keyboard attached, the app answers to a few keys. Press ? at any time for the list." }),
+      el("div", { class: "set-acts" }, [el("button", { type: "button", class: "text-btn", text: "Keyboard shortcuts", onclick: () => openShortcuts(true) })]),
+    ]);
     // About
     const ver = el("p", { class: "set-note" });
     sec("about", "About", [
@@ -2167,6 +2226,7 @@ import { esc, mb } from "./lib/format.js";
     try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
     $(".sheet-body", sheet).replaceChildren(box);
     sheet.classList.add("page");
+    sheet.scrollTop = 0;
     openSheet("Settings");
     // the sheet puts the cursor in its first field; here that would raise the keyboard over the
     // settings before anything is read, so the heading takes the focus instead
@@ -2224,8 +2284,19 @@ import { esc, mb } from "./lib/format.js";
   }
   function updateSelectBar() {
     let bar = $(".select-bar", readerPane);
-    const n = readerPane.querySelectorAll(".sel").length;
-    if (!n) { bar?.remove(); return; }
+    const picked = [...readerPane.querySelectorAll(".doc .sel")];
+    const n = picked.length;
+    // Each selected verse says so to VoiceOver: by its description (and the check mark's own words,
+    // app.css). A role that carries aria-selected or aria-pressed (option, button) would make the
+    // verse one flat label and hide the footnote links inside it, so the verse keeps its own role.
+    for (const u of readerPane.querySelectorAll(".doc [aria-describedby='selSay']")) if (!u.classList.contains("sel")) u.removeAttribute("aria-describedby");
+    for (const u of picked) u.setAttribute("aria-describedby", "selSay");
+    if (n !== saidSel) {
+      const noun = picked.every((u) => u.classList.contains("verse")) ? (n === 1 ? "verse" : "verses") : (n === 1 ? "passage" : "passages");
+      say(n ? `${n} ${noun} selected` : "Selection cleared");
+      saidSel = n;
+    }
+    if (!n) { bar?.remove(); syncPanes(); return; }
     if (!bar) {
       const present = () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); };
       const copy = () => {
@@ -2255,6 +2326,7 @@ import { esc, mb } from "./lib/format.js";
       // right after the reader bar in the order Tab and VoiceOver follow; app.css draws it at the bottom
       const rb = $(".reader-bar", readerPane);
       if (rb) rb.after(bar); else readerPane.prepend(bar);
+      syncPanes();
     }
     $(".n", bar).textContent = `${n} selected`;
     // a dot is pressed when every selected passage carries its color (pressing it again takes it off)
@@ -2270,8 +2342,8 @@ import { esc, mb } from "./lib/format.js";
     if (!bar || bar.offsetParent === null) return;
     // two folds: Present, Copy and Clear behind "more"; then, still too full (an iPad in portrait
     // beside the rail), the count goes and Add to deck is "+ Deck", as on a phone
-    bar.classList.remove("compact", "snug");
-    for (const level of ["compact", "snug"]) {
+    bar.classList.remove("compact", "snug", "close");
+    for (const level of ["compact", "snug", "close"]) { // close: the largest type on a phone, where the first two are not enough
       bar.classList.add("measuring");
       const over = overflows(bar);
       bar.classList.remove("measuring");
@@ -2326,7 +2398,21 @@ import { esc, mb } from "./lib/format.js";
     const extra = action && Array.isArray(more) ? more.filter((a) => a && a.action) : [];
     t.className = "toast show" + (action ? " has-action" : "") + (extra.length ? " has-more" : "");
     t.replaceChildren(...[el("span", { text }), action ? control({ action, href }, true) : null, ...extra.map((a) => control(a, false))].filter(Boolean));
+    placeToast(); requestAnimationFrame(placeToast); // again once the tap that raised it has redrawn the page
     toastArm(action ? (href || extra.length ? 8000 : 5000) : 1800);
+  }
+  // The toast never lies on the tab bar, the selection bar or Ask's box: it sits just above the
+  // highest of whichever of them holds the bottom of the screen at that moment.
+  function placeToast() {
+    if (!toastEl) return;
+    const vh = window.innerHeight;
+    let top = vh;
+    for (const n of [wide() ? null : $("#tabs"), $(".select-bar", readerPane), listPane.querySelector(".ask-dock")]) {
+      if (!n || n.offsetParent === null && getComputedStyle(n).position !== "fixed") continue;
+      const r = n.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > vh - 120 && r.top < vh) top = Math.min(top, r.top);
+    }
+    toastEl.style.bottom = top < vh ? `${Math.round(vh - top + 12)}px` : "";
   }
   // Outside a field Cmd+Z is always the app's: the toast's Undo while one shows, else the deck's own
   // undo. Left to the browser it would rewind the search box, and a search would run from nowhere.
@@ -2590,6 +2676,7 @@ import { esc, mb } from "./lib/format.js";
     if (sizes.indexOf(cur) === -1) i = delta > 0 ? 3 : 1;
     document.documentElement.style.setProperty("--reading-size", sizes[i] + "px");
     store.set("readingSize", sizes[i]);
+    fitReaderBars(); fitSelectBar(); measureBar(); // the bars' words grew or shrank with it: what folds away is worked out again
   }
   // The reader bar's text sizes: two buttons where there is room, one "Aa" that opens Smaller and
   // Larger where there is not (an iPad in portrait with the Hebrew and the Page | Deck switch). In
@@ -2632,6 +2719,7 @@ import { esc, mb } from "./lib/format.js";
   // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
   const BAR_LEVELS = ["compact", "tight", "tighter", "tightest", "bare", "barest"];
   function fitReaderBar(bar) {
+    bar.classList.toggle("has-orig", !!bar.querySelector(".orig-btn")); // the menu offers the Hebrew or Greek only where the bar has the switch to fold
     if (!bar.querySelector(".size-pop")) return;
     bar.classList.remove(...BAR_LEVELS);
     if (bar.offsetParent === null) return;
@@ -2654,7 +2742,8 @@ import { esc, mb } from "./lib/format.js";
   function fitReaderBars() { for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar); }
   window.addEventListener("resize", fitReaderBars);
   // what joins the bar after it is drawn (the match count, the Hebrew button, the switch) refits it
-  const barWatch = new MutationObserver((records) => { for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
+  // (and a page drawn over a selection takes its bar with it: the pane's classes follow)
+  const barWatch = new MutationObserver((records) => { if (records.some((r) => r.target === readerPane)) syncPanes(); for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
   barWatch.observe(readerPane, { childList: true, subtree: true });
   // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
   // The system size is read again whenever the app comes back to the front, since Larger Text may
@@ -2681,7 +2770,10 @@ import { esc, mb } from "./lib/format.js";
   const stage = $("#stage");
   let show = null; // { units: [{pid, kind, html, verse}], i, doc }
   const stageKicker = el("div", { class: "stage-kicker", hidden: true, text: "Question" });
-  stage.append(stageKicker);
+  // each slide said as it comes: its citation and its place in the run (the words on the stage
+  // are there to be read by touch; a change of slide was silent)
+  const stageSay = el("div", { class: "vh stage-say", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+  stage.append(stageKicker, stageSay);
 
   function presentUnits(doc) {
     const scratch = sanitize(el("div", { html: doc.body_html || "" })); // the same cleaning renderDoc gives the page
@@ -2794,8 +2886,12 @@ import { esc, mb } from "./lib/format.js";
     renderStage();
     stage.tabIndex = -1;
     try { stage.focus({ preventScroll: true }); } catch (_) {}
-    if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().catch(() => {});
-    try { navigator.wakeLock?.request("screen").then((l) => { show.lock = l; }).catch(() => {}); } catch (_) {}
+    // Both of these are answered a moment later. If the stage has closed by then (Escape within
+    // half a second), the screen would stay full with nothing on it and the lock would never be
+    // let go: each is undone on arrival unless a stage is still up to use it.
+    const mine = show;
+    if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().then(() => { if (!show && document.fullscreenElement === stage) document.exitFullscreen?.().catch(() => {}); }).catch(() => {});
+    try { navigator.wakeLock?.request("screen").then((l) => { if (show === mine) show.lock = l; else l.release?.()?.catch?.(() => {}); }).catch(() => {}); } catch (_) {}
   }
 
   function stopPresenting() {
@@ -2846,6 +2942,7 @@ import { esc, mb } from "./lib/format.js";
     const after = show.units[show.i + 1];
     const peek = after ? firstWords(after) : "";
     $(".stage-upnext", stage).textContent = peek ? `Next: ${peek}` : "";
+    stageSay.textContent = `${where || firstWords(u, 8) || "Slide"}, ${show.i + 1} of ${show.units.length}`;
     fitStage();
   }
 
@@ -2936,6 +3033,7 @@ import { esc, mb } from "./lib/format.js";
     sheet.setAttribute("aria-label", label);
     const wasHidden = sheet.hidden;
     sheet.hidden = false;
+    document.body.classList.toggle("sheet-page", sheet.classList.contains("page")); // Settings dims the page behind it (app.css)
     if (wasHidden) {
       sheetOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null; setTimeout(() => { const first = sheet.querySelector("textarea, input, .peek-row button, .close"); try { (first || sheet).focus({ preventScroll: true }); } catch (_) {} }, 30); openOverlay("sheet");
       const vv = window.visualViewport;
@@ -2957,10 +3055,30 @@ import { esc, mb } from "./lib/format.js";
   }
   // hideNote takes the sheet down and leaves history alone: for the moment before a move, whose
   // push() takes over the marker. closeSheet is the user closing it: the marker is popped as well.
+  let sheetSlid = false; // the grabber has already slid it away
   function hideNote() {
     const wasOpen = !sheet.hidden;
+    // It leaves by the 200ms slide it came by. The sheet itself is hidden at once, so everything
+    // that asks whether one is open has its answer; what slides away is a copy that nothing can
+    // touch, gone when its animation ends. Not under reduced motion.
+    if (wasOpen && !sheetSlid && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const ghost = sheet.cloneNode(true);
+      ghost.removeAttribute("id");
+      for (const n of ghost.querySelectorAll("[id]")) n.removeAttribute("id");
+      const typed = sheet.querySelectorAll("textarea");
+      ghost.querySelectorAll("textarea").forEach((t, i) => { t.value = typed[i]?.value || ""; });
+      ghost.classList.add("leaving"); ghost.setAttribute("aria-hidden", "true"); ghost.inert = true;
+      const top = sheet.scrollTop;
+      document.body.append(ghost);
+      ghost.scrollTop = top;
+      const gone = () => ghost.remove();
+      ghost.addEventListener("animationend", gone);
+      setTimeout(gone, 320);
+    }
+    sheetSlid = false;
     sheet.hidden = true; $("#scrim")?.remove();
     sheet.classList.remove("page");
+    document.body.classList.remove("sheet-page");
     inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
     const vv = window.visualViewport;
@@ -2980,7 +3098,7 @@ import { esc, mb } from "./lib/format.js";
     if (on) {
       if (inertSets.has(node)) return;
       node.setAttribute("aria-modal", "true");
-      const list = [...document.body.children].filter((n) => n !== node && !n.contains(node) && !n.inert && n.id !== "scrim" && n.id !== "toast" && n.tagName !== "SCRIPT");
+      const list = [...document.body.children].filter((n) => n !== node && !n.contains(node) && !n.inert && n.id !== "scrim" && n.id !== "toast" && n.id !== "say" && n.id !== "selSay" && n.tagName !== "SCRIPT");
       for (const n of list) n.inert = true;
       inertSets.set(node, list);
     } else {
@@ -3045,7 +3163,7 @@ import { esc, mb } from "./lib/format.js";
       if (e.type === "pointerup" && (dy > sheet.offsetHeight / 3 || fast) && !keepTyped()) {
         const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
         sheet.style.transform = "translateY(100%)";
-        setTimeout(() => { sheet.style.transform = ""; if (!sheet.hidden) closeSheet(); }, still ? 0 : 180);
+        setTimeout(() => { sheet.style.transform = ""; if (!sheet.hidden) { sheetSlid = true; closeSheet(); } }, still ? 0 : 180);
       } else sheet.style.transform = "";
     };
     grab.addEventListener("pointerup", end);
@@ -3139,6 +3257,7 @@ import { esc, mb } from "./lib/format.js";
       return;
     }
     if (e.key === "/" && state.ready && sheet.hidden) { e.preventDefault(); focusSearch(); }
+    if (e.key === "?" && state.ready && sheet.hidden) { e.preventDefault(); openShortcuts(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
   });
 
@@ -3270,12 +3389,18 @@ import { esc, mb } from "./lib/format.js";
     const board = paneView === "board" && !!panel.lastEl;
     panelPane.hidden = !(board && panelPane.contains(panel.lastEl));
     readerPane.hidden = board || !(state.docId || state.studyId);
+    syncPanes();
     // one Back on the screen: with a pane up on the right its bar has it, so the list's own goes
     document.body.classList.toggle("pane-up", !readerPane.hidden || !panelPane.hidden);
     // with a page open the header is the search box alone: the scope strip comes back with the list (app.css)
     if (document.body.classList.toggle("page-open", !readerPane.hidden) !== pageWasOpen) { pageWasOpen = !pageWasOpen; measureBar(); }
     for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
     refreshSwitches();
+  }
+  // The board's bar with no Back to offer and no switch has nothing in it, and goes (app.css)
+  function syncPanelBar() {
+    const bar = panelPane.querySelector(":scope > .reader-bar");
+    if (bar) bar.classList.toggle("idle", !!bar.querySelector(":scope > .trail-back.none") && !bar.querySelector(".pane-switch"));
   }
   function refreshSwitches() {
     const on = wide() && !!panel.lastEl && pageOpen();
@@ -3293,6 +3418,7 @@ import { esc, mb } from "./lib/format.js";
     if (hadFocus) { const visible = [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.classList.contains("on")); if (visible) { try { visible.focus({ preventScroll: true }); } catch (_) {} } }
     // what Back brings back depends on which pane is up: its label is redrawn when that changes it
     for (const b of document.querySelectorAll(".reader-bar .trail-back")) if (b.querySelector(".lb")?.textContent !== (backLabel() || "Library")) b.replaceWith(trailButton());
+    syncPanelBar();
     fitReaderBars(); // a pane just shown, or a switch come or gone, changes what the bar needs
     fitSelectBar();
   }
