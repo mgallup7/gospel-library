@@ -233,6 +233,7 @@ import { esc, mb } from "./lib/format.js";
       readUrl();
       paneView = to === "deck" ? "board" : "page"; // the board is the Deck's; elsewhere it shows only when the switch asks
       syncControls();
+      mainEl.classList.remove("tab-in"); void mainEl.offsetWidth; mainEl.classList.add("tab-in"); // a quick fade in (app.css; none under reduced motion)
       await render({ restore: back ? history.state?.scroll || null : null });
       if (!back) { window.scrollTo(0, 0); listPane.scrollTop = 0; }
       if (to === "search" && !state.q.trim() && !pageNow()) focusBox();
@@ -288,7 +289,7 @@ import { esc, mb } from "./lib/format.js";
     const url = urlFor();
     if (location.hash === url || (url === "#" && !location.hash)) { settleOverlay(); return; }
     // a move from inside a sheet is never a refinement of the entry under it: the marker becomes the new place
-    if (replace && !history.state?.overlay) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), list: labelNow(true), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
+    if (replace && !history.state?.overlay) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), list: labelNow(true), place: history.state?.place || null }, "", url); refreshTrailButtons(); syncPlace(); return; }
     const fromOverlay = !!history.state?.overlay;
     if (!fromOverlay && (!leavingScroll || Date.now() - leavingScroll.at > 2000)) rememberScroll(); // a reading older than the move it was taken for is stale
     leavingScroll = null;
@@ -309,6 +310,7 @@ import { esc, mb } from "./lib/format.js";
     else history.pushState({ n: here() + 1, label: null, prev, prevUrl, prevList, scroll: null, place: null }, "", url);
     nameEntry();
     refreshTrailButtons();
+    syncPlace(); // a step can cross into another place (words typed in the Library's field are Search)
   }
   // Overlays (a sheet, the stage) sit over a place without being one. Opening one puts a marker
   // entry in history at the same address, so Back closes the overlay and nothing else; closing it
@@ -1806,7 +1808,7 @@ import { esc, mb } from "./lib/format.js";
     const frame = readerPane.querySelector(".study-frame");
     if (!frame) { readerPane.classList.remove("has-study"); return; }
     const top = frame.getBoundingClientRect().top;
-    const bottom = wide() ? readerPane.getBoundingClientRect().bottom : window.innerHeight;
+    const bottom = wide() ? readerPane.getBoundingClientRect().bottom : window.innerHeight - ($("#tabs")?.offsetHeight || 0); // a phone: down to the tab bar
     frame.style.height = Math.max(240, Math.floor(bottom - top)) + "px";
   }
   window.addEventListener("resize", fitStudyFrame);
@@ -2264,11 +2266,16 @@ import { esc, mb } from "./lib/format.js";
   function fitSelectBar() {
     const bar = $(".select-bar", readerPane);
     if (!bar || bar.offsetParent === null) return;
-    bar.classList.remove("compact");
-    bar.classList.add("measuring");
-    const over = bar.scrollWidth > bar.clientWidth + 1;
-    bar.classList.remove("measuring");
-    bar.classList.toggle("compact", over);
+    // two folds: Present, Copy and Clear behind "more"; then, still too full (an iPad in portrait
+    // beside the rail), the count goes and Add to deck is "+ Deck", as on a phone
+    bar.classList.remove("compact", "snug");
+    for (const level of ["compact", "snug"]) {
+      bar.classList.add("measuring");
+      const over = overflows(bar);
+      bar.classList.remove("measuring");
+      if (!over) break;
+      bar.classList.add(level);
+    }
   }
   window.addEventListener("resize", fitSelectBar);
   // A small menu on a button, the pattern of the reader bar's Aa: a tap opens it, a tap elsewhere
@@ -2591,16 +2598,21 @@ import { esc, mb } from "./lib/format.js";
     const menu = el("div", { class: "size-menu", role: "menu", hidden: true }, [
       el("button", { type: "button", role: "menuitem", onclick: () => resize(-1) }, [el("span", { class: "g", html: glyph(14) }), "Smaller text"]),
       el("button", { type: "button", role: "menuitem", onclick: () => resize(1) }, [el("span", { class: "g", html: glyph(20) }), "Larger text"]),
-      el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]),
+      el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); btn.focus(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]), // the menu's button is what the stage gives the focus back to
       el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => { shut(); outside(e, doc.source_url); } }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
       el("button", { type: "button", role: "menuitem", class: "menu-think", onclick: () => { shut(); thinkHere(); } }, [el("span", { class: "g", html: ICON_THINK }), "Think it through"]),
+      // the Hebrew or Greek switch (original.js puts it in the bar) when the bar has no room for it
+      el("button", { type: "button", role: "menuitem", class: "menu-orig", onclick: (e) => { const ob = e.currentTarget.closest(".reader-bar")?.querySelector(".orig-btn"); shut(); ob?.click(); } }, [el("span", { class: "g", html: "<b></b>" }), el("span", { class: "orig-name", text: "" })]),
       jsp ? el("button", { type: "button", role: "menuitem", class: "menu-cite", onclick: () => { shut(); citePapers(doc); } }, [el("span", { class: "g", html: "<b>“”</b>" }), "Cite this page"]) : null,
     ].filter(Boolean));
     // "Aa" while it holds the sizes alone; three dots once Present and the rest have folded into it
     const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size and more", title: "Text size and more", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } }, [el("span", { class: "aa", text: "Aa" }), el("span", { class: "dots", html: ICON_MORE })]);
     const away = (e) => { if (!wrap.contains(e.target)) shut(); };
     const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
-    function openMenu() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.addEventListener("keydown", key); menu.querySelector("button")?.focus({ preventScroll: true }); }
+    function openMenu() {
+      const ob = wrap.closest(".reader-bar")?.querySelector(".orig-btn"), item = menu.querySelector(".menu-orig");
+      if (ob && item) { item.querySelector(".orig-name").textContent = ob.classList.contains("on") ? `Hide the ${ob.textContent}` : ob.textContent; item.querySelector(".g b").textContent = /Greek/.test(ob.textContent) ? "α" : "א"; }
+      menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.addEventListener("keydown", key); menu.querySelector("button")?.focus({ preventScroll: true }); }
     function shut() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); }
     const wrap = el("span", { class: "size-pop" }, [btn, menu]);
     return [
@@ -2623,11 +2635,19 @@ import { esc, mb } from "./lib/format.js";
     if (bar.offsetParent === null) return;
     for (const level of BAR_LEVELS) {
       bar.classList.add("measuring");
-      const over = bar.scrollWidth > bar.clientWidth;
+      const over = overflows(bar);
       bar.classList.remove("measuring");
       if (!over) return;
       bar.classList.add(level);
     }
+  }
+  // Does a bar's row run past its own padding? Measured where its last piece ends: scrollWidth
+  // leaves the end padding out once there is overflow, and forgave a bar that was 8px too full.
+  function overflows(bar) {
+    const edge = bar.getBoundingClientRect().right - (parseFloat(getComputedStyle(bar).paddingRight) || 0);
+    let right = -Infinity;
+    for (const c of bar.children) { const r = c.getBoundingClientRect(); if (r.width > 0) right = Math.max(right, r.right); }
+    return right > edge + 0.5;
   }
   function fitReaderBars() { for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar); }
   window.addEventListener("resize", fitReaderBars);
@@ -2997,6 +3017,38 @@ import { esc, mb } from "./lib/format.js";
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
   $(".close", sheet).addEventListener("click", closeSheet);
+  // The grabber is real: drag it down and the sheet follows the finger; let go past a third of
+  // its height (or with a flick) and it goes, as Back or Escape would send it; less, and it
+  // settles back. A note half typed is kept, as everywhere.
+  (() => {
+    const grab = $(".handle", sheet);
+    let from = null;
+    grab.addEventListener("pointerdown", (e) => {
+      if (e.button > 0) return;
+      from = { y: e.clientY, t: e.timeStamp, dy: 0 };
+      sheet.classList.add("dragging");
+      try { grab.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    grab.addEventListener("pointermove", (e) => {
+      if (!from) return;
+      from.dy = Math.max(0, e.clientY - from.y);
+      sheet.style.transform = `translateY(${from.dy}px)`;
+    });
+    const end = (e) => {
+      if (!from) return;
+      const { dy, t } = from; from = null;
+      sheet.classList.remove("dragging");
+      const fast = dy > 24 && dy / Math.max(1, e.timeStamp - t) > 0.6;
+      if (e.type === "pointerup" && (dy > sheet.offsetHeight / 3 || fast) && !keepTyped()) {
+        const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        sheet.style.transform = "translateY(100%)";
+        setTimeout(() => { sheet.style.transform = ""; if (!sheet.hidden) closeSheet(); }, still ? 0 : 180);
+      } else sheet.style.transform = "";
+    };
+    grab.addEventListener("pointerup", end);
+    grab.addEventListener("pointercancel", end);
+  })();
 
   // ----------------------------------------------------------- controls ----
   input.addEventListener("input", () => {
