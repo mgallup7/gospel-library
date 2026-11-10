@@ -2292,8 +2292,8 @@ import { esc, mb } from "./lib/format.js";
     if (!bar || bar.offsetParent === null) return;
     // two folds: Present, Copy and Clear behind "more"; then, still too full (an iPad in portrait
     // beside the rail), the count goes and Add to deck is "+ Deck", as on a phone
-    bar.classList.remove("compact", "snug");
-    for (const level of ["compact", "snug"]) {
+    bar.classList.remove("compact", "snug", "close");
+    for (const level of ["compact", "snug", "close"]) { // close: the largest type on a phone, where the first two are not enough
       bar.classList.add("measuring");
       const over = overflows(bar);
       bar.classList.remove("measuring");
@@ -2612,6 +2612,7 @@ import { esc, mb } from "./lib/format.js";
     if (sizes.indexOf(cur) === -1) i = delta > 0 ? 3 : 1;
     document.documentElement.style.setProperty("--reading-size", sizes[i] + "px");
     store.set("readingSize", sizes[i]);
+    fitReaderBars(); fitSelectBar(); measureBar(); // the bars' words grew or shrank with it: what folds away is worked out again
   }
   // The reader bar's text sizes: two buttons where there is room, one "Aa" that opens Smaller and
   // Larger where there is not (an iPad in portrait with the Hebrew and the Page | Deck switch). In
