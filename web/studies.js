@@ -226,5 +226,11 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
     if (added) changed();
     return added;
   }
-  window.Studies = { list, get, add, remove, frameHtml, mount, plainText, mb, index, exportAll, importAll };
+  // The shelf put back as a list had it (records from exportAll(), whole): for the Undo of an import.
+  async function replaceAll(recs) {
+    await tx("readwrite", (s) => s.clear());
+    for (const r of Array.isArray(recs) ? recs : []) if (r && typeof r.id === "string") await tx("readwrite", (s) => s.put(r));
+    changed();
+  }
+  window.Studies = { list, get, add, remove, frameHtml, mount, plainText, mb, index, exportAll, importAll, replaceAll };
 })();

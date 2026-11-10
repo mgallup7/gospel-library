@@ -169,11 +169,20 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#homeBody .study-row", { timeout: 8000 });
     check((await page.locator("#homeBody .study-row").count()) === 2, "shelf should list two pages");
     await shot("10-shelf");
-    // remove the small one
-    page.once("dialog", (d) => d.accept());
+    // remove the small one: at once, with no browser dialog, and Undo brings it back whole
+    const asked = []; const onDialog = (d) => { asked.push(d.message()); d.accept().catch(() => {}); };
+    page.on("dialog", onDialog);
     await page.click("#homeBody .study-row >> nth=1 >> .study-remove");
     await page.waitForTimeout(600);
     check((await page.locator("#homeBody .study-row").count()) === 1, "remove should leave one page");
+    check(!asked.length && /^Removed “.+”\.Undo$/.test(await page.textContent("#toast.show").catch(() => "")), `removing a page should not ask in a browser dialog, and should offer Undo: ${asked.join(" | ")} / ${await page.textContent("#toast").catch(() => "")}`);
+    await page.click("#toast .toast-action");
+    await page.waitForFunction(() => document.querySelectorAll("#homeBody .study-row").length === 2, null, { timeout: 5000 }).catch(() => {});
+    check((await page.locator("#homeBody .study-row").count()) === 2, "Undo should put the removed page back on the shelf");
+    await page.click("#homeBody .study-row >> nth=1 >> .study-remove");
+    await page.waitForTimeout(600);
+    check((await page.locator("#homeBody .study-row").count()) === 1, "remove (again) should leave one page");
+    page.off("dialog", onDialog);
     // think it through from a study: the Ask tab opens with the page as subject
     await page.click("#homeBody .study-row >> nth=0 >> .study-open");
     await page.waitForSelector("#reader .study-frame", { timeout: 8000 });

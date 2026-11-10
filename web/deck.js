@@ -2948,6 +2948,15 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       sortSaved(); redrawSaved();
       return n;
     },
+    // My decks put back as a backup() had them (the deck in progress is never touched by an import): for the Undo of an import
+    restoreSaved: async (saved = []) => {
+      await ready;
+      const keep = new Map((Array.isArray(saved) ? saved : []).filter((d) => d && typeof d.id === "string").map((d) => [d.id, d]));
+      for (const d of savedDecks) if (!keep.has(d.id)) await dropSaved(d.id);
+      savedDecks = [...keep.values()];
+      for (const d of savedDecks) await putSaved(d);
+      sortSaved(); redrawSaved();
+    },
     // an empty deck, as "Yes, delete it and start over" leaves it, written before the promise settles
     reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },
     // for tests and scripts

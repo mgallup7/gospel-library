@@ -84,5 +84,11 @@ import { database } from "./lib/idb.js";
     return added;
   }
 
-  window.Marks = { COLORS, COLOR_NAME, forDoc, all, count, get, set, remove, exportJson, exportJsonOf, importJson };
+  // The whole store put back as a list had it (records from all(), as they were): for the Undo of an import.
+  async function replaceAll(list) {
+    await tx("readwrite", (s) => s.clear());
+    for (const rec of Array.isArray(list) ? list : []) if (rec && typeof rec.id === "string") await tx("readwrite", (s) => s.put(rec));
+  }
+
+  window.Marks = { COLORS, COLOR_NAME, forDoc, all, count, get, set, remove, exportJson, exportJsonOf, importJson, replaceAll };
 })();

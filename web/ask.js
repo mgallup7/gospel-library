@@ -527,11 +527,15 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
           if (!/^sk-ant-/.test(k)) { msg.textContent = k ? "That does not look like a Claude API key (they begin with sk-ant-). Nothing was saved." : "Paste a Claude API key, or use Remove key from this device. Nothing was saved."; key.focus(); return; }
           const first = !settings.key;
           settings.model = model.value; settings.planner = planner.checked; settings.think = think.checked; settings.web = web.checked; settings.key = k;
+          const hadI = settings.instructions, hadN = settings.notes; // what Claude was told until now, for the Undo below
           settings.instructions = instructions.value.trim(); settings.notes = notes.value.trim();
           close();
           const hint = live()?.querySelector(".ask-hint p");
           if (first && live()) render(live()); else if (hint) hint.textContent = hintText();
-          GL().toast("Settings saved.");
+          // a box emptied (by intent or by a slip of select-all) can be had back
+          const lostI = !!hadI.trim() && !settings.instructions, lostN = !!hadN.trim() && !settings.notes;
+          if (lostI || lostN) GL().toast(lostI && lostN ? "Instructions and notes cleared." : lostI ? "Instructions cleared." : "Notes cleared.", { action: "Undo", onAction: () => { if (lostI) settings.instructions = hadI; if (lostN) settings.notes = hadN; GL().toast(lostI && lostN ? "Instructions and notes put back." : lostI ? "Instructions put back." : "Notes put back."); } });
+          else GL().toast("Settings saved.");
         } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
         el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => {

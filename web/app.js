@@ -1712,6 +1712,8 @@ import { esc, mb } from "./lib/format.js";
     // follow without selecting them again; the dot shows the color they now carry
     updateSelectBar();
     if (allSame) toast(units.length === 1 ? "Highlight removed." : `${units.length} highlights removed.`, { action: "Undo", onAction: () => restoreMarks(page, before, units.length === 1 ? "Highlight put back." : "Highlights put back.") });
+    // a color laid over another color can be had back as it was
+    else if (before.some((b) => b.rec?.color && b.rec.color !== color)) toast(units.length === 1 ? "Color changed." : `${units.length} highlighted; some changed color.`, { action: "Undo", onAction: () => restoreMarks(page, before, units.length === 1 ? "Color put back." : "Colors put back.") });
     else toast(units.length === 1 ? "Highlighted." : `${units.length} highlighted.`);
   }
   // Marks put back as they were (the record each paragraph had, or none): what the Undo on
@@ -1761,6 +1763,8 @@ import { esc, mb } from "./lib/format.js";
         closeSheet(); updateSelectBar(); // the selection stays, for a color or Add to deck after the note
         // a note deleted can be had back: the toast holds the record as it was when the sheet opened
         if (!keep && old?.note) toast("Note removed.", { action: "Undo", onAction: () => restoreMarks(page, [{ pid: unit.pid, rec: old }], "Note put back.") });
+        // and a note written over can be had back as it read before
+        else if (keep && old?.note && old.note.trim() !== ta.value.trim()) toast("Note saved.", { action: "Undo", onAction: () => restoreMarks(page, [{ pid: unit.pid, rec: old }], "Note put back as it was.") });
         else toast(keep ? "Note saved." : "Note removed.");
       } catch (_) { toast("Could not save the note."); }
     };
@@ -1891,10 +1895,15 @@ import { esc, mb } from "./lib/format.js";
           el("span", { class: "s", text: `${rec.kind === "html" ? "Page" : rec.kind === "md" ? "Markdown" : "Text"} · added ${new Date(rec.added).toLocaleDateString([], { month: "short", day: "numeric" })} · ${window.Studies.mb(rec.size)}` }),
         ]),
         el("button", { type: "button", class: "icon-btn study-remove", "aria-label": `Remove ${rec.title}`, title: "Remove from this device", text: "×", onclick: async () => {
-          if (!confirm(`Remove “${rec.title}” from this device?`)) return;
-          try { await window.Studies.remove(rec.id); } catch (_) { toast("Could not remove it just now."); return; }
+          // removed at once, and had back with Undo: the page whole is kept until the toast goes
+          let whole = null;
+          try { whole = await window.Studies.get(rec.id); await window.Studies.remove(rec.id); } catch (_) { toast("Could not remove it just now."); return; }
           if (state.studyId === rec.id) { currentStudy = null; state.studyId = null; readerPane.replaceChildren(); readerPane.classList.remove("has-study"); push(true); }
-          toast("Removed.");
+          const redraw = () => { if (tabNow() === "library" && state.browse?.tab === "studies") { renderHome(); showList(); } };
+          toast(`Removed “${rec.title.length > 40 ? rec.title.slice(0, 38) + "…" : rec.title}”.`, whole ? { action: "Undo", onAction: async () => {
+            try { await window.Studies.importAll([whole]); } catch (_) { toast("Could not put it back."); return; }
+            redraw(); toast("Put back.");
+          } } : {});
           renderHome(); showList();
         } }),
       ]));
@@ -2212,7 +2221,12 @@ import { esc, mb } from "./lib/format.js";
         ask.notes.length ? el("div", { class: "lb", text: "What Claude should remember" }) : null,
         ask.notes.length ? el("pre", { class: "incoming-text", tabindex: "0", text: ask.notes.join("\n") }) : null,
         el("div", { class: "set-acts" }, [
-          el("button", { type: "button", class: "primary", text: "Accept these", onclick: () => { const got = window.Ask.restore(ask.from); done(got.length ? `Brought in: ${got.join(", ")}.` : "Nothing new in them."); } }),
+          el("button", { type: "button", class: "primary", text: "Accept these", onclick: () => {
+            const hadI = window.Ask.settings.instructions, hadN = window.Ask.settings.notes;
+            const got = window.Ask.restore(ask.from);
+            done(got.length ? `Brought in: ${got.join(", ")}.` : "Nothing new in them.");
+            if (got.length) toast("Brought in for Claude.", { action: "Undo", onAction: () => { window.Ask.settings.instructions = hadI; window.Ask.settings.notes = hadN; said.textContent = "Taken back out. What Claude is told is as it was."; toast("Undone."); } });
+          } }),
           el("button", { type: "button", class: "text-btn", text: "Leave them out", onclick: () => done("Left out. Nothing was changed in what Claude is told.") }),
         ]),
       ].filter(Boolean));
@@ -2222,7 +2236,29 @@ import { esc, mb } from "./lib/format.js";
       const file = pick.files && pick.files[0];
       if (!file) return;
       offer.hidden = true;
-      try { const got = await restoreBackup(await file.text()); said.textContent = got.length ? `Brought in: ${got.join(", ")}.` : got.ask ? "" : "Nothing new in that file."; if (got.ask) offerWords(got.ask); statsCache = null; if (tabNow() === "library" && sheet.hidden === false && !state.q.trim()) renderHome(); }
+      try {
+        const text = await file.text();
+        const before = await backupData(); // everything as it stands, so the import can be undone whole
+        const got = await restoreBackup(text);
+        said.textContent = got.length ? `Brought in: ${got.join(", ")}.` : got.ask ? "" : "Nothing new in that file.";
+        if (got.ask) offerWords(got.ask);
+        statsCache = null;
+        const home = () => { if (tabNow() === "library" && sheet.hidden === false && !state.q.trim()) renderHome(); };
+        home();
+        if (got.length) toast(`Brought in: ${got.join(", ")}.`, { action: "Undo", onAction: async () => {
+          try {
+            await window.Marks?.replaceAll(before.marks);
+            await window.Studies?.replaceAll(before.studies);
+            if (before.decks) await window.Deck?.restoreSaved(before.decks.saved);
+            if (window.Ask) { window.Ask.settings.instructions = before.ask.instructions; window.Ask.settings.notes = before.ask.notes; }
+          } catch (_) { toast("Could not undo all of the import."); return; }
+          offer.hidden = true; offer.replaceChildren();
+          said.textContent = "The import was undone. Your marks, study pages, decks and words for Claude are as they were.";
+          statsCache = null; home();
+          if (currentDoc && state.docId === currentDoc.id) { const b = $(".doc", readerPane); if (b) { for (const pid of [...docMarks.keys()]) undrawMark(b, pid); docMarks.clear(); applyMarks(currentDoc, b); } }
+          toast("Import undone.");
+        } });
+      }
       catch (err) { said.textContent = err instanceof SyntaxError ? "That file could not be read." : err.message || "That file could not be read."; }
       pick.value = "";
     });
