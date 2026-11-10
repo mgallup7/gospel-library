@@ -53,9 +53,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForSelector(".board-saved .deck-item", { timeout: 5000 });
   check(/Forty-one/.test(await page.textContent(".board-saved")), "the saved deck should be listed after a reload");
   await page.screenshot({ path: OUT + "01-my-decks.png" });
-  page.once("dialog", (d) => d.accept("Faith, renamed"));
+  // the new name is asked for in the app's own sheet, not a browser prompt
   await page.click(".board-saved .deck-item .rename");
+  await page.fill(".dsheet input", "Faith, renamed");
+  await page.press(".dsheet input", "Enter");
   await page.waitForTimeout(300);
+  check((await page.locator(".dsheet").count()) === 0, "the rename sheet should close on Enter");
+  check(/Faith, renamed/.test(await page.textContent(".board-saved")), "the list should show the new name");
   await reload();
   const names = await page.evaluate(async () => {
     const db = await new Promise((res, rej) => { const r = indexedDB.open("gospel-decks"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -69,10 +73,16 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.click(".board-row button:has-text('More')");
   await page.click(".board .deck-actions button:text-is('My decks')");
   await page.waitForSelector(".board-saved .deck-item", { timeout: 5000 });
-  page.once("dialog", (d) => d.accept());
+  // delete does not ask: the toast's Undo puts the deck back, in the list and in the database
   await page.click(".board-saved .deck-item .delete");
   await page.waitForTimeout(300);
   check((await page.locator(".board-saved .deck-item").count()) === 0, "the deleted deck should leave the list");
+  await page.click(".toast .toast-action");
+  await page.waitForTimeout(300);
+  check((await page.locator(".board-saved .deck-item").count()) === 1, "Undo should put the deleted deck back in the list");
+  await page.click(".board-saved .deck-item .delete");
+  await page.waitForTimeout(300);
+  check((await page.locator(".board-saved .deck-item").count()) === 0, "the deck deleted again should leave the list");
 
   // decks an older version left in localStorage are taken in, then leave it
   await page.evaluate(() => localStorage.setItem("gospel.decks", JSON.stringify([{ id: "old1", title: "From before", updated: 1, deck: { id: "old1", title: "From before", items: [], links: [] } }])));

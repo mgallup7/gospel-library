@@ -181,6 +181,7 @@ import { esc } from "./lib/format.js";
       writeWanted = true;
     }
     loaded = true;
+    forgetPast(); // the deck that arrived is where the history starts
     if (writeWanted) writeCurrent();
     draw(); updateBadge();
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
@@ -191,7 +192,7 @@ import { esc } from "./lib/format.js";
     try {
       if (e.data?.what === "current") {
         const other = await tx("current", "readonly", (s) => s.get("deck"));
-        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
+        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; forgetPast(); draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
       } else if (e.data?.what === "saved") {
         savedDecks = (await tx("saved", "readonly", (s) => s.getAll())) || [];
         sortSaved();
@@ -201,12 +202,93 @@ import { esc } from "./lib/format.js";
 
   function save({ redraw = true } = {}) {
     deck.updated = Date.now();
+    keep(!redraw);
     scheduleWrite();
     updateBadge();
     if (redraw) draw();
-    else if (ui) { syncDownloadButton(); schedulePrepare(); }
+    else if (ui) { syncDownloadButton(); schedulePrepare(); syncUndo(); }
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
   }
+
+  // ----------------------------------------------------------------- undo --
+  // One history for the deck. Every change goes through save(), which keeps the deck as it stood
+  // before the change (as text, 30 deep); undo() puts one back. Typing (a title, a note, a label)
+  // saves on every key, so a run of it is one step. An entry can carry something beside the deck
+  // to put back (a saved deck that was deleted). What is on the screen is redrawn from the deck,
+  // so nothing else needs to know how a change was made to take it back.
+  const UNDO_DEPTH = 30;
+  const snap = () => JSON.stringify({ ...deck, updated: 0 });
+  let past = [];          // [{json, extra, typing, at}], newest last
+  let lastJson = snap();  // the deck as of the last save
+  let lastEntry = null;   // the entry the last save made, for the toast that follows it
+  let batching = 0, batchEntry = null; // several saves that are one step (Use everything, Clear)
+  function pushPast(entry) {
+    past.push(entry);
+    if (past.length > UNDO_DEPTH) past.shift();
+    return entry;
+  }
+  function keep(typing) {
+    lastEntry = null;
+    const now = snap();
+    if (now === lastJson) return;
+    const top = past[past.length - 1];
+    if (batching && batchEntry) lastEntry = batchEntry;
+    else if (typing && !batching && top && top.typing && Date.now() - top.at < 3000) top.at = Date.now();
+    else {
+      lastEntry = pushPast({ json: lastJson, extra: null, typing: typing && !batching, at: Date.now() });
+      if (batching) batchEntry = lastEntry;
+    }
+    lastJson = now;
+  }
+  /** Several changes as one step of the history. */
+  function batch(fn) {
+    if (!batching) batchEntry = null;
+    batching++;
+    try { fn(); } finally { batching--; }
+    lastEntry = batchEntry;
+    if (!batching) batchEntry = null;
+  }
+  /** A step that changed something other than the deck: extra puts it back. */
+  function record(extra) { lastEntry = pushPast({ json: lastJson, extra, typing: false, at: Date.now() }); syncUndo(); }
+  function forgetPast() { past = []; lastJson = snap(); lastEntry = null; syncUndo(); }
+  const canUndo = () => past.length > 0;
+  /** Take back the last change, or everything back to the entry given. Returns true when it did. */
+  function undo(entry = past[past.length - 1]) {
+    const at = past.indexOf(entry);
+    if (at < 0) return false;
+    let d = null;
+    try { d = migrate(JSON.parse(entry.json)); } catch (_) {}
+    if (!d) return false;
+    const undone = past.splice(at).reverse();
+    deck = d; deck.updated = Date.now();
+    pending = active = linking = null; closeEditor();
+    lastJson = snap(); lastEntry = null;
+    for (const u of undone) { try { u.extra?.(); } catch (_) {} }
+    scheduleWrite(); updateBadge(); draw();
+    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    return true;
+  }
+  // The toast after a change, with Undo for exactly that change (and whatever came after it).
+  function did(text, after) {
+    const entry = lastEntry;
+    if (!entry) { GL().toast(text); return; }
+    GL().toast(text, { action: "Undo", onAction: () => { if (undo(entry)) { after?.(); GL().toast("Undone."); } } });
+  }
+  function syncUndo() { if (ui) ui.undo.hidden = !canUndo(); }
+  // Cmd+Z or Ctrl+Z with the board up takes back the last deck change. A toast's own Undo (app.js)
+  // and a field's own undo come first; with nothing to undo the key is still taken, so the
+  // browser does not rewind the search box instead.
+  document.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || e.defaultPrevented) return;
+    if (!board || !board.isConnected || board.offsetParent === null) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+    if (document.querySelector("#toast.show.has-action")) return;
+    e.preventDefault();
+    if (undo()) GL().toast("Undone.");
+  });
+  const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+  const linksOn = (it) => deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id).length;
 
   function count() { return deck.items.filter((i) => i.type === "passage").length; }
   // The header button carries the count as a small pill, so the teacher sees the deck grow
@@ -222,7 +304,26 @@ import { esc } from "./lib/format.js";
   const byId = (id) => deck.items.find((i) => i.id === id) || null;
   function find(doc_id, pid) { return deck.items.find((i) => i.type === "passage" && i.doc_id === doc_id && i.pid === pid) || null; }
   function has(doc_id, pid) { return !!find(doc_id, pid); }
-  function remove(doc_id, pid) { const it = find(doc_id, pid); if (it) removeItem(it); return !!it; }
+  // Taken off from outside the board (a result's +, an Ask tick, Findings Clear): everything one
+  // tap took off is one step, and its toast, with Undo, comes after the caller's own plain one.
+  let takenOff = null;
+  function remove(doc_id, pid) {
+    const it = find(doc_id, pid);
+    if (!it) return false;
+    if (!takenOff) {
+      takenOff = { n: 0, links: 0 };
+      if (!batching) batchEntry = null;
+      batching++;
+      setTimeout(() => {
+        const t = takenOff; takenOff = null;
+        batching--; lastEntry = batchEntry; if (!batching) batchEntry = null;
+        did(`${t.n === 1 ? "Taken off the deck" : `${t.n} passages taken off the deck`}${t.links ? `, with ${plural(t.links, "connection")}` : ""}.`);
+      }, 0);
+    }
+    takenOff.n++; takenOff.links += linksOn(it);
+    removeItem(it);
+    return true;
+  }
   function removeItem(it) {
     deck.items = deck.items.filter((i) => i !== it);
     deck.links = deck.links.filter((l) => l.from.id !== it.id && l.to.id !== it.id);
@@ -520,18 +621,16 @@ import { esc } from "./lib/format.js";
     const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); } });
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       think, md,
-      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
+      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); did("Section added, at the end."); } }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
-      el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => {
-        if (deck.items.length && !confirm("Start a new, empty deck? The current one is kept only if you saved it.")) return;
-        deck = blank(); pending = active = linking = null; naming = false; save();
-      } }),
+      el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => replaceDeck(blank(), { what: "Start a new deck", done: "A new, empty deck." }) }),
     ]);
+    const undoBtn = el("button", { type: "button", class: "text-btn board-undo", text: "Undo", title: "Take back the last change to the deck", hidden: true, onclick: () => { if (undo()) GL().toast("Undone."); } });
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
     const thinkBox = el("div", { class: "board-think", hidden: true });
-    const actions = el("div", { class: "board-row" }, [download, present, more]);
+    const actions = el("div", { class: "board-row" }, [download, present, more, undoBtn]);
     const head = el("div", { class: "board-head" }, [title, subtitle, themes, actions, moreRow, banner, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
@@ -542,7 +641,7 @@ import { esc } from "./lib/format.js";
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
     board.append(head, canvas, saved, status, hint);
-    ui = { title, subtitle, themes, download, present, more, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
@@ -572,6 +671,7 @@ import { esc } from "./lib/format.js";
     const empty = !deck.items.length;
     // An empty deck has nothing to theme, download or present: the board shows only how to add a passage.
     ui.themes.hidden = empty; ui.actions.hidden = empty;
+    syncUndo();
     // nor anything to name: the title and subtitle wait for the first card, or for "Name this deck"
     const named = !empty || naming || !!(deck.title || deck.subtitle);
     ui.title.hidden = !named; ui.subtitle.hidden = !named;
@@ -610,7 +710,7 @@ import { esc } from "./lib/format.js";
       const tools = el("div", { class: "bc-tools" }, [
         el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
         el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
-        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeItem(it); } }),
+        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeCard(it); } }),
       ]);
       if (it.type === "section") {
         const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
@@ -646,7 +746,12 @@ import { esc } from "./lib/format.js";
         if (h) card.append(el("div", { class: "hl-tools" }, [
           el("span", { class: "ph", text: `“${phraseOf(it, h)}”` }),
           el("button", { type: "button", class: "chip small", text: "Link to…", onclick: (e) => { e.stopPropagation(); linking = { id: it.id, hl: h.id }; active = null; draw(); } }),
-          el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => { e.stopPropagation(); removeHighlight(it, h); active = null; save(); } }),
+          el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => {
+            e.stopPropagation();
+            const links = deck.links.filter((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)).length;
+            removeHighlight(it, h); active = null; save();
+            did(links ? `Highlight removed, with its ${plural(links, "connection")}.` : "Highlight removed.");
+          } }),
           el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
         ]));
       }
@@ -670,8 +775,8 @@ import { esc } from "./lib/format.js";
     });
     // A question or slide text is added from the foot of the list, after the selected card.
     if (deck.items.length) cards.append(el("div", { class: "board-foot" }, [
-      el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => addCard("question") }),
-      el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => addCard("note") }),
+      el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => { addCard("question"); did("Question added."); } }),
+      el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => { addCard("note"); did("Slide text added."); } }),
     ]));
     if (!deck.items.length) {
       const savedAny = savedDecks.length > 0;
@@ -679,6 +784,8 @@ import { esc } from "./lib/format.js";
         el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
         naming || deck.title || deck.subtitle ? null : el("button", { type: "button", class: "text-btn", text: "Name this deck", onclick: () => { naming = true; draw(); ui.title.focus(); } }),
         savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
+        // the row with Undo is hidden on an empty deck, and the deck may have just been emptied
+        canUndo() ? el("button", { type: "button", class: "text-btn", text: "Undo the last change", onclick: () => { if (undo()) GL().toast("Undone."); } }) : null,
       ].filter(Boolean)));
     }
   }
@@ -740,6 +847,15 @@ import { esc } from "./lib/format.js";
     if (j < 0 || j >= deck.items.length) return;
     [deck.items[i], deck.items[j]] = [deck.items[j], deck.items[i]];
     save();
+    did(d < 0 ? "Moved up." : "Moved down.");
+  }
+  const cardName = (it) => (it.type === "passage" ? it.citation || "the passage" : it.type === "section" ? "the section" : it.type === "question" ? "the question" : "the slide text");
+  // The card's own remove: its highlights, connections and speaker notes go with it, and come back with Undo.
+  function removeCard(it) {
+    const links = linksOn(it), notes = !!(it.notes || "").trim();
+    removeItem(it);
+    const also = [links ? plural(links, "connection") : "", notes ? "speaker notes" : ""].filter(Boolean).join(" and ");
+    did(`Removed ${cardName(it)}${also ? `, with its ${also}` : ""}.`);
   }
 
   // Taps: mark phrases (first word, then last), pick a highlight, or finish a tap-to-link.
@@ -771,6 +887,7 @@ import { esc } from "./lib/format.js";
       const h = setHighlight(item, pending.i, i);
       pending = null; active = { id: item.id, hl: h.id };
       save();
+      did("Highlighted.");
       return;
     }
     const h = hlAt(item, i);
@@ -880,13 +997,14 @@ import { esc } from "./lib/format.js";
     if (t && t.el) t.el.classList.add("drop");
   }
   function finishLink(from, t) {
-    let hl = t.hl;
-    if (!hl && t.word !== null && t.word !== undefined) hl = setHighlight(t.item, t.word, t.word).id;
+    let hl = t.hl, made = null;
+    if (!hl && t.word !== null && t.word !== undefined) hl = made = setHighlight(t.item, t.word, t.word).id;
     const link = addLink(from, { id: t.item.id, hl });
     if (!link) return;
+    if (made) link.made = made; // the one-word highlight this link brought: it leaves with the link
     active = null; pending = null;
     save();
-    GL().toast("Linked.");
+    did("Linked.");
     raf(() => raf(() => { const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) openLabelEditor(link, pill); }));
   }
 
@@ -921,6 +1039,16 @@ import { esc } from "./lib/format.js";
     }
   }
   const linkNumber = (l) => deck.links.indexOf(l) + 1;
+  // Take a connection off. A one-word highlight that finishLink made for it goes too, unless it
+  // has since been widened or another connection uses it.
+  function removeLink(link) {
+    deck.links = deck.links.filter((x) => x !== link);
+    for (const end of [link.from, link.to]) {
+      if (!link.made || end.hl !== link.made) continue;
+      const it = byId(end.id), h = it && hlById(it, link.made);
+      if (h && h.s === h.e && !deck.links.some((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id))) it.hl = it.hl.filter((x) => x !== h);
+    }
+  }
   function portPoint(end, cr) {
     const p = ui.cards.querySelector(`.port[data-item="${end.id}"][data-hl="${end.hl || ""}"]`);
     if (!p) return null;
@@ -946,8 +1074,8 @@ import { esc } from "./lib/format.js";
       el("div", { class: "shelf" }, QUICK_LABELS.map((q) => el("button", { type: "button", class: "chip small" + (link.label === q ? " on" : ""), text: q, onclick: () => { setLabel(q); closeEditor(); draw(); } }))),
       el("div", { class: "deck-actions" }, [
         el("button", { type: "button", class: "primary", text: "Done", onclick: () => { closeEditor(); draw(); } }),
-        el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); } }),
-        el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { deck.links = deck.links.filter((x) => x !== link); closeEditor(); save(); GL().toast("Connection removed."); } }),
+        el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); did("Direction swapped."); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { removeLink(link); closeEditor(); save(); did("Connection removed."); } }),
       ]),
     ]);
     const cr = ui.canvas.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
@@ -995,8 +1123,9 @@ import { esc } from "./lib/format.js";
           const v = name.value.trim();
           if (!deck.title && v) deck.title = v;
           saveNamed(v);
+          const was = v || deck.title;
           deck = blank(); pending = active = linking = null; naming = false; save();
-          GL().toast(`Saved “${v || deck.title}”. The deck is empty.`);
+          did(`Saved “${was}”. The deck is empty.`);
           finish("new");
         } }),
       ]);
@@ -1006,7 +1135,7 @@ import { esc } from "./lib/format.js";
         el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { store.set("deckKept", deck.id); finish("keep"); } }),
         el("button", { type: "button", class: "text-btn", text: "No, save it as it is, then start a new deck", onclick: (e) => { nameRow.hidden = false; e.currentTarget.hidden = true; name.focus(); name.select(); } }),
         nameRow,
-        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; naming = false; save(); GL().toast("The deck is empty."); finish("new"); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; naming = false; save(); did("The deck is empty."); finish("new"); } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => finish("cancel") }),
       );
       scrim.addEventListener("click", () => finish("cancel"));
@@ -1199,35 +1328,61 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const passages = deck.items.filter((i) => i.type === "passage");
     const byNum = (n) => passages[Number(n) - 1] || null;
     const list = el("div", { class: "think-list" });
-    const row = (text, btn, act) => { const b = el("button", { type: "button", class: "chip small", text: btn }); const line = el("div", { class: "think-row" }, [el("span", { html: text }), b]); b.addEventListener("click", () => { const ok = act(); if (ok !== false) { b.textContent = "Done"; b.disabled = true; } }); list.append(line); return line; };
+    // Each suggestion changes the deck when its button is tapped, and the toast takes it back
+    // (the button is offered again). The passages and arrows are looked up by id at the tap,
+    // since an Undo in between has replaced the deck's objects. quiet: Use everything is one step
+    // with one toast.
+    let quiet = false;
+    const row = (text, btn, act, done) => {
+      const b = el("button", { type: "button", class: "chip small", text: btn });
+      const line = el("div", { class: "think-row" }, [el("span", { html: text }), b]);
+      b.addEventListener("click", () => {
+        const ok = act();
+        if (ok === false) { if (!quiet) GL().toast("That passage or arrow is no longer on the deck."); return; }
+        b.textContent = "Done"; b.disabled = true;
+        if (!quiet) did(done, () => { b.textContent = btn; b.disabled = false; });
+      });
+      list.append(line);
+      return line;
+    };
     const applied = [];
-    if (r.caption) { const cap = String(r.caption).trim(); applied.push(row(`<b>Caption for the chain slide:</b> ${esc(cap)}`, "Use", () => { deck.chain = { ...(deck.chain || {}), caption: cap }; save({ redraw: false }); flash("Caption added to the chain slide."); })); }
+    if (r.caption) { const cap = String(r.caption).trim(); applied.push(row(`<b>Caption for the chain slide:</b> ${esc(cap)}`, "Use", () => { deck.chain = { ...(deck.chain || {}), caption: cap }; save({ redraw: false }); }, "Caption added to the chain slide.")); }
     for (const x of r.labels || []) {
-      const l = deck.links[Number(x.link) - 1];
-      if (!l || !x.label) continue;
-      applied.push(row(`<b>Label arrow ${x.link}:</b> “${esc(x.label)}”${l.label ? ` (now “${esc(l.label)}”)` : ""}`, "Apply", () => { l.label = String(x.label).trim(); save(); }));
+      const l0 = deck.links[Number(x.link) - 1];
+      if (!l0 || !x.label) continue;
+      applied.push(row(`<b>Label arrow ${x.link}:</b> “${esc(x.label)}”${l0.label ? ` (now “${esc(l0.label)}”)` : ""}`, "Apply", () => { const l = deck.links.find((y) => y.id === l0.id); if (!l) return false; l.label = String(x.label).trim(); save(); }, "Label applied."));
     }
     for (const c of r.connections || []) {
-      const a = byNum(c.from?.passage), b = byNum(c.to?.passage);
-      if (!a || !b || a === b) continue;
+      const a0 = byNum(c.from?.passage), b0 = byNum(c.to?.passage);
+      if (!a0 || !b0 || a0 === b0) continue;
+      let a = a0, b = b0;
       const ra = findPhrase(a, c.from.words), rb = findPhrase(b, c.to.words);
       const text = `<b>Connect</b> ${esc(a.citation)} “${esc(c.from.words)}” → ${esc(b.citation)} “${esc(c.to.words)}”${c.label ? `, <i>${esc(c.label)}</i>` : ""}${c.why ? `<br><span class="why">${esc(c.why)}</span>` : ""}${!ra || !rb ? `<br><span class="why">(those words were not found exactly; it will link the whole passage on that side)</span>` : ""}`;
       applied.push(row(text, "Add", () => {
+        a = byId(a0.id); b = byId(b0.id);
+        if (!a || !b) return false;
         const from = { id: a.id, hl: ra ? (hlAt(a, ra.s) && hlAt(a, ra.s).e === ra.e && hlAt(a, ra.s).s === ra.s ? hlAt(a, ra.s).id : setHighlight(a, ra.s, ra.e).id) : null };
         const to = { id: b.id, hl: rb ? (hlAt(b, rb.s) && hlAt(b, rb.s).e === rb.e && hlAt(b, rb.s).s === rb.s ? hlAt(b, rb.s).id : setHighlight(b, rb.s, rb.e).id) : null };
         addLink(from, to, String(c.label || "").trim()); save();
-      }));
+      }, "Connection added."));
     }
     for (const k of r.key_phrases || []) {
       const p = byNum(k.passage);
       if (!p || !k.words) continue;
       const range = findPhrase(p, k.words);
       if (!range) continue;
-      applied.push(row(`<b>Highlight in ${esc(p.citation)}:</b> “${esc(k.words)}”`, "Highlight", () => { setHighlight(p, range.s, range.e); save(); }));
+      applied.push(row(`<b>Highlight in ${esc(p.citation)}:</b> “${esc(k.words)}”`, "Highlight", () => { const now = byId(p.id); if (!now) return false; setHighlight(now, range.s, range.e); save(); }, "Highlighted."));
     }
-    if (r.notes) { const notes = String(r.notes).trim(); applied.push(row(`<b>Speaker notes for the chain slide:</b> ${esc(notes)}`, "Add", () => { deck.chain = { ...(deck.chain || {}), notes }; save({ redraw: false }); flash("Notes added to the chain slide."); })); }
+    if (r.notes) { const notes = String(r.notes).trim(); applied.push(row(`<b>Speaker notes for the chain slide:</b> ${esc(notes)}`, "Add", () => { deck.chain = { ...(deck.chain || {}), notes }; save({ redraw: false }); }, "Notes added to the chain slide.")); }
     if (!applied.length) list.append(el("div", { class: "deck-hint", text: "Nothing to add: the chain reads well as it is." }));
-    const all = el("button", { type: "button", class: "primary", text: "Use everything", onclick: () => { for (const line of list.querySelectorAll(".think-row button:not(:disabled)")) line.click(); } });
+    const all = el("button", { type: "button", class: "primary", text: "Use everything", onclick: () => {
+      const open = [...list.querySelectorAll(".think-row button:not(:disabled)")];
+      const labels = open.map((b) => b.textContent);
+      quiet = true;
+      try { batch(() => { for (const b of open) b.click(); }); } finally { quiet = false; }
+      const used = open.filter((b) => b.disabled);
+      if (used.length) did(`${plural(used.length, "suggestion")} applied.`, () => open.forEach((b, i) => { b.textContent = labels[i]; b.disabled = false; }));
+    } });
     box.querySelector(".think-status")?.remove();
     box.append(list, el("div", { class: "deck-actions" }, [all]));
   }
@@ -1241,14 +1396,73 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     savedDecks = [entry, ...savedDecks.filter((d) => d.id !== deck.id)];
     putSaved(entry).then((ok) => { if (ok !== false) flash(`Saved “${name}”.`); });
   }
-  function renameSaved(d) {
-    const name = (prompt("A new name for this deck", d.title) || "").trim();
-    if (!name || name === d.title) return false;
-    d.title = name;
-    if (d.deck) d.deck.title = d.deck.title || name;
-    putSaved(d);
-    return true;
+  // A small sheet of the deck's own: a question before a deck is replaced, a new name. build(close)
+  // returns its children; Cancel, Escape and a tap outside close it.
+  function dialog(label, build) {
+    const scrim = el("div", { class: "dscrim" });
+    const sheet = el("div", { class: "dsheet", role: "dialog", "aria-modal": "true", "aria-label": label });
+    let open = true;
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+    function close() {
+      if (!open) return;
+      open = false;
+      scrim.remove(); sheet.remove();
+      document.removeEventListener("keydown", onKey);
+    }
+    sheet.append(...build(close).filter(Boolean));
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    document.body.append(scrim, sheet);
+    return { sheet, close };
   }
+  // Is the deck in progress in My decks exactly as it stands? Then replacing it loses nothing.
+  function isSaved() {
+    const s = savedDecks.find((d) => d.id === deck.id);
+    return !!s && JSON.stringify({ ...s.deck, updated: 0 }) === snap();
+  }
+  // Put another deck (a saved one, or an empty one) in place of the one in progress. A deck that
+  // is not in My decks as it stands is asked about first, in the app's own sheet; either way the
+  // toast's Undo, and the board's, bring the old one back.
+  function replaceDeck(next, { what, done, then }) {
+    const go = () => { deck = next; pending = active = linking = null; naming = false; save(); did(done); then?.(); };
+    if (!deck.items.length || isSaved()) { go(); return; }
+    // the saved copy of this very deck: saving first would write over the copy being opened
+    const same = next.id === deck.id;
+    dialog(what, (close) => [
+      el("h2", { text: `${what}?` }),
+      el("p", { class: "lede", text: `The deck in progress${deck.title ? ` (“${deck.title}”)` : ""} is not in My decks as it stands: ${summaryText().replace(/\.$/, "").toLowerCase()}. ${same ? "This opens its saved copy, without the changes since. " : ""}Undo brings it back while the app stays open.` }),
+      same ? null : el("button", { type: "button", class: "primary", text: "Save it to my decks first", onclick: () => { close(); saveNamed(); go(); } }),
+      el("button", { type: "button", class: "text-btn danger", text: "Go on without saving it", onclick: () => { close(); go(); } }),
+      el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
+    ]);
+  }
+  function renameSaved(d, done) {
+    const name = el("input", { class: "deck-subtitle", value: d.title, "aria-label": "A new name for this deck", autocapitalize: "words" });
+    dialog("Rename this deck", (close) => {
+      const ok = () => {
+        const v = name.value.trim();
+        close();
+        if (!v || v === d.title) return;
+        d.title = v;
+        if (d.deck) d.deck.title = d.deck.title || v;
+        putSaved(d);
+        done();
+      };
+      name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ok(); } });
+      return [el("h2", { text: "A new name for this deck" }), name, el("button", { type: "button", class: "primary", text: "Rename", onclick: ok }), el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close })];
+    });
+    name.focus(); name.select();
+  }
+  // Deleting a saved deck does not ask: the toast's Undo puts it back, and so does the board's.
+  function deleteSaved(d) {
+    savedDecks = savedDecks.filter((x) => x.id !== d.id);
+    dropSaved(d.id);
+    record(() => { if (!savedDecks.some((x) => x.id === d.id)) { savedDecks.push(d); sortSaved(); putSaved(d); } redrawSaved(); });
+    redrawSaved();
+    did(`Deleted “${d.title}” from my decks.`);
+  }
+  let savedShown = null; // the list on screen and what it was drawn with, so a delete or an Undo can redraw it
+  function redrawSaved() { if (savedShown && savedShown.box.isConnected) savedShown.box.replaceWith(savedList(savedShown.onBack, savedShown.onPick)); }
   function savedList(onBack, onPick) {
     const all = savedDecks;
     const box = el("div", { class: "deck saved" }, [
@@ -1258,16 +1472,17 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     for (const d of all) {
       const n = (d.deck.items || []).filter((i) => i.type === "passage").length;
       box.append(el("div", { class: "deck-item" }, [
-        el("button", { type: "button", class: "body preview", onclick: () => { deck = migrate(JSON.parse(JSON.stringify(d.deck))) || blank(); pending = active = linking = null; naming = false; save(); onPick(); } }, [
+        el("button", { type: "button", class: "body preview", onclick: () => replaceDeck(migrate(JSON.parse(JSON.stringify(d.deck))) || blank(), { what: `Open “${d.title}”`, done: `Opened “${d.title}”.`, then: onPick }) }, [
           el("div", { class: "cite-edit", text: d.title }),
           el("div", { class: "where", text: `${n} ${n === 1 ? "passage" : "passages"}, ${new Date(d.updated).toLocaleDateString()}` }),
         ]),
         el("div", { class: "tools" }, [
-          el("button", { type: "button", class: "rename", "aria-label": `Rename “${d.title}”`, text: "Rename", onclick: () => { if (renameSaved(d)) box.replaceWith(savedList(onBack, onPick)); } }),
-          el("button", { type: "button", class: "delete", "aria-label": `Delete “${d.title}”`, title: "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; savedDecks = savedDecks.filter((x) => x.id !== d.id); dropSaved(d.id); box.replaceWith(savedList(onBack, onPick)); } }),
+          el("button", { type: "button", class: "rename", "aria-label": `Rename “${d.title}”`, text: "Rename", onclick: () => renameSaved(d, redrawSaved) }),
+          el("button", { type: "button", class: "delete", "aria-label": `Delete “${d.title}”`, title: "Delete", text: "×", onclick: () => deleteSaved(d) }),
         ]),
       ]));
     }
+    savedShown = { box, onBack, onPick };
     return box;
   }
   function showSaved() {
@@ -1958,8 +2173,9 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
     ready, flush: () => writeCurrent(), // ready: the stored deck has arrived; flush: write now rather than a moment later
+    undo: () => undo(), canUndo, // the last change to the deck taken back (true when it was); whether there is one
     // an empty deck, as "Yes, delete it and start over" leaves it, written before the promise settles
-    reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); await writeCurrent(); },
+    reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
     // a question card with its words written (Ask's Think it through): addCard, then the text
