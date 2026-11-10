@@ -603,6 +603,7 @@ import { esc } from "./lib/format.js";
   let editing = null;   // the link whose label editor is open
   let holding = false;  // a link just made: its label editor is about to open, so the marker below stays
   let hintShown = false;
+  let howTo = false;      // "How to highlight and link" (under More) is showing
   let selectedId = null; // the card last tapped or typed in: where a new question or slide text goes
   let naming = false;     // "Name this deck" was tapped on an empty deck: its title fields show
 
@@ -707,20 +708,13 @@ import { esc } from "./lib/format.js";
     else $("#deckBtn")?.click();
   }
 
-  /** The Deck tab. Wide screens: a summary here, the board on the right. */
+  /** The Deck tab: the board, at the width of the place. On a wide screen it lives in the pane
+      app.js keeps for it (so a page opened from a citation can take its turn there); on a phone
+      it is drawn here. */
   function render(container) {
     container.replaceChildren();
     if (savedOpen && !savedUp()) savedOpen = null; // its list went with the tab
     if (GL().wide) {
-      container.append(el("div", { class: "deck-summary" }, [
-        el("h2", { text: deck.title || "Deck" }),
-        el("p", { text: summaryText() }),
-        el("div", { class: "deck-actions" }, [
-          el("button", { type: "button", class: "primary", text: "Show the deck", onclick: () => showBoard() }),
-          el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => renderSaved(container) }),
-        ]),
-        el("p", { class: "deck-hint", text: "Find passages on this side: search, browse, or Ask. Tick a card or tap + to put one on the deck. The deck on the right is where you highlight phrases, draw the arrows between them, and download the PowerPoint." }),
-      ]));
       showBoard();
     } else {
       container.append(boardEl());
@@ -736,7 +730,8 @@ import { esc } from "./lib/format.js";
 
   function buildBoard() {
     board = el("div", { class: "board" });
-    const title = el("input", { class: "deck-title", placeholder: "Deck title (first slide)", "aria-label": "Deck title" });
+    // the title reads as the board's heading and is typed in place; it is the first slide
+    const title = el("input", { class: "deck-title", placeholder: "Deck title", "aria-label": "Deck title (the first slide)" });
     const subtitle = el("input", { class: "deck-subtitle", placeholder: "Subtitle, date, or audience", "aria-label": "Subtitle" });
     title.addEventListener("input", () => { deck.title = title.value; save({ redraw: false }); });
     subtitle.addEventListener("input", () => { deck.subtitle = subtitle.value; save({ redraw: false }); });
@@ -748,19 +743,24 @@ import { esc } from "./lib/format.js";
     const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); if (open) prepareSoon(); } });
     // the file is built as the finger comes down on Download (or a pointer comes over it, or it takes the focus), so the tap finds it ready
     for (const ev of ["pointerdown", "pointerenter", "focus"]) download.addEventListener(ev, () => prepareSoon());
-    const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
+    const moreRow = el("div", { class: "deck-actions secondary" }, [
       think, md,
       el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); did("Section added, at the end."); } }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
-      el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
+      el("button", { type: "button", class: "text-btn how-to", text: "How to highlight and link", "aria-expanded": "false", onclick: (e) => { howTo = !howTo; e.currentTarget.setAttribute("aria-expanded", String(howTo)); syncHead(); if (howTo) ui.hint.scrollIntoView({ block: "nearest" }); } }),
       el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => replaceDeck(blank(), { what: "Start a new deck", done: "A new, empty deck." }) }),
     ]);
     const undoBtn = el("button", { type: "button", class: "text-btn board-undo", text: "Undo", title: "Take back the last change to the deck", hidden: true, onclick: () => { if (undo()) GL().toast("Undone."); } });
+    // My decks: in the head, where it can be seen, rather than a third of the way down More
+    const mine = el("div", { class: "deck-actions head" }, [undoBtn, el("button", { type: "button", class: "text-btn my-decks", text: "My decks", onclick: () => showSaved() })]);
+    const top = el("div", { class: "board-top" }, [el("div", { class: "board-names" }, [title, subtitle]), mine]);
+    // More holds the themes and the rest: the head is the title, Download, Present
+    const moreBox = el("div", { class: "board-more", hidden: true }, [themes, moreRow]);
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
     const thinkBox = el("div", { class: "board-think", hidden: true });
-    const actions = el("div", { class: "board-row" }, [download, present, more, undoBtn]);
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, actions, moreRow, thinkBox]);
+    const actions = el("div", { class: "board-row" }, [download, present, more]);
+    const head = el("div", { class: "board-head" }, [top, actions, moreBox, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -781,7 +781,7 @@ import { esc } from "./lib/format.js";
       swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
       cancelLink();
     }, true);
-    ui = { title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
+    ui = { title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow: moreBox, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
@@ -844,7 +844,8 @@ import { esc } from "./lib/format.js";
     ui.md.disabled = empty;
     syncDownloadButton();
     syncBanner();
-    ui.hint.hidden = empty;
+    // how to highlight and link is said in the empty state; after that it is under More, on request
+    ui.hint.hidden = empty || !howTo;
     ui.hint.textContent = empty ? ""
       : count() === 1 ? "To highlight: tap the first and last word of a phrase. To link: add another passage, then drag the dot at the end of a highlight onto a phrase there."
       : "To highlight: tap the first and last word of a phrase. To link: drag the dot at the end of a highlight onto a phrase in another passage. To name a link: tap its number.";
@@ -943,6 +944,7 @@ import { esc } from "./lib/format.js";
       const savedAny = savedDecks.length > 0;
       cards.append(el("div", { class: "board-empty" }, [
         el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
+        el("p", { class: "then", text: "Then, here: tap the first and last word of a phrase to highlight it, and drag the dot at its end onto a phrase in another passage to link the two." }),
         naming || deck.title || deck.subtitle ? null : el("button", { type: "button", class: "text-btn", text: "Name this deck", onclick: () => { naming = true; draw(); ui.title.focus(); } }),
         savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
         // the row with Undo is hidden on an empty deck, and the deck may have just been emptied
