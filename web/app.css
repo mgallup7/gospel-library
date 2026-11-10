@@ -446,8 +446,11 @@ main {
 .size-menu .menu-extra { display: none; }
 .reader-bar.compact .size-btns { display: none; }
 .reader-bar.compact .size-pop { display: inline-flex; }
-.reader-bar.tight .matchnav > span:first-child { display: none; }
-.reader-bar.tight .matchnav { padding-left: 4px; }
+/* the match stepper keeps its count in words: where the bar cannot hold it whole it has a strip
+   of its own under the bar (app.js placeMatchNav), always so on a phone */
+.match-strip { position: sticky; z-index: 4; display: flex; justify-content: flex-end; padding: 4px calc(8px + var(--safe-right)) 4px calc(8px + var(--safe-left)); background: var(--paper); border-bottom: 1px solid var(--rule); font-family: var(--sans); }
+.match-strip .matchnav { background: none; padding: 0; gap: 4px; }
+.match-strip .matchnav > span:first-child { margin-right: 6px; }
 .reader-bar.tight .pane-switch button { padding: 0 8px; }
 .reader-bar.tighter .bar-extra { display: none; }
 .reader-bar.tighter .size-menu .menu-extra { display: flex; }
@@ -544,8 +547,6 @@ main {
 /* On a phone the reader bar keeps Back, the name and the arrows; the rest folds into its menu
    (app.js fitReaderBar), and the four places stay along the bottom. */
 @media (max-width: 759px), (max-height: 499px) {
-  .reader-bar .matchnav { margin-left: auto; padding-left: 4px; flex: none; }
-  .reader-bar .matchnav > span:first-child { display: none; } /* the arrows alone: the room is the chapter's name's */
   .doc { padding-bottom: 24px; }
 }
 

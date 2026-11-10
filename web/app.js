@@ -2761,8 +2761,29 @@ import { esc, mb } from "./lib/format.js";
     let i = -1;
     const label = el("span", { text: `${count} match${count === 1 ? "" : "es"}` });
     const go = (d) => { i = (i + d + marks.length) % marks.length; marks[i].scrollIntoView({ block: "center" }); label.textContent = `${i + 1} of ${count}`; };
-    const nav = el("span", { class: "matchnav" }, [label, el("button", { text: "↑", "aria-label": "Previous match", onclick: () => go(-1) }), el("button", { text: "↓", "aria-label": "Next match", onclick: () => go(1) })]);
-    $(".reader-bar .spacer", readerPane).replaceWith(nav, el("div", { class: "spacer" }));
+    const nav = el("span", { class: "matchnav", role: "group", "aria-label": "Matches in this page" }, [label, el("button", { text: "↑", "aria-label": "Previous match", title: "Previous match", onclick: () => go(-1) }), el("button", { text: "↓", "aria-label": "Next match", title: "Next match", onclick: () => go(1) })]);
+    $(".reader-bar .spacer", readerPane).before(nav);
+    placeMatchNav();
+  }
+  // Where the match stepper sits: in the bar while the bar has room for it with its words, and
+  // otherwise (always on a phone) in a slim strip of its own under the bar, so it never takes
+  // the place of the chapter arrows or the lamp and is never a pair of arrows with no name.
+  // Asked again when the window changes shape or something joins the bar.
+  function placeMatchNav() {
+    const bar = $(".reader-bar", readerPane), nav = $(".matchnav", readerPane);
+    let strip = $(".match-strip", readerPane);
+    if (!bar || !nav) { strip?.remove(); return; }
+    const toStrip = () => {
+      if (!strip) { strip = el("div", { class: "match-strip" }); bar.after(strip); }
+      if (nav.parentElement !== strip) strip.append(nav);
+      strip.style.top = bar.offsetHeight + "px"; // it holds its place under the bar as the page scrolls
+    };
+    if (wide()) {
+      if (nav.parentElement !== bar) $(".spacer", bar)?.before(nav);
+  window.addEventListener("resize", placeMatchNav);
+      fitReaderBar(bar);
+      if (bar.classList.contains("tight")) { toStrip(); fitReaderBar(bar); } else if (strip) { strip.remove(); strip = null; }
+    } else toStrip();
   }
 
   function resize(delta) {
@@ -2839,7 +2860,16 @@ import { esc, mb } from "./lib/format.js";
   window.addEventListener("resize", fitReaderBars);
   // what joins the bar after it is drawn (the match count, the Hebrew button, the switch) refits it
   // (and a page drawn over a selection takes its bar with it: the pane's classes follow)
-  const barWatch = new MutationObserver((records) => { if (records.some((r) => r.target === readerPane)) syncPanes(); for (const bar of new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean))) fitReaderBar(bar); });
+  const barWatch = new MutationObserver((all) => {
+    // the match stepper moving between the bar and its strip is this code's own doing, not news
+    const own = (n) => n.classList?.contains("matchnav") || n.classList?.contains("match-strip");
+    const records = all.filter((r) => ![...r.addedNodes, ...r.removedNodes].every(own));
+    if (!records.length) return;
+    if (records.some((r) => r.target === readerPane)) syncPanes();
+    const bars = new Set(records.map((r) => r.target.closest?.(".reader-bar")).filter(Boolean));
+    for (const bar of bars) fitReaderBar(bar);
+    if (bars.size && $(".matchnav", readerPane)) placeMatchNav();
+  });
   barWatch.observe(readerPane, { childList: true, subtree: true });
   // The reading size: the one chosen here, or else the one the system asks for (iOS Larger Text)
   // The system size is read again whenever the app comes back to the front, since Larger Text may
