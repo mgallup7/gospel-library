@@ -943,6 +943,8 @@ import { esc, mb } from "./lib/format.js";
     }
     if (data.original) { const line = window.Original?.resultsHeader(data.original); if (line) frag.append(line); }
     if (data.original_hint) { const line = window.Original?.hintLine(data.original_hint); if (line) frag.append(line); }
+    // an English word on its own: the Hebrew and Greek most often read that way, filled in when the engine answers
+    if (!data.original && !data.original_hint && !data.typeahead) { const slot = el("div", { class: "orig-behind-slot" }); frag.append(slot); window.Original?.offerFor(data.query, slot); }
     if (data.titles && data.titles.length) {
       frag.append(el("div", { class: "group-title", text: "By title" }));
       for (const d of data.titles) frag.append(docRow(d));

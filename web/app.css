@@ -1262,6 +1262,12 @@ a.toast-action { display: inline-flex; align-items: center; }
 .ow-type { color: var(--ink-2); }
 .ow-def { color: var(--ink); font-size: 14px; max-height: 14em; overflow-y: auto; padding-right: 4px; }
 .ow-def .ore { color: var(--ink-2); }
+/* the lexicon's numbered senses as an outline: the marks are the lexicon's own, so the list draws none; each depth sets in a step */
+.ow-outline { list-style: none; margin: .45em 0; padding: 0; }
+.ow-outline li { margin: .3em 0; padding-left: 2.1em; text-indent: -2.1em; }
+.ow-outline .ow-lv1 { margin-left: 1.15em; } .ow-outline .ow-lv2 { margin-left: 2.3em; } .ow-outline .ow-lv3 { margin-left: 3.45em; } .ow-outline .ow-lv4 { margin-left: 4.6em; }
+.ow-outline .ow-mark { display: inline-block; min-width: 2.1em; text-indent: 0; }
+.orig-behind-slot:empty { display: none; }
 .ow-def a.oref { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
 .ow-fine { color: var(--ink-2); font-size: 13px; }
 .ow-credit { color: var(--ink-3); font-size: 12px; margin-top: 10px; }

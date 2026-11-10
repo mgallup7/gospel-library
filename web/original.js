@@ -304,9 +304,9 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf } from "./lib/step.js
     const { lead, items, tail } = outlineOf(html);
     if (lead) fill(lead, box);
     if (items.length) {
-      box.append(el("ol", { class: "ow-outline", style: "list-style:none;margin:.45em 0;padding:0" }, items.map((it) =>
-        fill(it.html, el("li", { style: `margin:.3em 0 .3em ${(it.level * 1.15).toFixed(2)}em;padding-left:2.1em;text-indent:-2.1em` }, [
-          el("b", { class: "ow-mark", style: "display:inline-block;min-width:2.1em;text-indent:0", text: it.mark }),
+      box.append(el("ol", { class: "ow-outline" }, items.map((it) =>
+        fill(it.html, el("li", { class: `ow-lv${Math.max(0, Math.min(4, it.level | 0))}` }, [
+          el("b", { class: "ow-mark", text: it.mark }),
         ])))));
       if (tail) box.append(fill(tail, el("div", { class: "ow-def-tail" })));
     }

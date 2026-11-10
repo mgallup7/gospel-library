@@ -127,6 +127,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Codex, and the Greek of NA28 together with the Textus Receptus and the
   other editions, each word tagged and glossed), used under CC BY 4.0; see
   "A word on the content".
+- Behind this word: search one English word ("faith") and a line under the
+  search names the Hebrew and Greek words most often read that way, with how
+  often; tap one for its sheet.
 - Results are verses and paragraphs with the matches highlighted; open one and
   the whole chapter or talk is there with footnotes, speaker, session, and
   previous/next.
