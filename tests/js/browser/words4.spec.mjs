@@ -23,7 +23,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
         await page.waitForFunction((t) => document.querySelector("#reader .doc h1")?.textContent.includes(t), title, { timeout: 15000 });
         if (!(await page.waitForSelector("#reader .orig .ow", { timeout: 3000 }).catch(() => null))) {
           const top = await page.$("#reader .reader-bar .orig-btn");
-          if (top && await top.isVisible()) await top.click(); else await page.click(`#reader .reader-foot .foot-btn[aria-label='${lang}']`);
+          if (top && await top.isVisible()) await top.click(); else { await page.click("#reader .reader-bar .size-pop-btn"); await page.click("#reader .reader-bar .size-menu .menu-orig"); } // in the bar's menu on a phone
         }
         await page.waitForSelector("#reader .orig .ow", { timeout: 15000 });
       };
@@ -78,20 +78,16 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
         const r = await behind(none);
         check(r && r.words.length === 0, `originalsFor ${JSON.stringify(none)} should offer nothing: ${names(r)}`);
       }
-      // the line, in a container of the caller's, and the word's sheet from it
+      // the line under the search, where renderResults puts it, and the word's sheet from it
+      if (!(await page.isVisible("#q"))) { await page.click("#searchTab"); await page.waitForTimeout(400); }
       await page.fill("#q", "faith"); await page.press("#q", "Enter");
-      await page.waitForSelector("#list .hit", { timeout: 15000 });
-      await page.evaluate(async () => {
-        const list = document.querySelector("#list");
-        const slot = document.createElement("div"); slot.id = "behindTest";
-        (list.querySelector(".smart-line") || list.firstElementChild).after(slot);
-        await window.Original.offerFor("faith", slot);
-        await window.Original.offerFor("faith", document.createElement("div")); // off the page: nothing, no error
-      });
-      const line = await page.textContent("#behindTest .orig-behind");
+      await page.waitForSelector("#list .orig-behind-slot .orig-behind", { timeout: 15000 });
+      check(await page.locator("#list .orig-behind").count() === 1, "one search should draw the offer once");
+      await page.evaluate(() => window.Original.offerFor("faith", document.createElement("div"))); // off the page: nothing, no error
+      const line = await page.textContent("#list .orig-behind-slot .orig-behind");
       check(line === "Behind this word: pistis (Greek, 241),pistos (Greek, 49),oligopistos (Greek, 5),emet (Hebrew, 73),emunah (Hebrew, 46),chasid (Hebrew, 33)", `the offer: ${line}`);
       await page.screenshot({ path: `${OUT}${name}-03-behind.png` });
-      await page.click("#behindTest button:has-text('emunah')");
+      await page.click("#list .orig-behind-slot button:has-text('emunah')");
       await page.waitForSelector("#sheet:not([hidden]) .ow-section", { timeout: 8000 });
       await page.waitForTimeout(400);
       const sheetText = await page.textContent("#sheet .sheet-body");

@@ -678,7 +678,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       findings.sync();
       btn.textContent = added ? `On the deck${title ? ` under “${title}”` : ""}` : "Already on the deck";
       btn.disabled = true;
-      GL().toast(added ? `${added} ${added === 1 ? "passage" : "passages"} on the deck.` : "Already on the deck.");
+      if (!(added && window.Deck.saysWhere?.())) GL().toast(added ? `${added} ${added === 1 ? "passage" : "passages"} on the deck.` : "Already on the deck.");
       if (GL().wide) window.Deck.showBoard();
     } });
     toolsEl.prepend(btn);

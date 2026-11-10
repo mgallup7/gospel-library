@@ -2427,6 +2427,7 @@ import { esc, mb } from "./lib/format.js";
   });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
   function deckToast(added, text) {
+    if (added && window.Deck?.saysWhere?.()) return; // the deck says where it went, with an Undo of its own: one toast, not two
     const ids = added ? window.Deck?.lastAdded?.() || [] : [];
     if (!ids.length) { toast(added === 0 ? "Already on the deck." : text); return; }
     toast(text, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); } });

@@ -121,7 +121,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     g = await handle("c1");
     await pointer.down(g.x, g.y);
     await glide(g.x, g.y, g.y + 180);
-    if (viewport.width >= 760) { await pointer.move(200, g.y + 180); await pointer.move(180, g.y + 180); }
+    if (viewport.width >= 760) { const left = await page.evaluate(() => document.querySelector(".board-canvas").getBoundingClientRect().left); await pointer.move(left - 40, g.y + 180); await pointer.move(left - 60, g.y + 180); }
     else { const box = await page.evaluate(() => document.querySelector("header.bar")?.getBoundingClientRect().bottom || 0); await glide(g.x, g.y + 180, Math.max(2, box - 70)); }
     await page.waitForTimeout(80);
     const outNow = await page.evaluate(() => document.querySelector(".bcard[data-id='c1']").classList.contains("out"));

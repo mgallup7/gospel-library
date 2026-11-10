@@ -2914,6 +2914,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
 
   window.Deck = {
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
+    saysWhere: () => !!placed, // this turn's add will say where it landed in a toast of its own: the caller keeps its plain one back
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
     // ready: the stored deck has arrived. flush: write now rather than a moment later; its promise
     // settles when the database has the deck, so a reload the app starts itself can await it.

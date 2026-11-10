@@ -999,33 +999,33 @@ a.toast-action { display: inline-flex; align-items: center; }
 .deck-count { display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 600 11px/18px var(--sans); text-align: center; font-variant-numeric: tabular-nums; }
 .deck { padding: 10px 16px 30px; }
 .deck-title, .deck-subtitle { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--r-ctl); background: var(--paper); color: var(--ink); -webkit-appearance: none; }
-.deck-title { font: 600 20px var(--serif); margin-bottom: 6px; }
-.deck-subtitle { font: 16px var(--sans); margin-bottom: 12px; }
+.deck-title { font: 600 var(--ui-20) var(--serif); margin-bottom: 6px; }
+.deck-subtitle { font: var(--ui-16) var(--sans); margin-bottom: 12px; }
 .themes { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .theme { display: grid; gap: 4px; justify-items: center; }
 .theme .swatch { width: 72px; height: 42px; border-radius: var(--r-ctl); border: 1px solid; display: flex; align-items: center; justify-content: center; gap: 6px; position: relative; }
 .theme .swatch b { font: 600 16px var(--serif); }
 .theme .swatch i { position: absolute; left: 10px; bottom: 7px; width: 18px; height: 3px; border-radius: 2px; }
 .theme.on .swatch { outline: 2px solid var(--accent); outline-offset: 2px; }
-.theme-name { font-size: 12px; color: var(--ink-2); }
+.theme-name { font-size: var(--ui-12); color: var(--ink-2); }
 .deck-item { display: flex; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
 .deck-item .body { flex: 1; min-width: 0; text-align: left; }
-.deck-item .cite-edit { padding: 4px 6px; color: var(--accent); font: 600 14px var(--sans); }
-.deck-item .where { font-size: 12px; color: var(--ink-3); padding: 0 6px; }
-.deck-item .preview { display: block; width: 100%; text-align: left; padding: 2px 6px; font: 15px/1.4 var(--serif); color: var(--ink-2); }
+.deck-item .cite-edit { padding: 4px 6px; color: var(--accent); font: 600 var(--ui-14) var(--sans); }
+.deck-item .where { font-size: var(--ui-12); color: var(--ink-3); padding: 0 6px; }
+.deck-item .preview { display: block; width: 100%; text-align: left; padding: 2px 6px; font: var(--ui-15)/1.4 var(--serif); color: var(--ink-2); }
 .deck-item .tools { display: flex; gap: 4px; align-items: center; }
-.deck-item .tools button { min-width: 44px; height: 44px; padding: 0 10px; border-radius: var(--r-ctl); color: var(--ink-2); background: var(--chrome); font: 14px var(--sans); }
+.deck-item .tools button { min-width: 44px; height: 44px; padding: 0 10px; border-radius: var(--r-ctl); color: var(--ink-2); background: var(--chrome); font: var(--ui-14) var(--sans); }
 .deck-item .tools .delete { font-size: 20px; }
 .deck-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 10px 0 2px; }
 .deck-actions.secondary { margin-top: 2px; }
-.deck-status { font-size: 13px; color: var(--ink-2); min-height: 1.3em; margin-top: 8px; }
-.deck-hint { font-size: 13px; color: var(--ink-3); line-height: 1.45; margin-top: 10px; }
+.deck-status { font-size: var(--ui-13); color: var(--ink-2); min-height: 1.3em; margin-top: 8px; }
+.deck-hint { font-size: var(--ui-13); color: var(--ink-3); line-height: 1.45; margin-top: 10px; }
 /* the board's head: the deck's title as a heading typed in place, My decks beside it */
 .board-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
 .board-names { flex: 1; min-width: 0; }
 .board-names .deck-title, .board-names .deck-subtitle { display: block; padding: 2px 0; border: 0; border-radius: 0; background: transparent; box-shadow: 0 1px 0 transparent; }
-.board-names .deck-title { font: 700 24px/1.25 var(--serif); letter-spacing: -.01em; margin: 0; }
-.board-names .deck-subtitle { font: 15px/1.3 var(--sans); color: var(--ink-2); margin: 0; }
+.board-names .deck-title { font: 700 calc(var(--ui-20) + 4px)/1.25 var(--serif); letter-spacing: -.01em; margin: 0; }
+.board-names .deck-subtitle { font: var(--ui-15)/1.3 var(--sans); color: var(--ink-2); margin: 0; }
 .board-names .deck-title:focus, .board-names .deck-subtitle:focus { outline: none; box-shadow: 0 1px 0 var(--accent); }
 .board-names .deck-title::placeholder, .board-names .deck-subtitle::placeholder { color: var(--ink-3); }
 .deck-actions.head { flex: none; margin: -4px -8px 0 0; }
@@ -1045,7 +1045,7 @@ a.toast-action { display: inline-flex; align-items: center; }
   body[data-tab="deck"] #panel > .reader-bar .crumb { display: none; } /* the head above says Deck */
   #panel > .reader-bar.idle { display: none; } /* a bar with nothing to offer */
 }
-.chip.small { padding: 4px 10px; font-size: 13px; }
+.chip.small { padding: 4px 10px; font-size: var(--ui-13); }
 .stage-text .vn { font-family: var(--sans); font-size: .5em; vertical-align: super; opacity: .6; margin-right: .1em; }
 .stage-text mark { background: transparent; color: #c99a2e; font-weight: 600; }
 .stage:not(.dark) .stage-text mark { color: #8a5a00; }
@@ -1065,21 +1065,21 @@ a.toast-action { display: inline-flex; align-items: center; }
 .board .theme .swatch { width: 52px; height: 32px; }
 .board .theme .swatch b { font-size: 13px; }
 .board .theme .swatch i { left: 7px; bottom: 5px; width: 14px; }
-.board .theme-name { font-size: 11px; }
+.board .theme-name { font-size: var(--ui-11); }
 .board .deck-hint { margin: 14px 0 0; }
-.board-think { margin: 8px 0 4px; padding: 10px 12px; border-radius: var(--r-card); background: var(--chrome); border: 1px solid var(--rule); font-family: var(--sans); font-size: 14px; }
+.board-think { margin: 8px 0 4px; padding: 10px 12px; border-radius: var(--r-card); background: var(--chrome); border: 1px solid var(--rule); font-family: var(--sans); font-size: var(--ui-14); }
 .board-think .think-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
-.board-think .think-status { font-size: 13px; color: var(--ink-2); line-height: 1.4; min-height: 1.4em; }
+.board-think .think-status { font-size: var(--ui-13); color: var(--ink-2); line-height: 1.4; min-height: 1.4em; }
 .board-think .think-list { display: grid; gap: 6px; margin-top: 6px; }
 .board-think .think-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: var(--r-ctl); background: var(--paper); line-height: 1.4; }
 .board-think .think-row > span { flex: 1; min-width: 0; }
-.board-think .think-row .why { color: var(--ink-3); font-size: 12px; }
+.board-think .think-row .why { color: var(--ink-3); font-size: var(--ui-12); }
 .board-think .think-row .chip { flex: none; }
 .board-think .think-row .chip:disabled { opacity: .6; }
 .stage-caption { font-size: .5em; font-style: italic; opacity: .85; text-align: center; margin-top: 2vmin; line-height: 1.35; }
 /* a link in progress: the banner has its own room between the board's head and the cards (it never covers the first card) and sticks under the pane's bar, so Cancel is in reach however far the cards have scrolled; the help shown during a drag has the same room */
 .board-banner { position: sticky; top: 6px; z-index: 7; margin: 0 0 8px; }
-.board-banner .bb { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 2px 4px 2px 12px; border-radius: var(--r-card); background: var(--target); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); box-shadow: 0 6px 18px rgba(0,0,0,.2); font: 14px/1.35 var(--sans); color: var(--ink); }
+.board-banner .bb { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 2px 4px 2px 12px; border-radius: var(--r-card); background: var(--target); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); box-shadow: 0 6px 18px rgba(0,0,0,.2); font: var(--ui-14)/1.35 var(--sans); color: var(--ink); }
 .board-banner .bb span { flex: 1; min-width: 0; padding: 6px 0; }
 .board-banner .bb .text-btn { flex: none; height: 44px; }
 .bcard.link-src { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -1113,13 +1113,13 @@ a.toast-action { display: inline-flex; align-items: center; }
 .bcard.drop { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bcard .bc-head { display: flex; align-items: flex-start; gap: 8px; }
 .bcard .bc-meta { flex: 1; min-width: 0; }
-.bcard .bc-kind { font-size: 12px; color: var(--ink-3); margin-bottom: 2px; }
-.bcard .bc-cite { font: 600 14px var(--sans); color: var(--accent); }
+.bcard .bc-kind { font-size: var(--ui-12); color: var(--ink-3); margin-bottom: 2px; }
+.bcard .bc-cite { font: 600 var(--ui-14) var(--sans); color: var(--accent); }
 /* the citation opens its page: a chevron says so, and the button reaches a 44px tap without moving the text */
 .bcard button.bc-cite { position: relative; text-align: left; }
 .bcard button.bc-cite::after { content: "\203A"; margin-left: 5px; font-weight: 400; opacity: .7; }
 .bcard button.bc-cite::before { content: ""; position: absolute; inset: -12px -8px; }
-.bcard .bc-src { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+.bcard .bc-src { font-size: var(--ui-12); color: var(--ink-3); margin-top: 6px; }
 /* the head of a card: a handle to drag it by, and one "more" button; both are quiet marks with a 44px tap */
 .bcard .bc-tools { display: flex; gap: 2px; }
 .bcard .bc-grip, .bcard .bc-more { position: relative; flex: none; width: 28px; height: 28px; border-radius: 8px; color: var(--ink-3); background: transparent; display: inline-flex; align-items: center; justify-content: center; }
@@ -1129,7 +1129,7 @@ a.toast-action { display: inline-flex; align-items: center; }
 .bcard .bc-more[aria-expanded="true"] { background: var(--chrome-2); color: var(--ink); }
 @media (hover: hover) { .bcard .bc-grip:hover, .bcard .bc-more:hover { background: var(--chrome-2); color: var(--ink-2); } }
 .bcard .bc-menu { position: absolute; z-index: 8; top: 40px; right: 10px; display: grid; min-width: 210px; padding: 6px; border-radius: 12px; background: var(--chrome); border: 1px solid var(--rule); box-shadow: 0 10px 30px rgba(0,0,0,.18); font-family: var(--sans); }
-.bcard .bc-menu button { height: 44px; padding: 0 12px; border-radius: 8px; text-align: left; font: 15px var(--sans); color: var(--ink); }
+.bcard .bc-menu button { height: 44px; padding: 0 12px; border-radius: 8px; text-align: left; font: var(--ui-15) var(--sans); color: var(--ink); }
 .bcard .bc-menu button:disabled { opacity: .35; }
 .bcard .bc-menu button.danger { color: var(--danger); }
 @media (hover: hover) { .bcard .bc-menu button:not(:disabled):hover { background: var(--chrome-2); } }
@@ -1161,27 +1161,27 @@ a.toast-action { display: inline-flex; align-items: center; }
 .port.src, .port.drop { transform: scale(1.2); }
 .port.drop { background: var(--paper); }
 .port.card-port { margin: 4px 0 0; flex: none; }
-.bcard .bc-hint { font: 13px var(--sans); color: var(--ink-2); margin-top: 6px; }
-.bcard .hl-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-family: var(--sans); font-size: 13px; }
+.bcard .bc-hint { font: var(--ui-13) var(--sans); color: var(--ink-2); margin-top: 6px; }
+.bcard .hl-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-family: var(--sans); font-size: var(--ui-13); }
 .bcard .hl-tools .ph { color: var(--ink-2); font-style: italic; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bcard .bc-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .bcard .bc-links .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sans); }
-.bcard.section input { width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-ctl); background: transparent; color: var(--ink); font: 600 17px var(--serif); -webkit-appearance: none; }
+.bcard.section input { width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-ctl); background: transparent; color: var(--ink); font: 600 var(--ui-17) var(--serif); -webkit-appearance: none; }
 .bcard.section input:focus { border-color: var(--rule); background: var(--paper); }
 /* question and note cards: the teacher's own words as slides; speaker notes under any card */
 .bcard.question { border-left: 4px solid var(--accent); }
 .bcard.selected { border-color: color-mix(in srgb, var(--accent) 55%, var(--rule)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
 .board-foot { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
-.board-foot .foot-add { min-height: 44px; padding: 0 16px; border: 1px dashed var(--rule); border-radius: var(--r-card); color: var(--accent); background: transparent; font: 600 15px var(--sans); }
+.board-foot .foot-add { min-height: 44px; padding: 0 16px; border: 1px dashed var(--rule); border-radius: var(--r-card); color: var(--accent); background: transparent; font: 600 var(--ui-15) var(--sans); }
 .board-foot .foot-add:active { background: var(--chrome); }
 .bcard.note { background: var(--chrome); }
-.bcard .bc-card-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-ctl); background: transparent; color: var(--ink); font: 17px/1.45 var(--serif); user-select: text; -webkit-user-select: text; }
+.bcard .bc-card-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-ctl); background: transparent; color: var(--ink); font: var(--ui-17)/1.45 var(--serif); user-select: text; -webkit-user-select: text; }
 .bcard.question .bc-card-text { font-weight: 600; }
 .bcard .bc-card-text:focus { border-color: var(--rule); background: var(--paper); outline: none; }
 .bc-notes { margin-top: 6px; }
-.bc-notes .notes-toggle { height: 28px; padding: 0 6px; font-size: 12px; color: var(--ink-3); }
+.bc-notes .notes-toggle { height: 28px; padding: 0 6px; font-size: var(--ui-12); color: var(--ink-3); }
 .bc-notes.has .notes-toggle { color: var(--accent); }
-.bc-notes-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: var(--r-ctl); background: var(--paper); color: var(--ink); font: 16px/1.45 var(--sans); user-select: text; -webkit-user-select: text; }
+.bc-notes-text { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: var(--r-ctl); background: var(--paper); color: var(--ink); font: var(--ui-16)/1.45 var(--sans); user-select: text; -webkit-user-select: text; }
 .stage-body.is-question .stage-text { text-align: center; font-weight: 600; }
 /* A question as the PowerPoint draws it: a small kicker with a short rule at the top left, and a rule under the words */
 .stage { --stage-rule-c: #8a5a00; }
@@ -1195,7 +1195,7 @@ a.toast-action { display: inline-flex; align-items: center; }
 .stage.blank .stage-kicker { visibility: hidden; }
 .stage-body.is-question .stage-text::after { content: ""; display: block; width: 9vmin; height: .45vmin; margin: .7em auto 0; background: var(--stage-rule-c); }
 .stage-body.is-note .stage-text { font-family: var(--sans); font-weight: 500; }
-.board-empty { padding: 20px 4px 26px; font: 16px/1.5 var(--serif); color: var(--ink-2); }
+.board-empty { padding: 20px 4px 26px; font: var(--ui-16)/1.5 var(--serif); color: var(--ink-2); }
 .board-empty p { margin: 0; max-width: 34em; }
 .board-empty .text-btn { margin: 10px 0 0 -12px; font-family: var(--sans); }
 /* "Clear the deck?" when a new search or question starts */
@@ -1207,18 +1207,18 @@ a.toast-action { display: inline-flex; align-items: center; }
   box-shadow: 0 16px 48px rgba(0,0,0,.28); font-family: var(--sans);
 }
 @media (min-width: 760px) and (min-height: 500px) { .dsheet { bottom: auto; top: 50%; transform: translate(-50%, -50%); padding-bottom: 18px; } }
-.dsheet h2 { font: 600 19px/1.3 var(--serif); margin: 0; }
-.dsheet .lede { font-size: 14px; line-height: 1.45; color: var(--ink-2); margin: 0 0 6px; }
+.dsheet h2 { font: 600 calc(var(--ui-20) - 1px)/1.3 var(--serif); margin: 0; }
+.dsheet .lede { font-size: var(--ui-14); line-height: 1.45; color: var(--ink-2); margin: 0 0 6px; }
 .dsheet .primary { height: 44px; padding: 0 16px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .dsheet .text-btn { height: 44px; text-align: left; justify-content: flex-start; }
 .dsheet .text-btn.danger { color: var(--danger); }
 .dsheet-save { display: grid; gap: 6px; padding: 8px 0 4px; }
-.dsheet-save label { font-size: 13px; color: var(--ink-2); }
+.dsheet-save label { font-size: var(--ui-13); color: var(--ink-2); }
 .dsheet-save .deck-subtitle { margin: 0; }
 .bpop { position: absolute; z-index: 6; padding: 12px; border-radius: var(--r-card); background: var(--chrome); border: 1px solid var(--rule); box-shadow: 0 10px 30px rgba(0,0,0,.18); font-family: var(--sans); }
-.bpop .bpop-t { font: 15px/1.4 var(--serif); margin-bottom: 2px; }
+.bpop .bpop-t { font: var(--ui-15)/1.4 var(--serif); margin-bottom: 2px; }
 .bpop .bpop-t .arrow { color: var(--accent); padding: 0 6px; }
-.bpop .bpop-s { font-size: 12px; color: var(--ink-3); margin-bottom: 8px; }
+.bpop .bpop-s { font-size: var(--ui-12); color: var(--ink-3); margin-bottom: 8px; }
 .bpop .deck-subtitle { margin-bottom: 6px; }
 .bpop .shelf { padding: 0; margin: 4px 0 6px; }
 .bpop .deck-actions { margin: 4px 0 0; }
