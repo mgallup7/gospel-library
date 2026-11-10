@@ -2396,7 +2396,21 @@ import { esc, mb } from "./lib/format.js";
     const extra = action && Array.isArray(more) ? more.filter((a) => a && a.action) : [];
     t.className = "toast show" + (action ? " has-action" : "") + (extra.length ? " has-more" : "");
     t.replaceChildren(...[el("span", { text }), action ? control({ action, href }, true) : null, ...extra.map((a) => control(a, false))].filter(Boolean));
+    placeToast(); requestAnimationFrame(placeToast); // again once the tap that raised it has redrawn the page
     toastArm(action ? (href || extra.length ? 8000 : 5000) : 1800);
+  }
+  // The toast never lies on the tab bar, the selection bar or Ask's box: it sits just above the
+  // highest of whichever of them holds the bottom of the screen at that moment.
+  function placeToast() {
+    if (!toastEl) return;
+    const vh = window.innerHeight;
+    let top = vh;
+    for (const n of [wide() ? null : $("#tabs"), $(".select-bar", readerPane), listPane.querySelector(".ask-dock")]) {
+      if (!n || n.offsetParent === null && getComputedStyle(n).position !== "fixed") continue;
+      const r = n.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > vh - 120 && r.top < vh) top = Math.min(top, r.top);
+    }
+    toastEl.style.bottom = top < vh ? `${Math.round(vh - top + 12)}px` : "";
   }
   // Outside a field Cmd+Z is always the app's: the toast's Undo while one shows, else the deck's own
   // undo. Left to the browser it would rewind the search box, and a search would run from nowhere.
@@ -2870,8 +2884,12 @@ import { esc, mb } from "./lib/format.js";
     renderStage();
     stage.tabIndex = -1;
     try { stage.focus({ preventScroll: true }); } catch (_) {}
-    if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().catch(() => {});
-    try { navigator.wakeLock?.request("screen").then((l) => { show.lock = l; }).catch(() => {}); } catch (_) {}
+    // Both of these are answered a moment later. If the stage has closed by then (Escape within
+    // half a second), the screen would stay full with nothing on it and the lock would never be
+    // let go: each is undone on arrival unless a stage is still up to use it.
+    const mine = show;
+    if (stage.requestFullscreen && !document.fullscreenElement) stage.requestFullscreen().then(() => { if (!show && document.fullscreenElement === stage) document.exitFullscreen?.().catch(() => {}); }).catch(() => {});
+    try { navigator.wakeLock?.request("screen").then((l) => { if (show === mine) show.lock = l; else l.release?.()?.catch?.(() => {}); }).catch(() => {}); } catch (_) {}
   }
 
   function stopPresenting() {
@@ -3035,8 +3053,27 @@ import { esc, mb } from "./lib/format.js";
   }
   // hideNote takes the sheet down and leaves history alone: for the moment before a move, whose
   // push() takes over the marker. closeSheet is the user closing it: the marker is popped as well.
+  let sheetSlid = false; // the grabber has already slid it away
   function hideNote() {
     const wasOpen = !sheet.hidden;
+    // It leaves by the 200ms slide it came by. The sheet itself is hidden at once, so everything
+    // that asks whether one is open has its answer; what slides away is a copy that nothing can
+    // touch, gone when its animation ends. Not under reduced motion.
+    if (wasOpen && !sheetSlid && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const ghost = sheet.cloneNode(true);
+      ghost.removeAttribute("id");
+      for (const n of ghost.querySelectorAll("[id]")) n.removeAttribute("id");
+      const typed = sheet.querySelectorAll("textarea");
+      ghost.querySelectorAll("textarea").forEach((t, i) => { t.value = typed[i]?.value || ""; });
+      ghost.classList.add("leaving"); ghost.setAttribute("aria-hidden", "true"); ghost.inert = true;
+      const top = sheet.scrollTop;
+      document.body.append(ghost);
+      ghost.scrollTop = top;
+      const gone = () => ghost.remove();
+      ghost.addEventListener("animationend", gone);
+      setTimeout(gone, 320);
+    }
+    sheetSlid = false;
     sheet.hidden = true; $("#scrim")?.remove();
     sheet.classList.remove("page");
     document.body.classList.remove("sheet-page");
@@ -3124,7 +3161,7 @@ import { esc, mb } from "./lib/format.js";
       if (e.type === "pointerup" && (dy > sheet.offsetHeight / 3 || fast) && !keepTyped()) {
         const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
         sheet.style.transform = "translateY(100%)";
-        setTimeout(() => { sheet.style.transform = ""; if (!sheet.hidden) closeSheet(); }, still ? 0 : 180);
+        setTimeout(() => { sheet.style.transform = ""; if (!sheet.hidden) { sheetSlid = true; closeSheet(); } }, still ? 0 : 180);
       } else sheet.style.transform = "";
     };
     grab.addEventListener("pointerup", end);
