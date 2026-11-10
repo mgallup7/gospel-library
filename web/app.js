@@ -183,7 +183,8 @@ import { esc, mb } from "./lib/format.js";
   function nameShelf(name) { shelfNamed = { key: browseKey(state.browse), name }; nameEntry(); }
   function setEntry(patch) {
     const cur = history.state || {};
-    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, ...patch }, "", location.href);
+    // a marker entry (a sheet or the stage over a place) stays one: push() reads the flag to know it is leaving from an overlay
+    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, ...patch }, "", location.href);
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
   function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
@@ -195,8 +196,9 @@ import { esc, mb } from "./lib/format.js";
   function placeNow() { return state.q.trim() ? (state.view === "all" ? "concordance" : "search") : state.browse?.tab || "home"; }
   function push(replace = false) {
     const url = urlFor();
-    if (location.hash === url || (url === "#" && !location.hash)) return;
-    if (replace) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
+    if (location.hash === url || (url === "#" && !location.hash)) { settleOverlay(); return; }
+    // a move from inside a sheet is never a refinement of the entry under it: the marker becomes the new place
+    if (replace && !history.state?.overlay) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
     const fromOverlay = !!history.state?.overlay;
     if (!fromOverlay && (!leavingScroll || Date.now() - leavingScroll.at > 2000)) rememberScroll(); // a reading older than the move it was taken for is stale
     leavingScroll = null;
@@ -224,6 +226,12 @@ import { esc, mb } from "./lib/format.js";
     if (overlay !== kind) return;
     overlay = null;
     if (history.state?.overlay === kind) { poppingOverlay = true; history.back(); }
+  }
+  // A sheet taken down for a move that went nowhere new (the same address): its marker would be a
+  // Back that does nothing, so it goes now.
+  function settleOverlay() {
+    if (!overlay || !history.state?.overlay || !sheet.hidden || !stage.hidden) return;
+    overlay = null; poppingOverlay = true; history.back();
   }
   function backLabel() { return here() > 0 ? history.state?.prev || "Back" : null; }
   function goBack() {
@@ -301,7 +309,10 @@ import { esc, mb } from "./lib/format.js";
     if (!state.ready) return;
     if (poppingOverlay) { poppingOverlay = false; return; } // our own pop of a marker, already closed
     if (overlay && !history.state?.overlay) { // Back with a sheet or the stage open: close it, stay where you are
-      const kind = overlay; overlay = null;
+      const kind = overlay;
+      // a note half typed is not thrown away by Back, any more than by Escape: the sheet stays, and its marker goes back on
+      if (kind === "sheet" && !sheet.hidden && keepTyped()) { history.pushState({ ...(history.state || {}), overlay: "sheet" }, "", location.href); return; }
+      overlay = null;
       if (kind === "sheet") hideNote(); else if (!stage.hidden) stopPresenting();
       return;
     }
@@ -664,7 +675,8 @@ import { esc, mb } from "./lib/format.js";
       // an empty board has nothing to offer fresh results: the right pane goes back to the page (or rests empty)
       if (wide() && paneView === "board" && !window.Deck?.count?.()) panel.page();
       if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow() }); } // a new search from elsewhere is a move; refining one is not
-      if (!typeahead && !more && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
+      // the concordance is every match already: Claude's extra searches belong to the ranked list, and would redraw it over this one
+      if (!typeahead && !more && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
       if (mySeq !== searchSeq) return;
       listPane.replaceChildren(el("div", { class: "status error", text: `Search failed: ${e.message}` }));
@@ -696,7 +708,7 @@ import { esc, mb } from "./lib/format.js";
     if (mySeq !== searchSeq) return;
     $(".widening", listPane)?.remove();
     const added = [...extra.values()].sort((a, b) => b.score - a.score).slice(0, 20).map((x) => x.hit);
-    if (!added.length) return;
+    if (!added.length || state.view === "all" || state.lastSearch !== data) return;
     data.hits = data.hits.concat(added);
     data.extra = added.length;
     data.widened = (plan.queries || []).map((x) => x.q);
@@ -2686,6 +2698,15 @@ import { esc, mb } from "./lib/format.js";
 
   // ------------------------------------------------------------- start ----
   (async () => {
+    // the app puts each place back where it was scrolled (render's restore); the browser's own attempt
+    // comes later on an iPhone and lands at the top
+    try { history.scrollRestoration = "manual"; } catch (_) {}
+    // a reload under a sheet or the stage: nothing is open now, so its marker entry is dropped and
+    // the place under it is where the app starts (the first Back then leaves it, as it should)
+    if (history.state?.overlay) {
+      await new Promise((done) => { const t = setTimeout(done, 800); window.addEventListener("popstate", () => { clearTimeout(t); done(); }, { once: true }); history.back(); });
+      if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href);
+    }
     readUrl();
     if (!history.state || !Number.isInteger(history.state.n)) history.replaceState({ n: 0, label: null, prev: null }, "", location.href);
     syncControls();
