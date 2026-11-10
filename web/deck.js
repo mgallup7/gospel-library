@@ -1701,21 +1701,58 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       if (it.type === "question") { if ((it.text || "").trim()) units.push({ kind: "question", html: esc(it.text.trim()), where: "" }); continue; }
       if (it.type === "note") { if ((it.text || "").trim()) units.push({ kind: "note", html: esc(it.text.trim()).replace(/\n/g, "<br>"), where: "" }); continue; }
       if (it.type === "link") { const u = linkUnit(it); if (u) units.push(u); continue; }
-      for (const chunk of chunksOf(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
+      for (const chunk of pieces(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
     }
     const map = mapUnit();
     if (map) units.push(map);
     GL().startPresentingUnits(units, { theme: { bg: `#${t.bg}`, fg: `#${t.text}`, accent: `#${t.accent}`, muted: `#${t.muted}` } });
   }
+  // The pieces a passage's slides show (chunksOf), each with the place of its words in the
+  // passage: piece.starts[k] is the word index, as highlights count them, of the first word of
+  // its k-th verse piece. A verse too long for one slide is cut into pieces that carry no verse
+  // number after the first, so their place is found in the verse's own text; without it a
+  // highlight landed on the same-numbered words of every continuation, and one in the second
+  // half showed nowhere.
+  function pieces(it, max) {
+    const out = max ? chunksOf(it, max) : chunksOf(it);
+    if (!it.verses || !it.verses.length) return out;
+    const words = (t) => t.split(/\s+/).filter(Boolean).length;
+    const first = [];
+    let n = 0;
+    for (const v of it.verses) { first.push(n); n += words(v.text); }
+    let vi = -1, at = 0, done = 0; // the verse being walked; how far its text and its words have been used
+    for (const c of out) {
+      if (!c.verses) continue;
+      c.starts = c.verses.map((p) => {
+        const whole = it.verses.indexOf(p); // a verse that was not cut is the deck's own object
+        if (whole >= 0) { vi = whole; at = 0; done = 0; return first[whole]; }
+        if (p.n !== null && p.n !== undefined) { vi = it.verses.findIndex((v, j) => j > vi && v.n === p.n); at = 0; done = 0; }
+        const v = it.verses[vi];
+        if (!v) return 0;
+        const pos = v.text.indexOf(p.text, at);
+        const before = pos >= 0 ? words(v.text.slice(0, pos)) : done; // a piece whose spacing was tidied: go on from the last one
+        if (pos >= 0) at = pos + p.text.length;
+        done = before + words(p.text);
+        return first[vi] + before;
+      });
+    }
+    return out;
+  }
+  // Where a piece's k-th verse starts among the passage's words (pieces() says; a piece from
+  // plain chunksOf falls back to its verse number).
+  function verseStart(it, chunk, k) {
+    if (chunk.starts) return chunk.starts[k];
+    const n = chunk.verses[k].n;
+    const idx = it.verses.findIndex((v) => v.n === n);
+    return it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
+  }
   // Chunk text with verse numbers and highlights, as HTML for the stage.
   function chunkHtml(it, chunk) {
     if (chunk.verses && it.verses) {
-      const firstN = chunk.verses.find((v) => v.n !== null)?.n;
-      const idx = it.verses.findIndex((v) => v.n === firstN);
-      const offset = it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
       const parts = [];
-      let i = offset;
-      for (const v of chunk.verses) {
+      let i = 0;
+      for (const [k, v] of chunk.verses.entries()) {
+        i = verseStart(it, chunk, k);
         if (v.n !== null && v.n !== undefined) parts.push(`<span class="vn">${v.n}</span>`);
         for (const w of v.text.split(/\s+/).filter(Boolean)) { parts.push(inHl(it, i) ? `<mark>${esc(w)}</mark>` : esc(w)); i++; }
       }
@@ -2143,12 +2180,12 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const isTalk = it.kind !== "verse";
       const boxH = isTalk && (it.citation || it.where) ? 3.05 : 3.5;
       // Chunks that fit the box at a size the room can read; a passage is cut into more pieces until they do.
-      let chunks = chunksOf(it), limit = MAX_CHARS, fits = [];
+      let chunks = pieces(it), limit = MAX_CHARS, fits = [];
       const measure = (cs) => cs.map((chunk) => fitSize({ runs: passageRuns(it, chunk, t), font: SERIF, boxW: inner, boxH, max: fontSize(chunk.verses ? chunk.verses.reduce((a, v) => a + v.text.length, 0) : chunk.text.length), min: 20, lineSpacing: 1.15, paraSpace: 8 }));
       fits = measure(chunks);
       while (fits.some((f) => !f.fits || f.size < 22) && limit > 140) {
         limit = Math.round(limit * 0.8);
-        const again = chunksOf(it, limit);
+        const again = pieces(it, limit);
         if (again.length <= chunks.length) continue;
         chunks = again; fits = measure(chunks); report.split++;
       }
@@ -2247,10 +2284,9 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const runs = [];
     const hlOpts = { color: t.accent, bold: true };
     if (chunk.verses && it.verses) {
-      const firstN = chunk.verses.find((v) => v.n !== null && v.n !== undefined)?.n;
-      const idx = it.verses.findIndex((v) => v.n === firstN);
-      let i = it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
+      let i = 0;
       chunk.verses.forEach((v, vi) => {
+        i = verseStart(it, chunk, vi);
         if (v.n !== null && v.n !== undefined) runs.push({ text: `${v.n} `, options: { superscript: true, color: t.accent, fontSize: 16, fontFace: SANS, bold: true } });
         const words = v.text.split(/\s+/).filter(Boolean);
         words.forEach((w, wi) => {
