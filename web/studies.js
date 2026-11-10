@@ -35,7 +35,8 @@ import { findReferences } from "./lib/refs.js";
       t.onabort = () => { db.close(); reject(t.error || new Error("the studies database failed")); };
     });
   }
-  const list = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.added - a.added).map(meta); } catch (_) { return []; } };
+  // a database that will not open reads as an empty shelf, and goes in the error log
+  const list = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.added - a.added).map(meta); } catch (err) { window.GLLog?.note("studies.list", err); return []; } };
   const get = (id) => tx("readonly", (s) => s.get(id));
   // the app keeps what it read from the studies (their words for search, the chapters they link to)
   // until this says they changed

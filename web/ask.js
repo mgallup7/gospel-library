@@ -183,9 +183,9 @@ Think with everything you know: the scriptures in their original languages, Chur
     try {
       const stats = await libraryStats();
       let conferences = [];
-      if (stats.talks) { try { conferences = (await GL().api("browse", { slug: "general-conference" })).books || []; } catch (_) {} }
+      if (stats.talks) { try { conferences = (await GL().api("browse", { slug: "general-conference" })).books || []; } catch (err) { logged("ask.inventory conferences", err); } }
       return inventoryText(stats, conferences);
-    } catch (_) { return inventoryText(null); }
+    } catch (err) { logged("ask.inventory", err); return inventoryText(null); }
   }
 
   // His standing instructions: his own words, kept on this device and sent in every mode. The
@@ -258,6 +258,9 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   }
 
   const GL = () => window.GL;
+  // A failure that is caught so the answer can go on is still written to the error log
+  // (lib/log.js), which the owner can copy from settings.
+  const logged = (where, err) => { window.GLLog?.note(where, err); };
   const { el, esc, store } = window.GL || {};
   const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -509,6 +512,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       el("label", { class: "row-check" }, [think, " Let it think before it answers (you see the thinking as it goes; slower, uses more tokens)"]),
       el("label", { class: "row-check" }, [planner, " When you press Return in the search box, let Claude propose a few more searches and add what they find (one quick, cheap call)"]),
       el("label", {}, [el("span", { class: "lb", text: "API key" }), key]),
+      errorLogRow(),
       msg,
       el("div", { class: "ask-actions" }, [
         el("button", { type: "button", class: "primary", text: "Save", onclick: () => {
@@ -539,6 +543,18 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     // the sheet puts the cursor in its first field; here that would raise the keyboard over the
     // settings before anything is read, so the heading takes the focus instead
     setTimeout(() => { try { head.focus({ preventScroll: true }); } catch (_) {} }, 60);
+  }
+
+  // The error log (lib/log.js): what has gone wrong on this device since the app was opened,
+  // copied whole so it can be pasted into a message. It never holds the key or the passphrase.
+  function errorLogRow() {
+    if (!window.GLLog) return null;
+    const n = window.GLLog.count();
+    const said = el("span", { class: "sub", text: n ? `${n} ${n === 1 ? "error" : "errors"} noted since the app was opened. The log never holds your key or passphrase.` : "Nothing has gone wrong since the app was opened." });
+    return el("div", { class: "ask-errlog" }, [
+      el("button", { type: "button", class: "text-btn", text: "Copy error log", onclick: async () => { said.textContent = (await window.GLLog.copy()) ? "Copied. Paste it into a message." : "The log could not be copied here."; } }),
+      " ", said,
+    ]);
   }
 
   // A note Claude proposed with the remember tool: his to save or dismiss, never saved for him.
@@ -617,6 +633,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       try { conclude(await work(c.signal)); }
       catch (err) {
         const stopped = err?.name === "StopError";
+        if (!stopped) logged("ask", err);
         status.classList.toggle("error", !stopped);
         status.textContent = stopped
           ? `Stopped.${registry.list.length ? ` The ${registry.list.length} passages found so far are kept.` : ""}${first && !subject ? " Your question is back in the box." : ""}`
@@ -730,7 +747,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const history = thread.slice(-4).map((m) => `${m.role}: ${m.content.slice(0, 600)}`).join("\n");
     const user = (history ? `Earlier turns:\n${history}\n\n` : "") + `Request: ${text}`;
     let note = "";
-    try { note = scopesNote(await libraryStats()); } catch (_) {}
+    try { note = scopesNote(await libraryStats()); } catch (err) { logged("ask.planner stats", err); }
     // one quick call: if Claude is busy the search box goes on without it, so no retries
     const out = await complete({ model: PLANNER_MODEL, system: PLANNER + (note ? `\n\n${note}` : ""), messages: [{ role: "user", content: user }], max_tokens: 400, stream: false, retries: 0 });
     const m = out.match(/\{[\s\S]*\}/);
@@ -883,15 +900,15 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const day = (ms) => (ms ? isoDay(new Date(ms)) : "");
     const found = [];
     let marks = [], studies = [];
-    try { marks = (await window.Marks?.all()) || []; } catch (_) {}
-    try { studies = ((await window.Studies?.list()) || []).slice(0, 40); } catch (_) {}
+    try { marks = (await window.Marks?.all()) || []; } catch (err) { logged("ask.my_notes marks", err); }
+    try { studies = ((await window.Studies?.list()) || []).slice(0, 40); } catch (err) { logged("ask.my_notes studies", err); }
     for (const m of marks) {
       const sc = words.length ? score(`${m.citation || ""} ${m.title || ""} ${m.text || ""} ${m.note || ""}`) : 1;
       if (sc) found.push({ sc, at: m.updated || 0, mark: m });
     }
     for (const meta of studies) {
       let text = "";
-      try { text = window.Studies.plainText(await window.Studies.get(meta.id)) || ""; } catch (_) { continue; }
+      try { text = window.Studies.plainText(await window.Studies.get(meta.id)) || ""; } catch (err) { logged("ask.my_notes study", err); continue; }
       const sc = words.length ? score(`${meta.title || ""} ${text}`) : 1;
       if (sc) found.push({ sc, at: meta.added || 0, study: meta, text });
     }
@@ -905,7 +922,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         const m = f.mark;
         let cite = m.citation || m.title || "a passage";
         let text = m.text || "";
-        if (m.doc_id && m.pid) { try { const p = await this.fromHit({ doc_id: m.doc_id, pid: m.pid, kind: m.kind }); if (p) { cite = `[${p.n}] ${p.citation || cite}`; text = p.plain || text; } } catch (_) {} }
+        if (m.doc_id && m.pid) { try { const p = await this.fromHit({ doc_id: m.doc_id, pid: m.pid, kind: m.kind }); if (p) { cite = `[${p.n}] ${p.citation || cite}`; text = p.plain || text; } } catch (err) { logged("ask.my_notes passage", err); } }
         if (m.note) this.own.push({ plain: m.note });
         lines.push(`\n${m.note ? "His note" : "His highlight"} on ${cite}${day(m.updated) ? `, ${day(m.updated)}` : ""}${m.color && window.Marks?.COLOR_NAME?.[m.color] ? ` (highlighted ${window.Marks.COLOR_NAME[m.color]})` : ""}\nThe passage: ${text}${m.note ? `\nHis note: ${m.note}` : ""}`);
       } else {
@@ -1080,7 +1097,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
               if (note && !proposals.includes(note)) proposals.push(note);
               content = note ? "Shown to him under the answer as a proposal, with Save and Dismiss. It is not saved unless he taps Save, so do not say that it has been." : "Error: give the note to propose.";
             } else content = `Unknown tool ${tu.name}`;
-          } catch (err) { content = `Error: ${err.message}`; }
+          } catch (err) { logged(`ask.tool ${tu.name}`, err); content = `Error: ${err.message}`; }
           const cap = tu.name === "find_all" || tu.name === "find_all_verses" ? 170000 : 60000;
           if (content.length > cap) content = content.slice(0, cap) + "\n…(truncated; ask for one volume at a time to see the rest)";
           results.push({ type: "tool_result", tool_use_id: tu.id, content });

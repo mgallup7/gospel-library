@@ -104,8 +104,10 @@
   <div class="sheet-body"></div>
 </div>
 
-<!-- Modules, so each can import from lib/. They run deferred, in this order: app.js sets
-     window.GL first, and the others read it when they load. -->
+<!-- Modules, so each can import from lib/. They run deferred, in this order: the error log
+     first, so it hears whatever the others throw; then app.js, which sets window.GL, and the
+     others read it when they load. -->
+<script type="module" src="./lib/log.js"></script>
 <script type="module" src="./app.js"></script>
 <script type="module" src="./ask.js"></script>
 <script type="module" src="./original.js"></script>

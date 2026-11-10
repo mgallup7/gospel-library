@@ -35,8 +35,11 @@
     });
   }
   const idFor = (uri, pid) => `${uri}#${pid}`;
-  const forDoc = async (uri) => { try { return (await tx("readonly", (s) => s.index("uri").getAll(uri))) || []; } catch (_) { return []; } };
-  const all = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.updated - a.updated); } catch (_) { return []; } };
+  // A database that will not open reads as an empty list, so the page still shows; it is also
+  // written to the error log, so "no highlights" can be told from "the highlights could not be read".
+  const failed = (where, err) => { window.GLLog?.note(where, err); return []; };
+  const forDoc = async (uri) => { try { return (await tx("readonly", (s) => s.index("uri").getAll(uri))) || []; } catch (err) { return failed("marks.forDoc", err); } };
+  const all = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.updated - a.updated); } catch (err) { return failed("marks.all", err); } };
   const count = async () => (await all()).length;
   const get = (uri, pid) => tx("readonly", (s) => s.get(idFor(uri, pid)));
 

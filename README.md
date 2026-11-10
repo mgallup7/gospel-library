@@ -221,6 +221,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   what it does not, the page you have open and the deck in progress; your
   study pages, highlights and notes can be searched; the thread survives a
   reload; the Ask button is Stop while an answer is on its way.
+- An error log you can copy. The last 200 things that went wrong on the
+  device are kept until the app is closed (never the key or the passphrase);
+  "Copy error log" in Ask's settings puts them on the clipboard.
 - Your own voice and skills, kept private. A skills file (how drafts should
   sound, a house style for answers, and whole pieces such as the weekly
   letter, which appears as its own mode beside Ask and Draft) travels sealed
