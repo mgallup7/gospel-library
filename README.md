@@ -167,7 +167,11 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   between them, routed down the margin, with a numbered badge; name the
   connection ("fulfilled in", "same word", "defines", your own words) from
   the badge or the chip under the card. Arrows follow the cards as you scroll,
-  reorder and re-wrap. Tap a highlight for Link to… (without dragging) or
+  reorder and re-wrap. To reorder, drag a card by the handle at its top left
+  (the other cards make room, the toast says where it went and has Undo;
+  Escape or letting go outside the board cancels); with a keyboard, the up
+  and down arrows on the handle, or the card's "more" menu, which also holds
+  Remove. Tap a highlight for Link to… (without dragging) or
   Remove. Under More, Add question and Add note put a slide of your own
   words on the deck (a question for the room, centered and bold; a thought
   or a line to say), and every card, passage or not, takes speaker notes,

@@ -75,7 +75,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // and its badge takes a 44px tap
     const arrow = () => page.evaluate(() => {
       const c = document.querySelector(".board-canvas").getBoundingClientRect();
-      const boxes = [...document.querySelectorAll(".bcard .w, .bcard .bc-tools button, .bcard .vn")].map((n) => n.getBoundingClientRect());
+      const boxes = [...document.querySelectorAll(".bcard .w, .bcard .bc-tools button, .bcard .bc-grip, .bcard .vn")].map((n) => n.getBoundingClientRect());
       let over = 0, n = 0;
       for (const p of document.querySelectorAll(".board-lines path.blink")) {
         const len = p.getTotalLength();
@@ -100,7 +100,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // ---- a card removed: its speaker notes and its connection come back
     await page.click(".bcard[data-id='a'] .notes-toggle");
     await page.fill(".bcard[data-id='a'] .bc-notes-text", "Read slowly.");
-    await page.click(".bcard[data-id='a'] .bc-tools button[aria-label='Remove from the deck']");
+    await page.click(".bcard[data-id='a'] .bc-more");
+    await page.click(".bcard[data-id='a'] .bc-menu button:has-text('Remove from the deck')");
     await settle();
     s = await state();
     check(s.items.length === 2 && s.links.length === 0, "the card and its connection should go");
@@ -111,7 +112,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(s.items.length === 3 && s.items[0].id === "a" && s.items[0].notes === "Read slowly." && s.links.length === 1, "Undo should bring the card back in its place, with its notes and its connection");
 
     // ---- a move, and Cmd+Z once the toast has gone
-    await page.click(".bcard[data-id='b'] .bc-tools button[aria-label='Move down']");
+    await page.click(".bcard[data-id='b'] .bc-more");
+    await page.click(".bcard[data-id='b'] .bc-menu button:has-text('Move down')");
     await settle();
     check((await state()).items.map((i) => i.id).join("") === "acb" && /Moved down/.test(await toastText()), "Move down should move the card and say so");
     await page.evaluate(() => window.Deck.undo());

@@ -82,10 +82,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(300);
     check(await visible(".board .themes"), "the theme chooser should show once a passage is on");
     check(await page.evaluate(() => [...document.querySelectorAll(".board .board-row button")].some((b) => /PowerPoint/.test(b.textContent) && b.offsetParent !== null)), "Download PowerPoint should show once a passage is on");
-    check(await page.evaluate(() => !!document.querySelector(".bcard .bc-tools button[aria-label='Move up'] svg")), "the card tools should be drawn as icons");
+    check(await page.evaluate(() => !!document.querySelector(".bcard .bc-grip svg") && !!document.querySelector(".bcard .bc-tools .bc-more svg")), "the card's handle and its more button should be drawn as icons");
     await shot("04-board");
     // remove from the board: the header count follows at once
-    await page.click(".bcard .bc-tools button[aria-label='Remove from the deck']");
+    await page.click(".bcard .bc-more");
+    await page.click(".bcard .bc-menu button:has-text('Remove from the deck')");
     await page.waitForTimeout(150);
     check(await badge() === "", "removing on the board should clear the header count");
     await ctx.close();

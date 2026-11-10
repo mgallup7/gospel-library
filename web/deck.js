@@ -613,6 +613,8 @@ import { esc } from "./lib/format.js";
   let active = null;    // {id, hl}: a highlight whose tools are showing
   let linking = null;   // {id, hl}: tap-to-link in progress
   let drag = null;      // a port being dragged
+  let reorder = null;   // a card being dragged by its handle to another place
+  let menuFor = null;   // the card whose "more" menu is open
   let editing = null;   // the link whose label editor is open
   let holding = false;  // a link just made: its label editor is about to open, so the marker below stays
   let hintShown = false;
@@ -659,7 +661,7 @@ import { esc } from "./lib/format.js";
   // linking, the citation is a place to tap like the rest of its card, so it does not open.
   // Whatever mode was up is left first, and its marker is out of history before the page goes in.
   async function openPassage(it) {
-    if (linking || swallowTap || drag) return;
+    if (linking || swallowTap || drag || reorder) return;
     leaveModes(); syncMarker();
     await settled();
     GL().openDoc(it.doc_id, it.pid);
@@ -679,11 +681,13 @@ import { esc } from "./lib/format.js";
     for (const h of ui.cards.querySelectorAll(".bc-hint.first-word")) h.remove();
   }
   document.addEventListener("click", (e) => { if (pending && !(e.target.closest && e.target.closest(".bcard[data-type='passage'] .bc-text"))) clearPending(); }, true);
-  // Escape leaves the innermost thing: a drag, the label editor, link mode, a first word, My decks.
+  // Escape leaves the innermost thing: a drag, a card's menu, the label editor, link mode, a first word, My decks.
   // (A sheet takes its own Escape.)
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.defaultPrevented || sheets.size) return;
-    if (drag) drag.end(null, true);
+    if (reorder) reorder.end(null, true);
+    else if (drag) drag.end(null, true);
+    else if (menuFor) closeMenu(true);
     else if (editing) { closeEditor(); draw(); }
     else if (linking) cancelLink();
     else if (pending) clearPending();
@@ -707,12 +711,11 @@ import { esc } from "./lib/format.js";
     return { top: r.top + stickyTop(), bottom: Math.min(r.bottom, window.innerHeight) };
   }
 
-  // The card tools, drawn as strokes in the app's icon style rather than text arrows,
-  // which sit at different heights in different fonts.
-  const toolIcon = (d) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
-  const TOOL_UP = toolIcon("M12 19V5M6 11l6-6 6 6");
-  const TOOL_DOWN = toolIcon("M12 5v14M6 13l6 6 6-6");
-  const TOOL_REMOVE = toolIcon("M6 6l12 12M18 6L6 18");
+  // The two marks in a card's head, drawn rather than typed, so they sit the same in every font:
+  // six dots for the handle, three for "more".
+  const dots = (pts) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">${pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.7"/>`).join("")}</svg>`;
+  const TOOL_GRIP = dots([[9, 6], [15, 6], [9, 12], [15, 12], [9, 18], [15, 18]]);
+  const TOOL_MORE = dots([[5, 12], [12, 12], [19, 12]]);
 
   function boardEl() { if (!board) buildBoard(); return board; }
   function showBoard() {
@@ -798,6 +801,7 @@ import { esc } from "./lib/format.js";
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
+    cards.addEventListener("pointerdown", onGripDown);
     const touch = (e) => { const card = e.target.closest && e.target.closest(".bcard"); if (card) select(card.dataset.id); };
     cards.addEventListener("pointerdown", touch);
     cards.addEventListener("focusin", touch);
@@ -812,6 +816,7 @@ import { esc } from "./lib/format.js";
     // arriving, another tab), and its pointer events with it: the drag ends here, cancelled,
     // rather than leaving the board deaf to taps.
     if (drag) drag.end(null, true);
+    if (reorder) reorder.end(null, true);
     syncHead();
     drawCards();
     queueLines();
@@ -871,15 +876,24 @@ import { esc } from "./lib/format.js";
   }
   function cardEl(it, idx) {
     const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : "") + (linking && linking.id === it.id ? " link-src" : ""), "data-id": it.id, "data-type": it.type });
-    const tools = el("div", { class: "bc-tools" }, [
-      el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(deck.items.indexOf(it), -1); } }),
-      el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(deck.items.indexOf(it), 1); } }),
-      el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeCard(it); } }),
-    ]);
+    // The head of a card: a handle to drag it to another place (the up and down arrow keys move it
+    // too), and one "more" button whose menu holds the moves and Remove.
+    const name = cardName(it);
+    const grip = el("button", { type: "button", class: "bc-grip", html: TOOL_GRIP, title: "Drag to another place", "aria-label": `Move ${name}: drag, or press the up and down arrow keys` });
+    grip.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      move(deck.items.indexOf(it), e.key === "ArrowUp" ? -1 : 1);
+      refocus(it.id, ".bc-grip");
+    });
+    const open = menuFor === it.id;
+    const more = el("button", { type: "button", class: "bc-more", html: TOOL_MORE, title: "Move or remove", "aria-label": `More for ${name}`, "aria-haspopup": "menu", "aria-expanded": String(open), onclick: (e) => { e.stopPropagation(); if (open) closeMenu(true); else openMenu(it.id); } });
+    const tools = el("div", { class: "bc-tools" }, [more]);
+    if (open) card.append(menuEl(it, idx));
     if (it.type === "section") {
       const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
       inp.addEventListener("input", () => { it.title = inp.value; stamp(it); save({ redraw: false }); });
-      card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
+      card.append(el("div", { class: "bc-head" }, [grip, el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
       card.append(notesEl(it));
       return card;
     }
@@ -890,7 +904,7 @@ import { esc } from "./lib/format.js";
       const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
       ta.addEventListener("input", () => { it.text = ta.value; grow(); stamp(it); save({ redraw: false }); });
       requestAnimationFrame(grow);
-      card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
+      card.append(el("div", { class: "bc-head" }, [grip, el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
       card.append(ta);
       card.append(notesEl(it));
       return card;
@@ -902,7 +916,7 @@ import { esc } from "./lib/format.js";
     // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
     if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
     const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
-    card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
+    card.append(el("div", { class: "bc-head" }, [grip, meta, tools, port]));
     card.append(textEl(it));
     // the talk and conference sit under the words, the way an attribution follows a quote
     if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
@@ -954,7 +968,8 @@ import { esc } from "./lib/format.js";
   let drawn = new Map(); // item id: { sig, el }
   let foot = null;       // "+ Question" and "+ Slide text", made once
   function cardSig(it, idx) {
-    const parts = [token(it), JSON.stringify(it), idx === 0 ? "first" : "", idx === deck.items.length - 1 ? "last" : ""];
+    const parts = [token(it), JSON.stringify(it)];
+    if (menuFor === it.id) parts.push("menu", idx === 0 ? "first" : "", idx === deck.items.length - 1 ? "last" : "");
     if (it.type !== "passage") return parts.join("\u0001");
     if (pending && pending.id === it.id) parts.push(`pending ${pending.i}`);
     if (active && active.id === it.id) parts.push(`active ${active.hl}`);
@@ -1071,11 +1086,176 @@ import { esc } from "./lib/format.js";
   }
   function move(i, d) {
     const j = i + d;
-    if (j < 0 || j >= deck.items.length) return;
+    if (i < 0 || j < 0 || j >= deck.items.length) return;
     [deck.items[i], deck.items[j]] = [deck.items[j], deck.items[i]];
     save();
     did(d < 0 ? "Moved up." : "Moved down.");
   }
+  // A card put at another place in the order (by its handle, or to the top or the end from its
+  // menu). The toast says where it went, by the card now above it, and takes it back.
+  function moveTo(it, j) {
+    const i = deck.items.indexOf(it);
+    j = Math.max(0, Math.min(deck.items.length - 1, j));
+    if (i < 0 || i === j) return false;
+    deck.items.splice(i, 1);
+    deck.items.splice(j, 0, it);
+    save();
+    did(`Moved ${cardName(it)} ${j === 0 ? "to the top" : `after ${cardName(deck.items[j - 1])}`}.`);
+    return true;
+  }
+  // A card that was moved (or redrawn) loses the focus its button had: put it back, so the arrow
+  // keys or the menu can move the card again.
+  function refocus(id, sel) {
+    const n = ui && ui.cards.querySelector(`.bcard[data-id="${id}"] ${sel}`);
+    if (n) { try { n.focus({ preventScroll: true }); } catch (_) {} n.scrollIntoView?.({ block: "nearest" }); }
+  }
+
+  // The "more" menu of a card: the moves the handle makes, for the keyboard and for anyone who
+  // would rather tap, and Remove. A move leaves it open with the same choice in focus, so a card
+  // goes up five places with five presses. A tap outside, Escape, or its button closes it.
+  const MENU = [
+    ["Move up", (it) => move(deck.items.indexOf(it), -1), (idx) => idx === 0],
+    ["Move down", (it) => move(deck.items.indexOf(it), 1), (idx, n) => idx === n - 1],
+    ["Move to the top", (it) => moveTo(it, 0), (idx) => idx === 0],
+    ["Move to the end", (it) => moveTo(it, deck.items.length - 1), (idx, n) => idx === n - 1],
+  ];
+  function menuEl(it, idx) {
+    const menu = el("div", { class: "bc-menu", role: "menu", "aria-label": `Move or remove ${cardName(it)}` });
+    MENU.forEach(([text, act, off], k) => menu.append(el("button", { type: "button", role: "menuitem", text, "data-k": String(k), disabled: off(idx, deck.items.length), onclick: (e) => {
+      e.stopPropagation();
+      act(it);
+      const same = ui.cards.querySelector(`.bcard[data-id="${it.id}"] .bc-menu [data-k="${k}"]:not(:disabled)`);
+      refocus(it.id, same ? `.bc-menu [data-k="${k}"]` : ".bc-menu button:not(:disabled)");
+    } })));
+    menu.append(el("button", { type: "button", role: "menuitem", class: "danger", text: "Remove from the deck", onclick: (e) => { e.stopPropagation(); menuFor = null; removeCard(it); } }));
+    menu.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+      const items = [...menu.querySelectorAll("button:not(:disabled)")];
+      const at = items.indexOf(document.activeElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      e.preventDefault();
+      items[next]?.focus();
+    });
+    return menu;
+  }
+  let menuOutside = null;
+  function openMenu(id) {
+    closeEditor();
+    menuFor = id;
+    draw();
+    ui.cards.querySelector(`.bcard[data-id="${id}"] .bc-menu`)?.scrollIntoView?.({ block: "nearest" }); // the whole menu, when its card is at the foot of the pane
+    refocus(id, ".bc-menu button:not(:disabled)");
+    if (!menuOutside) {
+      menuOutside = (e) => { if (menuFor && !(e.target.closest && e.target.closest(".bc-menu, .bc-more"))) closeMenu(false); };
+      document.addEventListener("pointerdown", menuOutside, true);
+    }
+  }
+  function closeMenu(focus) {
+    if (menuOutside) { document.removeEventListener("pointerdown", menuOutside, true); menuOutside = null; }
+    if (!menuFor) return;
+    const id = menuFor;
+    menuFor = null;
+    draw();
+    if (focus) refocus(id, ".bc-more");
+  }
+
+  // Reorder by dragging a card's handle (mouse, finger or pen: pointer events, the handle takes
+  // no scroll gesture, so no long press is needed). The card follows the pointer, the cards it
+  // passes step aside to show where it would land, and the pane scrolls when the pointer nears
+  // its top or bottom. Letting go puts it there, with Undo in the toast; Escape, or letting go
+  // outside the board, puts everything back. Only the handle starts it: a touch on the words
+  // marks a phrase and a touch on a dot draws a link, as before. Nothing in the deck changes
+  // until the drop, so the cards are only shifted on screen meanwhile and the arrows, which
+  // would point at where things were, are hidden until it ends.
+  function onGripDown(e) {
+    const pressed = e.target.closest(".bc-grip");
+    if (!pressed || (e.button !== undefined && e.button > 0) || reorder || drag) return;
+    const it = byId(pressed.closest(".bcard")?.dataset.id);
+    if (!it) return;
+    e.preventDefault();
+    closeEditor();
+    if (menuFor) closeMenu(false); // which may redraw this very card: it and its handle are looked up after
+    const els = [...ui.cards.querySelectorAll(".bcard")];
+    const from = els.findIndex((c) => c.dataset.id === it.id);
+    if (from < 0) return;
+    const me = els[from], grip = me.querySelector(".bc-grip");
+    try { grip.focus({ preventScroll: true }); } catch (_) {}
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    const tops = els.map((c) => c.offsetTop), heights = els.map((c) => c.offsetHeight);
+    const span = heights[from] + (parseFloat(getComputedStyle(me).marginBottom) || 0); // the room the card takes in the list
+    const scroller = scrollerOf(ui.canvas);
+    const whole = scroller === document.scrollingElement || scroller === document.documentElement;
+    const last = els.length - 1;
+    reorder = { it, from, to: from, x: e.clientX, y: e.clientY, y0: e.clientY, s0: scroller.scrollTop, moved: false, out: false, loop: null, end: null };
+    board.classList.add("reordering");
+    me.classList.add("lifted");
+    // Outside: off the side of the cards, or well past the top or bottom of what shows of them.
+    const outside = (x, y) => {
+      const c = ui.canvas.getBoundingClientRect(), box = visibleBox();
+      return x < c.left - 24 || x > c.right + 24 || y < box.top - 48 || y > box.bottom + 48;
+    };
+    const update = () => {
+      if (!reorder) return;
+      const r = reorder;
+      const d = Math.max(tops[0] - tops[from], Math.min(tops[last] + heights[last] - tops[from] - heights[from], r.y - r.y0 + scroller.scrollTop - r.s0));
+      me.style.transform = `translateY(${d}px)`;
+      r.out = outside(r.x, r.y);
+      // the cards it has passed: one below counts when its middle is above the dragged card's foot, one above when its middle is below the dragged card's head
+      let to = from;
+      if (!r.out) els.forEach((c, i) => {
+        const mid = tops[i] + heights[i] / 2;
+        if (i > from && tops[from] + heights[from] + d > mid) to++;
+        if (i < from && tops[from] + d < mid) to--;
+      });
+      r.to = to;
+      me.classList.toggle("out", r.out);
+      els.forEach((c, i) => { if (i !== from) c.style.transform = i > from && i <= to ? `translateY(${-span}px)` : i < from && i >= to ? `translateY(${span}px)` : ""; });
+    };
+    const onMove = (ev) => {
+      if (!reorder) return;
+      reorder.x = ev.clientX; reorder.y = ev.clientY;
+      if (Math.abs(ev.clientY - reorder.y0) > 4) reorder.moved = true;
+      update();
+    };
+    const onEnd = (ev, cancelled = false) => {
+      if (!reorder || reorder.it !== it) return;
+      grip.removeEventListener("pointermove", onMove);
+      grip.removeEventListener("pointerup", onEnd);
+      grip.removeEventListener("pointercancel", onLost);
+      grip.removeEventListener("lostpointercapture", onLost);
+      try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (reorder.loop) cancelAnimationFrame(reorder.loop);
+      if (ev && ev.type === "pointerup") { reorder.x = ev.clientX; reorder.y = ev.clientY; update(); }
+      const { to, moved, out } = reorder;
+      reorder = null;
+      board.classList.remove("reordering");
+      me.classList.remove("lifted", "out");
+      for (const c of els) c.style.transform = "";
+      const dropped = !cancelled && !!ev && ev.type === "pointerup" && !out;
+      if (dropped && to !== from) { moveTo(it, to); refocus(it.id, ".bc-grip"); }
+      else if (moved && (cancelled || out)) GL().toast("Not moved.");
+      else if (!moved && !cancelled && !gripHintShown) { gripHintShown = true; GL().toast("Drag this handle to move the card, or press the up and down arrow keys."); }
+    };
+    reorder.end = onEnd;
+    const onLost = (ev) => onEnd(ev, true); // the browser took the pointer away
+    grip.addEventListener("pointermove", onMove);
+    grip.addEventListener("pointerup", onEnd);
+    grip.addEventListener("pointercancel", onLost);
+    grip.addEventListener("lostpointercapture", onLost);
+    // Scroll the pane when the pointer nears its top or bottom, so a card can go further than what shows.
+    const step = () => {
+      if (!reorder) return;
+      const r = whole ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      const top = r.top + stickyTop();
+      let dy = 0;
+      if (reorder.y < top + 60) dy = -Math.min(18, Math.ceil((top + 60 - reorder.y) / 3));
+      else if (reorder.y > r.bottom - 60) dy = Math.min(18, Math.ceil((reorder.y - (r.bottom - 60)) / 3));
+      if (dy && reorder.moved && scroller.scrollBy) { scroller.scrollBy(0, dy); update(); }
+      reorder.loop = requestAnimationFrame(step);
+    };
+    if (window.requestAnimationFrame) reorder.loop = requestAnimationFrame(step);
+  }
+  let gripHintShown = false;
   const cardName = (it) => (it.type === "passage" ? it.citation || "the passage" : it.type === "section" ? "the section" : it.type === "question" ? "the question" : "the slide text");
   // The card's own remove: its highlights, connections and speaker notes go with it, and come back with Undo.
   function removeCard(it) {
