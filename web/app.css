@@ -833,13 +833,20 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
 .bcard.drag-src::after { content: "Let go here to cancel"; position: absolute; top: 8px; right: 44px; padding: 4px 10px; border-radius: 8px; background: var(--target); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); font: 600 12px/1.5 var(--sans); color: var(--ink); pointer-events: none; }
 .board-canvas { position: relative; padding-right: 30px; }
 .board-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; color: var(--accent); }
-.board-lines .blink { fill: none; stroke: currentColor; stroke-width: 2; opacity: .8; stroke-linecap: round; }
-.board-lines .blink.on { stroke-width: 3; opacity: 1; }
+.board-lines .blink { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .85; stroke-linecap: round; stroke-linejoin: round; }
+.board-lines .blink.on { stroke-width: 2.5; opacity: 1; }
 .board-lines .blink.temp { stroke-dasharray: 6 5; opacity: .7; }
 .board-labels { position: absolute; inset: 0; pointer-events: none; }
-.blabel { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); border: 2px solid var(--paper); font: 700 11px/18px var(--sans); text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
-.blabel.empty { background: var(--chrome); color: var(--accent); border-color: var(--accent); border-style: dashed; }
-.blabel.on { transform: translate(-50%, -50%) scale(1.25); }
+/* the badge on an arrow: a 22px circle with its number, or, once the connection has a name, number and name; either way a 44px square takes the tap */
+.blabel { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; box-sizing: border-box; width: 22px; height: 22px; padding: 0; border-radius: 11px; background: var(--accent); color: var(--accent-ink); border: 2px solid var(--paper); font: 700 11px/18px var(--sans); text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.blabel::before { content: ""; position: absolute; inset: -13px; }
+.blabel.empty { background: var(--chrome); color: var(--accent); border: 1.5px dashed var(--accent); line-height: 19px; }
+.blabel.on { transform: translate(-50%, -50%) scale(1.2); }
+.blabel.named { right: 0; width: auto; transform: translateY(-50%); display: flex; align-items: center; gap: 5px; padding: 0 9px 0 6px; white-space: nowrap; }
+.blabel.named::before { inset: -13px -4px; }
+.blabel.named b { flex: none; }
+.blabel.named span { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.blabel.named.on { transform: translateY(-50%); box-shadow: 0 0 0 2px var(--accent); }
 .bcard .bc-links .chip b { color: var(--accent); margin-right: 1px; }
 .bcard .bc-links .chip i { font-style: normal; color: var(--ink-2); }
 .bcard .bc-links .chip.unlabeled i { color: var(--ink-3); font-style: italic; }
@@ -867,7 +874,13 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
 .bcard .w.first { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bcard .w.drop { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--target); }
 .bcard .vn { font: 600 .6em var(--sans); color: var(--ink-3); vertical-align: super; margin: 0 2px 0 6px; }
-.port { display: inline-block; width: 17px; height: 17px; border-radius: 50%; background: var(--accent); border: 2px solid var(--paper); box-shadow: 0 0 0 1.5px var(--accent); vertical-align: middle; margin: 0 3px 0 2px; touch-action: none; cursor: grab; position: relative; }
+/* the reader's highlight color, carried onto the card: on the verse number, or beside a talk's citation; on the stage, a bar beside the words */
+.bcard .vn.rc { color: #2a2200; padding: 1px 5px; border-radius: 5px; }
+.bcard .rc-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+.bcard .rc-y { background: var(--hl-y-dot); } .bcard .rc-g { background: var(--hl-g-dot); } .bcard .rc-b { background: var(--hl-b-dot); } .bcard .rc-p { background: var(--hl-p-dot); }
+.stage-text .rc { display: block; padding-left: 2.6vmin; border-left: .9vmin solid transparent; }
+.stage-text .rc-y { border-left-color: #f3cf3a; } .stage-text .rc-g { border-left-color: #6cbf6a; } .stage-text .rc-b { border-left-color: #6b9ff0; } .stage-text .rc-p { border-left-color: #f08bb5; }
+.port { display: inline-block; width: 17px; height: 17px; border-radius: 50%; background: var(--accent); border: 2px solid var(--paper); box-shadow: 0 0 0 1.5px var(--accent); vertical-align: middle; margin: 0 5px 0 4px; touch-action: none; cursor: grab; position: relative; } /* the margins keep the dot and its ring off the words either side */
 .port::before { content: ""; position: absolute; inset: -14px; border-radius: 50%; }
 .port.src, .port.drop { transform: scale(1.2); }
 .port.drop { background: var(--paper); }

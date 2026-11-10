@@ -426,7 +426,8 @@ import { esc } from "./lib/format.js";
     return added;
   }
   // The reader's marks come along: a verse he colored arrives with that color (item.color, and on
-  // each verse; the PowerPoint does not read it, the board can), and a note on a verse the card
+  // each verse; the board shows it on the verse number, the stage and the PowerPoint as a bar
+  // beside the words, see RC), and a note on a verse the card
   // holds becomes its speaker note. The marks store answers after the add has returned, so the
   // cards are filled in a moment later; a card already taken off (Undo) is left alone.
   function carryMarks(doc, cards) {
@@ -775,8 +776,8 @@ import { esc } from "./lib/format.js";
     const touch = (e) => { const card = e.target.closest && e.target.closest(".bcard"); if (card) select(card.dataset.id); };
     cards.addEventListener("pointerdown", touch);
     cards.addEventListener("focusin", touch);
-    window.addEventListener("resize", () => { if (board.isConnected) drawLines(); });
-    if (window.ResizeObserver) new ResizeObserver(() => drawLines()).observe(cards);
+    window.addEventListener("resize", () => { if (board.isConnected) queueLines(); });
+    if (window.ResizeObserver) new ResizeObserver(() => queueLines()).observe(cards);
   }
 
   let swallowTap = false;
@@ -788,7 +789,7 @@ import { esc } from "./lib/format.js";
     if (drag) drag.end(null, true);
     syncHead();
     drawCards();
-    raf(drawLines);
+    queueLines();
     syncMarker();
   }
   // The banner for a link in progress, by tap or by drag. It takes no room in the page (so the
@@ -877,6 +878,8 @@ import { esc } from "./lib/format.js";
         return;
       }
       const meta = el("div", { class: "bc-meta" }, [el("div", { class: "bc-cite", text: it.citation })]);
+      // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
+      if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
       const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
       card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
       card.append(textEl(it));
@@ -959,6 +962,12 @@ import { esc } from "./lib/format.js";
     wrap.append(toggle, ta);
     return wrap;
   }
+  // The reader's highlight colors (marks.js: y, g, b, p), as the PowerPoint wants them. On the
+  // board a colored verse wears the color on its number, and a talk beside its citation; the
+  // words themselves stay plain, so the deck's own highlight (the phrase the slide stresses) is
+  // never confused with it.
+  const RC = { y: "F3CF3A", g: "6CBF6A", b: "6B9FF0", p: "F08BB5" };
+  const RC_NAME = { y: "yellow", g: "green", b: "blue", p: "pink" };
   // A passage as tappable words, with verse numbers, highlights and a port after each highlight.
   // A highlighted phrase is one run (its words and the spaces between them in one span), so it
   // reads as a phrase, not a row of boxes, and its active outline goes round the whole of it.
@@ -968,7 +977,10 @@ import { esc } from "./lib/format.js";
     let host = text;
     words.forEach((x, i) => {
       if (x.first && x.para > 0) host.append(el("br"), el("br"));
-      if (x.n !== null && x.n !== undefined) host.append(el("span", { class: "vn", text: String(x.n) }));
+      if (x.n !== null && x.n !== undefined) {
+        const color = it.verses.find((v) => v.n === x.n)?.color;
+        host.append(el("span", { class: "vn" + (RC[color] ? ` rc rc-${color}` : ""), text: String(x.n), ...(RC[color] ? { title: `Highlighted ${RC_NAME[color]} in the reader` } : {}) }));
+      }
       const h = hlAt(it, i);
       if (h && host === text) {
         host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : "") + (linking && linking.id === it.id && linking.hl === h.id ? " src" : ""), "data-hl": h.id });
@@ -1173,35 +1185,106 @@ import { esc } from "./lib/format.js";
     }));
   }
 
-  // The arrows: from the port at the end of one highlight, out through the
-  // right-hand gutter, into the port of the other. Positions are measured
-  // from the live layout, so they follow scrolling, wrapping and reordering.
+  // The arrows. Each runs in the white space, never across words or the card tools: from the
+  // dot at the end of a highlight it drops into the gap under that line of text, goes right to
+  // a lane outside the cards, along the lane, back in under the other phrase's line and up into
+  // its dot. A whole-passage dot sits at the right of the card head, so its arrow goes straight
+  // to the lane. A connection with a name wears it, beside its number, where the lane passes
+  // between two cards; one without is a numbered circle on the lane. Positions are measured from
+  // the live layout, so they follow scrolling, wrapping and reordering: every position is read
+  // first and everything written after, so a board of many arrows costs one layout, not one
+  // for each end of each arrow; and however many things ask for a redraw, a frame draws once.
+  let linesQueued = false;
+  function queueLines() {
+    if (linesQueued) return;
+    linesQueued = true;
+    raf(() => { linesQueued = false; drawLines(); });
+  }
+  // A path through the points, its corners rounded.
+  function cornered(points, r = 5) {
+    const pts = points.filter((p, i) => i === 0 || Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]) > 0.5);
+    const f = (v) => v.toFixed(1);
+    let d = `M ${f(pts[0][0])} ${f(pts[0][1])}`;
+    for (let i = 1; i < pts.length; i++) {
+      const [x, y] = pts[i];
+      if (i === pts.length - 1) { d += ` L ${f(x)} ${f(y)}`; break; }
+      const [px, py] = pts[i - 1], [nx, ny] = pts[i + 1];
+      const li = Math.hypot(x - px, y - py), lo = Math.hypot(nx - x, ny - y);
+      const q = Math.min(r, li / 2, lo / 2);
+      d += ` L ${f(x - ((x - px) / li) * q)} ${f(y - ((y - py) / li) * q)} Q ${f(x)} ${f(y)} ${f(x + ((nx - x) / lo) * q)} ${f(y + ((ny - y) / lo) * q)}`;
+    }
+    return d;
+  }
   function drawLines() {
     if (!ui || !board.isConnected) return;
+    // read: the canvas, every dot, every card
     const cr = ui.canvas.getBoundingClientRect();
     const W = Math.max(1, cr.width), H = Math.max(1, cr.height);
+    const ports = new Map();
+    for (const p of ui.cards.querySelectorAll(".port")) {
+      const r = p.getBoundingClientRect();
+      ports.set(`${p.dataset.item}|${p.dataset.hl || ""}`, { x: r.left + r.width / 2 - cr.left, y: r.top + r.height / 2 - cr.top, bottom: r.bottom - cr.top, right: r.right - cr.left, whole: p.classList.contains("card-port") });
+    }
+    const gaps = []; // the middle of the space between each card and the next
+    let last = null;
+    for (const c of ui.cards.querySelectorAll(".bcard")) {
+      const r = c.getBoundingClientRect();
+      if (last !== null && r.top > last) gaps.push((last + r.top) / 2 - cr.top);
+      last = r.bottom;
+    }
+    // write
     ui.svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const defs = document.createElementNS(SVG, "defs");
-    defs.innerHTML = `<marker id="bArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>`;
-    ui.svg.replaceChildren(defs);
-    ui.labels.replaceChildren();
+    defs.innerHTML = `<marker id="bArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>`;
+    const paths = [defs], labels = [];
+    const taken = []; // where a badge already sits: [left, top, right, bottom]
+    const free = (b) => !taken.some((t) => b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]);
     let k = 0;
     for (const l of deck.links) {
-      const a = portPoint(l.from, cr), b = portPoint(l.to, cr);
+      const a = ports.get(`${l.from.id}|${l.from.hl || ""}`), b = ports.get(`${l.to.id}|${l.to.hl || ""}`);
       if (!a || !b) continue;
-      const gx = W - 15 - (k % 3) * 4;
-      const bx = b.x + 10;
+      const lane = k % 3;
+      const gx = W - 8 - lane * 7; // three lanes in the 30px beside the cards
+      const ya = a.whole ? a.y : a.bottom + 4 + lane * 3;  // the gap under the phrase's line
+      const yb = b.whole ? b.y : b.bottom + 7 + lane * 2;
+      const pts = [];
+      if (a.whole) pts.push([a.right + 2, a.y]); else pts.push([a.x, a.bottom + 2], [a.x, ya]);
+      pts.push([gx, ya], [gx, yb]);
+      if (b.whole) pts.push([b.right + 3, b.y]); else pts.push([b.x, yb], [b.x, b.bottom + 2]);
       const path = document.createElementNS(SVG, "path");
-      path.setAttribute("d", `M ${a.x} ${a.y} C ${gx} ${a.y}, ${gx} ${b.y}, ${bx} ${b.y}`);
+      path.setAttribute("d", cornered(pts));
       path.setAttribute("class", "blink" + (editing === l ? " on" : ""));
       path.setAttribute("marker-end", "url(#bArrow)");
-      ui.svg.append(path);
-      // A numbered badge on the arrow's run down the gutter; the label itself
-      // is read on the chip under each card, where there is room for it.
-      ui.labels.append(el("button", { type: "button", class: "blabel" + (l.label ? "" : " empty") + (editing === l ? " on" : ""), "data-link": l.id, text: String(linkNumber(l)), title: l.label ? `${l.label} (edit)` : "Name this connection",
-        "aria-label": `Connection ${linkNumber(l)}${l.label ? `: ${l.label}` : ""}`, style: `left:${gx}px;top:${(a.y + b.y) / 2}px`, onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }));
+      paths.push(path);
+      // The badge. Named: number and name, at the right edge in a gap between cards that the lane
+      // passes, the one nearest the middle of its run that is free. Unnamed, or with no gap free:
+      // a numbered circle on the lane, moved along it when another badge is in the way.
+      const top = Math.min(ya, yb), bottom = Math.max(ya, yb), mid = (top + bottom) / 2;
+      const num = linkNumber(l);
+      const common = { type: "button", "data-link": l.id, title: l.label ? `${l.label} (edit)` : "Name this connection", "aria-label": `Connection ${num}${l.label ? `: ${l.label}` : ""}`, onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } };
+      let placed = false;
+      if (l.label) {
+        const w = Math.min(W - 12, 260, 34 + l.label.length * 6.4);
+        for (const y of gaps.filter((g) => g > top && g < bottom).sort((p, q) => Math.abs(p - mid) - Math.abs(q - mid))) {
+          const box = [W - w, y - 11, W, y + 11];
+          if (!free(box)) continue;
+          taken.push(box);
+          labels.push(el("button", { ...common, class: "blabel named" + (editing === l ? " on" : ""), style: `top:${y.toFixed(1)}px;max-width:${Math.round(W - 12)}px` }, [el("b", { text: String(num) }), el("span", { text: l.label })]));
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        let y = mid;
+        for (const dy of [0, 26, -26, 52, -52, 78, -78]) { if (mid + dy > top - 4 && mid + dy < bottom + 4 && free([gx - 12, mid + dy - 12, gx + 12, mid + dy + 12])) { y = mid + dy; break; } }
+        taken.push([gx - 12, y - 12, gx + 12, y + 12]);
+        labels.push(el("button", { ...common, class: "blabel" + (l.label ? "" : " empty") + (editing === l ? " on" : ""), text: String(num), style: `left:${gx.toFixed(1)}px;top:${y.toFixed(1)}px` }));
+      }
       k++;
     }
+    if (drag && drag.temp) paths.push(drag.temp); // a drag in progress keeps its own line
+    ui.svg.replaceChildren(...paths);
+    ui.labels.replaceChildren(...labels);
   }
   const linkNumber = (l) => deck.links.indexOf(l) + 1;
   // Take a connection off. A one-word highlight that finishLink made for it goes too, unless it
@@ -1229,7 +1312,7 @@ import { esc } from "./lib/format.js";
     const a = endOf(link.from), b = endOf(link.to);
     const name = (end) => (end ? (end.hl ? `“${phraseOf(end.item, end.hl)}”` : end.item.citation) : "");
     const input = el("input", { class: "deck-subtitle", placeholder: "What the arrow says", value: link.label || "", "aria-label": "Connection label", autocapitalize: "off" });
-    const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) { pill.classList.toggle("empty", !v); pill.title = v ? `${v} (edit)` : "Name this connection"; } };
+    const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); queueLines(); }; // the arrow wears the label as it is typed
     input.addEventListener("input", () => setLabel(input.value));
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); closeEditor(); draw(); } }); // Escape is taken at the document, focus or no focus
     const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Connection", tabindex: "-1" }, [
@@ -1259,7 +1342,7 @@ import { esc } from "./lib/format.js";
       top = above >= box.top + 8 ? above : Math.max(box.top + 8, low);
     }
     pop.style.top = `${top - cr.top}px`;
-    drawLines();
+    queueLines();
     outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor) { closeEditor(); draw(); } };
     setTimeout(() => document.addEventListener("pointerdown", outside, true), 0);
     try { (GL().wide ? input : pop).focus({ preventScroll: true }); } catch (_) {}
@@ -1715,7 +1798,9 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // half showed nowhere.
   function pieces(it, max) {
     const out = max ? chunksOf(it, max) : chunksOf(it);
-    if (!it.verses || !it.verses.length) return out;
+    // the reader's color: a piece holding a colored verse has it (c.color); a talk's pieces all do
+    const anyVerse = (it.verses || []).some((v) => RC[v.color]);
+    if (!it.verses || !it.verses.length) { for (const c of out) c.color = RC[it.color] ? it.color : null; return out; }
     const words = (t) => t.split(/\s+/).filter(Boolean).length;
     const first = [];
     let n = 0;
@@ -1723,12 +1808,14 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     let vi = -1, at = 0, done = 0; // the verse being walked; how far its text and its words have been used
     for (const c of out) {
       if (!c.verses) continue;
+      c.color = anyVerse ? null : RC[it.color] ? it.color : null;
       c.starts = c.verses.map((p) => {
         const whole = it.verses.indexOf(p); // a verse that was not cut is the deck's own object
-        if (whole >= 0) { vi = whole; at = 0; done = 0; return first[whole]; }
+        if (whole >= 0) { vi = whole; at = 0; done = 0; if (!c.color && RC[p.color]) c.color = p.color; return first[whole]; }
         if (p.n !== null && p.n !== undefined) { vi = it.verses.findIndex((v, j) => j > vi && v.n === p.n); at = 0; done = 0; }
         const v = it.verses[vi];
         if (!v) return 0;
+        if (!c.color && RC[v.color]) c.color = v.color;
         const pos = v.text.indexOf(p.text, at);
         const before = pos >= 0 ? words(v.text.slice(0, pos)) : done; // a piece whose spacing was tidied: go on from the last one
         if (pos >= 0) at = pos + p.text.length;
@@ -1746,8 +1833,13 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const idx = it.verses.findIndex((v) => v.n === n);
     return it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
   }
-  // Chunk text with verse numbers and highlights, as HTML for the stage.
+  // Chunk text with verse numbers and highlights, as HTML for the stage. A piece colored in the
+  // reader is wrapped, and the stage draws a bar in that color beside it.
   function chunkHtml(it, chunk) {
+    const html = chunkWords(it, chunk);
+    return RC[chunk.color] ? `<span class="rc rc-${chunk.color}">${html}</span>` : html;
+  }
+  function chunkWords(it, chunk) {
     if (chunk.verses && it.verses) {
       const parts = [];
       let i = 0;
@@ -2194,6 +2286,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         const s = slide();
         report.slides++; report.boxes++;
         kicker(s, chunk.label);
+        // the reader's color, as a bar beside the words
+        if (RC[chunk.color]) s.addShape(pptx.ShapeType.rect, { x: M - 0.2, y: 1.08 + boxH * 0.2, w: 0.07, h: boxH * 0.6, fill: { color: RC[chunk.color] }, line: { color: RC[chunk.color], width: 0 } });
         const runs = passageRuns(it, chunk, t);
         const fit = fits[ci];
         if (!fit.fits) report.tight.push(n);

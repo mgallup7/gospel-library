@@ -71,6 +71,32 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     s = await state();
     check(s.links.length === 1 && s.items[1].hl.length === 1, "Undo should bring the connection and its highlight back");
 
+    // ---- the arrow: it runs clear of every word and card tool, wears its name once it has one,
+    // and its badge takes a 44px tap
+    const arrow = () => page.evaluate(() => {
+      const c = document.querySelector(".board-canvas").getBoundingClientRect();
+      const boxes = [...document.querySelectorAll(".bcard .w, .bcard .bc-tools button, .bcard .vn")].map((n) => n.getBoundingClientRect());
+      let over = 0, n = 0;
+      for (const p of document.querySelectorAll(".board-lines path.blink")) {
+        const len = p.getTotalLength();
+        for (let d = 0; d <= len; d += 3) { const pt = p.getPointAtLength(d); const x = pt.x + c.left, y = pt.y + c.top; n++; if (boxes.some((r) => x > r.left + 0.5 && x < r.right - 0.5 && y > r.top + 2 && y < r.bottom - 2)) over++; }
+      }
+      const b = document.querySelector(".blabel");
+      const r = b.getBoundingClientRect(), inset = parseFloat(getComputedStyle(b, "::before").top) || 0;
+      return { n, over, badge: b.className, text: b.textContent, hit: [Math.round(r.width - 2 * inset), Math.round(r.height - 2 * inset)], h: Math.round(r.height) };
+    });
+    await page.waitForTimeout(100);
+    let ar = await arrow();
+    check(ar.n > 20 && ar.over === 0, `the arrow should not cross a word, a verse number or a card tool: ${ar.over} of ${ar.n} points do`);
+    check(ar.hit[0] >= 44 && ar.hit[1] >= 44 && ar.h === 22, `the badge should be a 22px circle with a 44px hit area: ${JSON.stringify(ar)}`);
+    await page.click(".bcard[data-id='b'] .link-chip");
+    await page.click(".bpop .shelf button:has-text('defines')");
+    await page.waitForTimeout(150);
+    ar = await arrow();
+    check(/named/.test(ar.badge) && /defines/.test(ar.text), `a named connection should show its name on the arrow: ${JSON.stringify(ar)}`);
+    check(ar.over === 0 && ar.hit[1] >= 44, "and still run clear of the words");
+    await shot("01b-arrow-named");
+
     // ---- a card removed: its speaker notes and its connection come back
     await page.click(".bcard[data-id='a'] .notes-toggle");
     await page.fill(".bcard[data-id='a'] .bc-notes-text", "Read slowly.");

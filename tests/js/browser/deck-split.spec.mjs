@@ -14,7 +14,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const check = (c, m) => { if (!c) errors.push(m); };
   // one verse of about 900 characters (it splits past 602), between two short ones
   const long = "For, notwithstanding the great love which the converts to these different faiths expressed at the time of their conversion, and the great zeal manifested by the respective clergy, who were active in getting up and promoting this extraordinary scene of religious feeling, in order to have everybody converted, as they were pleased to call it, let them join what sect they pleased; yet when the converts began to file off, some to one party and some to another, it was seen that the seemingly good feelings of both the priests and the converts were more pretended than real; for a scene of great confusion and bad feeling ensued, priest contending against priest, and convert against convert; so that all their good feelings one for another, if they ever had any, were entirely lost in a strife of words and a contest about opinions.";
-  const verses = [{ n: 5, text: "Some time in the second year after our removal to Manchester, there was an unusual excitement on the subject of religion." }, { n: 6, text: long }, { n: 7, text: "I was at this time in my fifteenth year." }];
+  const verses = [{ n: 5, text: "Some time in the second year after our removal to Manchester, there was an unusual excitement on the subject of religion." }, { n: 6, text: long }, { n: 7, text: "I was at this time in my fifteenth year.", color: "g" }]; // verse 7 was colored green in the reader
   const seed = { id: "split1", title: "", subtitle: "", theme: "royal", themeSet: true, updated: Date.now(), chain: null, links: [], items: [
     { id: "v", type: "passage", kind: "verse", doc_id: 9, pid: "p5", citation: "Joseph Smith—History 1:5–7", where: "", hl: [], text: verses.map((v) => v.text).join(" "), verses } ] };
   await page.goto(BASE);
@@ -39,7 +39,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForSelector(".stage:not([hidden])", { timeout: 5000 });
   const seen = [];
   for (let i = 0; i < 8; i++) {
-    const slide = await page.evaluate(() => ({ text: document.querySelector(".stage-text").textContent.slice(0, 40), marks: [...document.querySelectorAll(".stage-text mark")].map((m) => m.textContent) }));
+    const slide = await page.evaluate(() => ({ text: document.querySelector(".stage-text").textContent.slice(0, 40), marks: [...document.querySelectorAll(".stage-text mark")].map((m) => m.textContent), green: !!document.querySelector(".stage-text .rc.rc-g") }));
     if (seen.length && seen[seen.length - 1].text === slide.text) break;
     seen.push(slide);
     if (slide.marks.length) await page.screenshot({ path: `${OUT}stage-${seen.length}.png` });
@@ -49,6 +49,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.keyboard.press("Escape");
   const staged = seen.flatMap((s) => s.marks);
   check(seen.length >= 3, `the long verse should be cut across slides: ${seen.length} slides`);
+  check(seen.map((s) => s.green).join() === seen.map((s) => s.marks.includes("my fifteenth year.")).join(), `only the slide with the verse colored in the reader should wear its color: ${seen.map((s) => s.green).join()}`);
   check(JSON.stringify(staged) === JSON.stringify(phrases), `the stage should mark the three phrases and nothing else: ${JSON.stringify(staged)}`);
 
   // the PowerPoint: the runs in the accent color, bold, that are not verse numbers
@@ -59,15 +60,17 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   });
   fs.writeFileSync(OUT + "deck.pptx", Buffer.from(r, "base64"));
   execSync(`cd ${OUT} && rm -rf x && mkdir x && cd x && unzip -o -q ../deck.pptx`);
-  const filed = [];
+  const filed = [], green = [];
   const slides = fs.readdirSync(OUT + "x/ppt/slides").filter((f) => /^slide\d+\.xml$/.test(f)).sort((a, b) => parseInt(a.slice(5)) - parseInt(b.slice(5)));
   for (const f of slides) {
     const xml = fs.readFileSync(`${OUT}x/ppt/slides/${f}`, "utf8");
     const runs = [...xml.matchAll(/<a:r>(.*?)<\/a:r>/gs)].map((m) => m[1]).filter((x) => /b="1"/.test(x) && /F2C75C/.test(x) && !/baseline=/.test(x) && /sz="(1[89]|[2-9]\d)\d\d"/.test(x));
     const text = runs.map((x) => (x.match(/<a:t>(.*?)<\/a:t>/s) || [])[1] || "").join("").trim();
     if (text) filed.push(text);
+    green.push(/6CBF6A/.test(xml) ? /fifteenth/.test(xml) : null);
   }
   check(JSON.stringify(filed) === JSON.stringify(phrases), `the PowerPoint should mark the three phrases and nothing else: ${JSON.stringify(filed)}`);
+  check(green.filter((g) => g !== null).length === 1 && green.includes(true), `the PowerPoint should draw the reader's color on the slide with that verse, and only there: ${JSON.stringify(green)}`);
   await ctx.close();
   return errors;
 }
