@@ -314,7 +314,9 @@ import { database } from "./lib/idb.js";
     if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || e.defaultPrevented) return;
     if (!board || !board.isConnected || board.offsetParent === null) return;
     const a = document.activeElement;
-    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+    // (the label box that opens after a link takes the focus: while nothing has been typed in it, it has no undo of its own to come first)
+    const untouched = !!a && !!a.matches?.(".bpop input") && a.value === (a.dataset.was || "");
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable) && !untouched) return;
     if (document.querySelector("#toast.show.has-action")) return;
     e.preventDefault();
     if (undo()) GL().toast("Undone.");
@@ -1660,7 +1662,7 @@ import { database } from "./lib/idb.js";
     editing = link;
     const a = endOf(link.from), b = endOf(link.to);
     const name = (end) => (end ? (end.hl ? `“${phraseOf(end.item, end.hl)}”` : end.item.citation) : "");
-    const input = el("input", { class: "deck-subtitle", placeholder: "What the arrow says", value: link.label || "", "aria-label": "Connection label", autocapitalize: "off" });
+    const input = el("input", { class: "deck-subtitle", placeholder: "What the arrow says", value: link.label || "", "data-was": link.label || "", "aria-label": "Connection label", autocapitalize: "off" }); // data-was: the label as the editor found it, so Cmd+Z in an untouched box undoes the link (below, and app.js)
     const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); queueLines(); }; // the arrow wears the label as it is typed
     input.addEventListener("input", () => setLabel(input.value));
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); closeEditor(); draw(); } }); // Escape is taken at the document, focus or no focus

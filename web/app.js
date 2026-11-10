@@ -2457,7 +2457,10 @@ import { esc, mb } from "./lib/format.js";
   document.addEventListener("keydown", (e) => {
     if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || e.defaultPrevented) return;
     const a = document.activeElement;
-    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return; // a field's own undo comes first
+    // a field's own undo comes first, except in the deck's label box while it is as it opened:
+    // it takes the focus the moment a link is made, and Cmd+Z then means the link
+    const untouched = !!a && !!a.matches?.(".bpop input") && a.value === (a.dataset.was || "");
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable) && !untouched) return;
     e.preventDefault();
     // a toast whose action is a link to the web has nothing to undo
     if (toastAct && !toastEl?.querySelector("a.toast-action")) toastAct();
