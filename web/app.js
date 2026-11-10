@@ -749,6 +749,13 @@ import { esc, mb } from "./lib/format.js";
         // results drawn at the start of the trail had no Back to show; now that the search is a step, they do
         const lt = !$(".list-trail", listPane) && listTrail(); if (lt) listPane.prepend(lt);
       }
+      // on a wide screen the pane beside fresh results is not left blank: the best match opens in it,
+      // in this same entry, so Back still leaves the search in one step. A page already open stays.
+      if (!typeahead && !more && !silent && wide() && tabNow() === "search" && state.view !== "all" && state.group !== "documents" && !data.jump
+        && data.hits.length && !state.docId && !state.studyId && panelPane.hidden) {
+        const h = data.hits[0];
+        openDoc(h.doc_id, h.pid, { replace: true });
+      }
       // the concordance is every match already: Claude's extra searches belong to the ranked list, and would redraw it over this one
       if (!typeahead && !more && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
@@ -1105,12 +1112,28 @@ import { esc, mb } from "./lib/format.js";
     }
   }
   function setOverview(on) { document.body.classList.toggle("overview", !!on); }
-  // Search with nothing in the box yet: what the box takes, in a line.
+  // Search with nothing in the box yet: what the box takes, in a line, and the last few searches
+  // entered (kept on this device), each one tap away.
+  const ICON_RECENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.500V12l3 2"/></svg>'.replace("7.500", "7.5");
+  function rememberSearch(q) {
+    q = String(q || "").trim();
+    if (q.length < 2) return;
+    const was = store.get("recentSearches", []);
+    store.set("recentSearches", [q, ...(Array.isArray(was) ? was : []).filter((x) => x !== q)].slice(0, 8));
+  }
   function renderSearchHome(body) {
     const t = listTrail(); if (t) body.append(t);
-    body.append(el("div", { class: "search-home" }, [
+    const box = el("div", { class: "search-home" }, [
       el("p", { class: "search-lede", text: "Words, a phrase in quotes, a question, or a reference like Alma 32:21." }),
-    ]));
+    ]);
+    const recent = store.get("recentSearches", []);
+    if (Array.isArray(recent) && recent.length) {
+      box.append(el("div", { class: "home-sec-head recent-head" }, [el("h2", { text: "Recent" }), el("button", { type: "button", class: "text-btn small", text: "Clear", onclick: () => { store.del("recentSearches"); renderHome(); } })]));
+      const list = el("div", { class: "recent-list" });
+      for (const q of recent) list.append(el("button", { type: "button", class: "recent-row", onclick: () => { state.q = q; syncControls(); rememberSearch(q); runSearch({ typeahead: false }); } }, [el("span", { class: "ic", html: ICON_RECENT }), el("span", { class: "t", text: q })]));
+      box.append(list);
+    }
+    body.append(box);
   }
   function openShelf(key) {
     rememberScroll();
@@ -2762,6 +2785,7 @@ import { esc, mb } from "./lib/format.js";
       const choice = await window.Deck.askAboutDeck({ kind: "search" });
       if (choice === "cancel") return;
     }
+    rememberSearch(state.q);
     runSearch({ typeahead: false });
   });
   $(".clear").addEventListener("click", () => { if (!state.ready) return; input.value = ""; state.q = ""; input.focus(); runSearch(); });
