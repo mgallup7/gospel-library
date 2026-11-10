@@ -817,6 +817,7 @@ import { esc } from "./lib/format.js";
     // rather than leaving the board deaf to taps.
     if (drag) drag.end(null, true);
     if (reorder) reorder.end(null, true);
+    syncBanner(); // first, while the page is still as it was laid out: it measures
     syncHead();
     drawCards();
     queueLines();
@@ -827,14 +828,16 @@ import { esc } from "./lib/format.js";
   // it sticks under the bar at the top of the pane, so Cancel is in reach however far the cards
   // have scrolled. As it comes and goes the pane is scrolled by its height, as far as the pane
   // can be, so the phrase about to be tapped stays where it was (a board too short to scroll
-  // steps down instead). By drag, it is only a line of help and lies over the top of the pane
-  // as before: nothing may move under a finger that is already down.
+  // steps down instead). Where the cards began is read here, before anything changes, and how
+  // far they moved is read with the lines, in the same frame and before it is painted, so the
+  // board is laid out once for it, not twice more. By drag, the banner is only a line of help
+  // and lies over the top of the pane as before: nothing may move under a finger already down.
+  let bannerFrom = null; // the top of the cards on the screen before the banner came or went
   function syncBanner() {
     if (!ui) return;
     const b = ui.banner;
     const room = !!linking, had = !b.hidden && !b.classList.contains("over");
-    const changes = room !== had && board.isConnected;
-    const before = changes ? ui.canvas.getBoundingClientRect().top : 0;
+    if (room !== had && board.isConnected && bannerFrom === null) bannerFrom = ui.canvas.getBoundingClientRect().top;
     if (linking) {
       const from = endOf(linking);
       b.replaceChildren(el("div", { class: "bb", role: "status" }, [
@@ -847,10 +850,13 @@ import { esc } from "./lib/format.js";
     b.hidden = !(linking || drag);
     b.classList.toggle("over", !linking && !!drag);
     if (!b.hidden) b.style.top = `${stickyTop() + 6}px`;
-    if (changes) {
-      const moved = ui.canvas.getBoundingClientRect().top - before;
-      if (moved) scrollerOf(ui.canvas).scrollBy(0, moved);
-    }
+  }
+  // Called as the lines are drawn: the cards go back to where they were on the screen.
+  function settleBanner() {
+    if (bannerFrom === null) return;
+    const moved = ui.canvas.getBoundingClientRect().top - bannerFrom;
+    bannerFrom = null;
+    if (moved) scrollerOf(ui.canvas).scrollBy(0, moved);
   }
   function syncHead() {
     if (document.activeElement !== ui.title) ui.title.value = deck.title || "";
@@ -874,7 +880,6 @@ import { esc } from "./lib/format.js";
     ui.think.disabled = count() < 2;
     ui.md.disabled = empty;
     syncDownloadButton();
-    syncBanner();
     ui.hint.hidden = empty;
     ui.hint.textContent = empty ? ""
       : count() === 1 ? "To highlight: tap the first and last word of a phrase. To link: add another passage, then drag the dot at the end of a highlight onto a phrase there."
@@ -1480,7 +1485,8 @@ import { esc } from "./lib/format.js";
     return d;
   }
   function drawLines() {
-    if (!ui || !board.isConnected) return;
+    if (!ui || !board.isConnected) { bannerFrom = null; return; }
+    settleBanner();
     // read: the canvas, every dot, every card
     const cr = ui.canvas.getBoundingClientRect();
     const W = Math.max(1, cr.width), H = Math.max(1, cr.height);
