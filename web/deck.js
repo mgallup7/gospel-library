@@ -215,7 +215,7 @@ import { esc } from "./lib/format.js";
     forgetPast(); // the deck that arrived is where the history starts
     if (writeWanted) writeCurrent();
     draw(); updateBadge();
-    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    announce();
   })().catch((err) => {
     // whatever went wrong on the way in, the deck in memory must still be written from here on
     console.warn("the deck did not load:", err?.message);
@@ -228,13 +228,26 @@ import { esc } from "./lib/format.js";
     try {
       if (e.data?.what === "current") {
         const other = await tx("current", "readonly", (s) => s.get("deck"));
-        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; forgetPast(); draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
+        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; forgetPast(); draw(); updateBadge(); announce(); }
       } else if (e.data?.what === "saved") {
         savedDecks = (await tx("saved", "readonly", (s) => s.getAll())) || [];
         sortSaved();
       }
     } catch (_) { /* the next save writes ours */ }
   };
+
+  // "deck:change" tells the rest of the app the deck is different (the + on every result, Ask's
+  // ticks). Once a frame is enough: a burst of saves, or a key typed in a note, used to send one
+  // each, and each made the results list look itself up against the deck again.
+  let changeQueued = false;
+  function announce() {
+    if (changeQueued) return;
+    changeQueued = true;
+    const fire = () => { changeQueued = false; try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {} };
+    // a page in the background gets no frames; a timer still runs there
+    if (typeof document !== "undefined" && document.visibilityState === "visible" && window.requestAnimationFrame) window.requestAnimationFrame(fire);
+    else setTimeout(fire, 0);
+  }
 
   function save({ redraw = true } = {}) {
     deck.updated = Date.now();
@@ -243,7 +256,7 @@ import { esc } from "./lib/format.js";
     updateBadge();
     if (redraw) draw();
     else if (ui) { syncDownloadButton(); syncUndo(); }
-    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    announce();
   }
 
   // ----------------------------------------------------------------- undo --
@@ -301,7 +314,7 @@ import { esc } from "./lib/format.js";
     lastJson = snap(); lastEntry = null;
     for (const u of undone) { try { u.extra?.(); } catch (_) {} }
     scheduleWrite(); updateBadge(); draw(); // written at once, like any other change
-    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    announce();
     return true;
   }
   // The toast after a change, with Undo for exactly that change (and whatever came after it).
@@ -856,86 +869,130 @@ import { esc } from "./lib/format.js";
     selectedId = id;
     for (const c of ui.cards.querySelectorAll(".bcard")) c.classList.toggle("selected", c.dataset.id === id);
   }
-  function drawCards() {
-    const cards = ui.cards;
-    cards.replaceChildren();
-    if (selectedId && !byId(selectedId)) selectedId = null;
-    deck.items.forEach((it, idx) => {
-      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : "") + (linking && linking.id === it.id ? " link-src" : ""), "data-id": it.id, "data-type": it.type });
-      const tools = el("div", { class: "bc-tools" }, [
-        el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
-        el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
-        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeCard(it); } }),
-      ]);
-      if (it.type === "section") {
-        const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
-        inp.addEventListener("input", () => { it.title = inp.value; save({ redraw: false }); });
-        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
-        card.append(notesEl(it));
-        cards.append(card);
-        return;
-      }
-      if (it.type === "question" || it.type === "note") {
-        card.classList.add(it.type);
-        const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "Words for the room to read: a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Slide text" });
-        ta.value = it.text || "";
-        const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
-        ta.addEventListener("input", () => { it.text = ta.value; grow(); save({ redraw: false }); });
-        requestAnimationFrame(grow);
-        card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
-        card.append(ta);
-        card.append(notesEl(it));
-        cards.append(card);
-        return;
-      }
-      // the citation is the way back to the page: it opens the chapter or talk at this passage
-      const meta = el("div", { class: "bc-meta" }, [it.doc_id
-        ? el("button", { type: "button", class: "bc-cite", text: it.citation, title: "Open this page at the passage", "aria-label": `${it.citation}: open the page at this passage`, onclick: () => openPassage(it) })
-        : el("div", { class: "bc-cite", text: it.citation })]);
-      // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
-      if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
-      const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
-      card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
-      card.append(textEl(it));
-      // the talk and conference sit under the words, the way an attribution follows a quote
-      if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
+  function cardEl(it, idx) {
+    const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : "") + (linking && linking.id === it.id ? " link-src" : ""), "data-id": it.id, "data-type": it.type });
+    const tools = el("div", { class: "bc-tools" }, [
+      el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(deck.items.indexOf(it), -1); } }),
+      el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(deck.items.indexOf(it), 1); } }),
+      el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeCard(it); } }),
+    ]);
+    if (it.type === "section") {
+      const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
+      inp.addEventListener("input", () => { it.title = inp.value; stamp(it); save({ redraw: false }); });
+      card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: "Section" }), inp]), tools]));
       card.append(notesEl(it));
-      if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint first-word", text: "Now tap the last word of the phrase. Tap anywhere else to drop it." }));
-      if (linking && linking.id === it.id) card.append(el("div", { class: "bc-hint", text: "Linking from here. Tap this card, or Cancel, to stop." }));
-      if (active && active.id === it.id) {
-        const h = hlById(it, active.hl);
-        if (h) card.append(el("div", { class: "hl-tools" }, [
-          el("span", { class: "ph", text: `“${phraseOf(it, h)}”` }),
-          el("button", { type: "button", class: "chip small", text: "Link to…", onclick: (e) => { e.stopPropagation(); linking = { id: it.id, hl: h.id }; active = null; draw(); } }),
-          el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => {
-            e.stopPropagation();
-            const links = deck.links.filter((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)).length;
-            removeHighlight(it, h); active = null; save();
-            did(links ? `Highlight removed, with its ${plural(links, "connection")}.` : "Highlight removed.");
-          } }),
-          el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
+      return card;
+    }
+    if (it.type === "question" || it.type === "note") {
+      card.classList.add(it.type);
+      const ta = el("textarea", { class: "bc-card-text", rows: 2, placeholder: it.type === "question" ? "A question for the room…" : "Words for the room to read: a teaching point, a line to say…", "aria-label": it.type === "question" ? "Question" : "Slide text" });
+      ta.value = it.text || "";
+      const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(320, ta.scrollHeight + 2) + "px"; };
+      ta.addEventListener("input", () => { it.text = ta.value; grow(); stamp(it); save({ redraw: false }); });
+      requestAnimationFrame(grow);
+      card.append(el("div", { class: "bc-head" }, [el("div", { class: "bc-meta" }, [el("div", { class: "bc-kind", text: it.type === "question" ? "Question" : "Slide text" })]), tools]));
+      card.append(ta);
+      card.append(notesEl(it));
+      return card;
+    }
+    // the citation is the way back to the page: it opens the chapter or talk at this passage
+    const meta = el("div", { class: "bc-meta" }, [it.doc_id
+      ? el("button", { type: "button", class: "bc-cite", text: it.citation, title: "Open this page at the passage", "aria-label": `${it.citation}: open the page at this passage`, onclick: () => openPassage(it) })
+      : el("div", { class: "bc-cite", text: it.citation })]);
+    // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
+    if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
+    const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
+    card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
+    card.append(textEl(it));
+    // the talk and conference sit under the words, the way an attribution follows a quote
+    if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
+    card.append(notesEl(it));
+    if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint first-word", text: "Now tap the last word of the phrase. Tap anywhere else to drop it." }));
+    if (linking && linking.id === it.id) card.append(el("div", { class: "bc-hint", text: "Linking from here. Tap this card, or Cancel, to stop." }));
+    if (active && active.id === it.id) {
+      const h = hlById(it, active.hl);
+      if (h) card.append(el("div", { class: "hl-tools" }, [
+        el("span", { class: "ph", text: `“${phraseOf(it, h)}”` }),
+        el("button", { type: "button", class: "chip small", text: "Link to…", onclick: (e) => { e.stopPropagation(); linking = { id: it.id, hl: h.id }; active = null; draw(); } }),
+        el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => {
+          e.stopPropagation();
+          const links = deck.links.filter((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)).length;
+          removeHighlight(it, h); active = null; save();
+          did(links ? `Highlight removed, with its ${plural(links, "connection")}.` : "Highlight removed.");
+        } }),
+        el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
+      ]));
+    }
+    const mine = deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id);
+    if (mine.length) {
+      const row = el("div", { class: "bc-links" });
+      for (const l of mine) {
+        const out = l.from.id === it.id;
+        const other = endOf(out ? l.to : l.from);
+        if (!other) continue;
+        const otherText = other.hl ? `: “${phraseOf(other.item, other.hl)}”` : "";
+        row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this connection", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
+          el("b", { text: String(linkNumber(l)) }),
+          ` ${out ? "→" : "←"} ${cardCitation(other.item)}${otherText}`,
+          el("i", { text: l.label ? `, ${l.label}` : ", add a label" }),
         ]));
       }
-      const mine = deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id);
-      if (mine.length) {
-        const row = el("div", { class: "bc-links" });
-        for (const l of mine) {
-          const out = l.from.id === it.id;
-          const other = endOf(out ? l.to : l.from);
-          if (!other) continue;
-          const otherText = other.hl ? `: “${phraseOf(other.item, other.hl)}”` : "";
-          row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this connection", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
-            el("b", { text: String(linkNumber(l)) }),
-            ` ${out ? "→" : "←"} ${cardCitation(other.item)}${otherText}`,
-            el("i", { text: l.label ? `, ${l.label}` : ", add a label" }),
-          ]));
-        }
-        card.append(row);
-      }
-      cards.append(card);
+      card.append(row);
+    }
+    return card;
+  }
+  // The cards are patched, not rebuilt. Each card on the board is remembered with a signature:
+  // its item as text, and whatever the board is doing to it (a first word tapped, a highlight's
+  // tools showing, a link starting here, the connections its chips name). A redraw makes a new
+  // card only where the signature changed, and puts the cards in the deck's order by moving the
+  // ones out of place: a highlight, a note, a label or a move touches one card or two, where it
+  // used to rebuild every node of a long deck. The token says the item is the same object, so a
+  // deck put back by Undo (new objects) gets new cards and no card acts on an item that is gone.
+  const tokens = new WeakMap();
+  let tokenCount = 0;
+  const token = (o) => { let t = tokens.get(o); if (!t) { t = ++tokenCount; tokens.set(o, t); } return t; };
+  let drawn = new Map(); // item id: { sig, el }
+  let foot = null;       // "+ Question" and "+ Slide text", made once
+  function cardSig(it, idx) {
+    const parts = [token(it), JSON.stringify(it), idx === 0 ? "first" : "", idx === deck.items.length - 1 ? "last" : ""];
+    if (it.type !== "passage") return parts.join("\u0001");
+    if (pending && pending.id === it.id) parts.push(`pending ${pending.i}`);
+    if (active && active.id === it.id) parts.push(`active ${active.hl}`);
+    if (linking && linking.id === it.id) parts.push(`linking ${linking.hl || ""}`);
+    deck.links.forEach((l, n) => {
+      if (l.from.id !== it.id && l.to.id !== it.id) return;
+      const other = endOf(l.from.id === it.id ? l.to : l.from);
+      parts.push(n, token(l), l.from.id === it.id ? ">" : "<", l.label || "", other ? cardCitation(other.item) : "", other && other.hl ? `${other.hl.s}-${other.hl.e}` : "");
     });
+    return parts.join("\u0001");
+  }
+  // Typing in a card changes its item and nothing else on it: the card stands as drawn.
+  function stamp(it) {
+    const c = drawn.get(it.id);
+    if (c) c.sig = cardSig(it, deck.items.indexOf(it));
+  }
+  function drawCards() {
+    const cards = ui.cards;
+    if (selectedId && !byId(selectedId)) selectedId = null;
+    const want = [], live = new Map();
+    deck.items.forEach((it, idx) => {
+      const sig = cardSig(it, idx);
+      let c = drawn.get(it.id);
+      if (!c || c.sig !== sig) c = { sig, el: cardEl(it, idx) };
+      c.el.classList.toggle("selected", it.id === selectedId);
+      live.set(it.id, c);
+      want.push(c.el);
+    });
+    drawn = live;
+    // what is no longer wanted goes (old cards, the foot, the empty deck's message); then each
+    // card that is not where the deck has it is moved there
+    const keep = new Set(want);
+    if (foot && deck.items.length) keep.add(foot);
+    for (const n of [...cards.children]) if (!keep.has(n)) n.remove();
+    let ref = cards.firstChild;
+    for (const n of want) { if (n === ref) ref = ref.nextSibling; else cards.insertBefore(n, ref); }
     // A question or slide text is added from the foot of the list, after the selected card.
-    if (deck.items.length) cards.append(el("div", { class: "board-foot" }, [
+    if (deck.items.length && (!foot || cards.lastChild !== foot)) cards.append(foot ||= el("div", { class: "board-foot" }, [
       el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => { addCard("question"); did("Question added."); } }),
       el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => { addCard("note"); did("Slide text added."); } }),
     ]));
@@ -971,7 +1028,7 @@ import { esc } from "./lib/format.js";
     const ta = el("textarea", { class: "bc-notes-text", rows: 2, hidden: true, placeholder: "What to say when this slide is up (goes into the PowerPoint as speaker notes)", "aria-label": "Speaker notes" });
     ta.value = it.notes || "";
     const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight + 2) + "px"; };
-    ta.addEventListener("input", () => { it.notes = ta.value; wrap.classList.toggle("has", !!ta.value.trim()); toggle.textContent = ta.value.trim() ? "Speaker notes" : "Add speaker notes"; grow(); save({ redraw: false }); });
+    ta.addEventListener("input", () => { it.notes = ta.value; wrap.classList.toggle("has", !!ta.value.trim()); toggle.textContent = ta.value.trim() ? "Speaker notes" : "Add speaker notes"; grow(); stamp(it); save({ redraw: false }); });
     ta.addEventListener("click", (e) => e.stopPropagation());
     wrap.append(toggle, ta);
     return wrap;
