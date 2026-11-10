@@ -400,6 +400,7 @@ const methods = {
   async original(params) { need(); return originalWords(params || {}); },
   async lexicon({ strongs, limit = 80 }) { need(); return lexiconEntry(strongs, limit); },
   async morph({ code }) { need(); return morphCodes(code); },
+  async originalsFor({ word }) { need(); return originalsFor(word); },
   async originalSearch(params) { need(); return originalSearch(params || {}); },
   async locate(params) { need(); return locate(params || {}); },
   // Topical Guide, Bible Dictionary and Guide to the Scriptures entries for some English words
@@ -1629,6 +1630,68 @@ function verseHit(r) {
   return { doc_id: r.doc_id ?? null, uri: r.uri || null, pid: r.pid || null, kind: "verse", book: r.book, chapter: r.chapter, verse: r.verse, lang,
            title: r.title || cite, collection: "scriptures", book_slug: r.book, book_name: r.book_name || (b ? b.name : r.book), volume: r.volume || (b ? b.volume_name : null),
            label: r.volume || (b ? b.volume_name : langName(lang)), citation: cite, text: r.text || "" };
+}
+
+// An English word typed as a search ("faith", "covenant", "eternal life"): the Hebrew and Greek
+// words behind it. Every word of the text carries the glossers' English for it, so the words
+// most often glossed "faith" (or "faithful", "faithfulness": the word with an ordinary ending)
+// are counted by their dictionary word, and the three commonest in each language returned.
+// Nothing for a reference, a Strong's number, a phrase of three words, or the little words.
+const BEHIND_STOP = new Set(("the and that with for from unto into upon they them their theirs his her hers him she you your yours thou thee thy thine who whom whose which what " +
+  "this these those there then than but not nor all any one two are was were been being have has had hath will shall may might can could would should did does doth done " +
+  "when where also out over under before after because about through against among between let say said saith came come went shall behold yea nay thus therefore wherefore").split(" "));
+const behindCache = new Map();
+function originalsFor(word) {
+  const out = { query: String(word || "").trim(), words: [] };
+  if (!haveOriginals()) return out;
+  const q = out.query.toLowerCase();
+  if (!q || /[^a-z'\s-]/.test(q)) return out;
+  const tokens = q.split(/[\s-]+/).map((t) => t.replace(/'s$/, "").replace(/'/g, "")).filter(Boolean);
+  const content = [...new Set(tokens.filter((t) => t.length >= 3 && !BEHIND_STOP.has(t)))];
+  if (!content.length || content.length > 2 || tokens.length > 3) return out;
+  for (const w of content) {
+    // a common word ("god", "son") is in thousands of verses and takes a second: asked once per library
+    const key = `${libraryGen}:${w}`;
+    if (behindCache.has(key)) { if (behindCache.get(key).length) out.words.push({ word: w, lemmas: behindCache.get(key) }); continue; }
+    const forms = new Set([w, ...["s", "es", "'s", "d", "ed", "ing", "ful", "fully", "fulness", "ness", "ly"].map((end) => w + end)]);
+    if (w.endsWith("e")) forms.add(w.slice(0, -1) + "ing");
+    if (w.endsWith("y")) for (const end of ["ies", "ied", "iful", "ifully"]) forms.add(w.slice(0, -1) + end);
+    const by = new Map();
+    // the verses whose glosses hold the word come from the index, so only their words are read:
+    // a scan of every word's gloss takes two seconds, this a few hundredths
+    const stem = /[ey]$/.test(w) ? w.slice(0, -1) : w;
+    const found = rows(`SELECT w.lang AS lang, substr(COALESCE(NULLIF(w.root, ''), w.strongs), 1, 5) AS base, lower(w.gloss) AS g, COUNT(*) AS n
+                          FROM original_verse_refs r JOIN original_words w ON w.book = r.book AND w.chapter = r.chapter AND w.verse = r.verse
+                         WHERE r.id IN (SELECT rowid FROM original_verses WHERE original_verses MATCH ?) AND w.gloss LIKE ?
+                         GROUP BY w.lang, base, g`, [`glosses : ${stem}*`, `%${stem}%`]);
+    for (const r of found) {
+      if (!/^[GH]\d{4}$/.test(r.base || "")) continue;
+      if (!String(r.g || "").replace(/[^a-z'\s-]/g, " ").split(/[\s-]+/).some((t) => forms.has(t))) continue;
+      const have = by.get(r.base);
+      if (have) have.n += r.n; else by.set(r.base, { strongs: r.base, lang: r.lang, n: r.n });
+    }
+    const lemmas = [];
+    for (const lang of ["gr", "he"]) {
+      const top = [...by.values()].filter((x) => x.lang === lang).sort((a, b) => b.n - a.n || (a.strongs < b.strongs ? -1 : 1));
+      let taken = 0;
+      for (const [i, x] of top.entries()) {
+        if (taken >= 3) break;
+        if (i > 0 && x.n < 2) break; // a word glossed so once is a chance, unless it is all there is
+        const lex = row("SELECT * FROM original_lexicon WHERE strongs=?", [x.strongs]) || row("SELECT * FROM original_lexicon WHERE base=? ORDER BY strongs LIMIT 1", [x.strongs]);
+        if (!lex) continue;
+        const occurrences = lex.occurrences ?? (value("SELECT COUNT(*) FROM original_words WHERE strongs >= ? AND strongs < ?", [x.strongs, x.strongs + "~"]) || 0);
+        // the article is glossed "the son" ten times in twenty thousand: a word that almost never
+        // means this is not the word behind it
+        if (i > 0 && occurrences && x.n / occurrences < 0.02) continue;
+        lemmas.push({ strongs: x.strongs, lang, language: langName(lang), lemma: lex.lemma, translit: lex.translit, name: lex.ascii || asciiTranslit(lex.translit), gloss: lex.gloss, n: x.n, occurrences });
+        taken++;
+      }
+    }
+    if (behindCache.size > 200) behindCache.clear();
+    behindCache.set(key, lemmas);
+    if (lemmas.length) out.words.push({ word: w, lemmas });
+  }
+  return out;
 }
 
 // What a grammar code means, part by part ("HR/Ncfsa" is a preposition and a noun).

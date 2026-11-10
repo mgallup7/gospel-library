@@ -11,7 +11,7 @@ const SUFFIX = /\s+(?:my|your|his|her|its|our|their|me|you|him|us|them|it|thee|t
 
 /** One gloss down to its stem: "according to covenant loyalty your" -> "covenant loyalty", "of faith?" -> "faith". */
 export function glossStem(g) {
-  let t = String(g || "").replace(/[<>[\]{}.,;:?!¿"“”—]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  let t = String(g || "").replace(/[<>[\]{}.,;:?!¿"“”\u2014]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
   for (let i = 0; i < 4; i++) {
     const next = t.replace(PREFIX, "").replace(SUFFIX, "").trim();
     if (!next || next === t) break;

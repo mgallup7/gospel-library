@@ -61,6 +61,43 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       check(!/\b(fe)?males?\b/i.test(grammar), `emunah is still called female: ${grammar}`);
       await page.screenshot({ path: `${OUT}${name}-02-emunah.png` });
       await page.click("#sheet .close");
+
+      // an English word offers its Hebrew and Greek: the engine's count, then the line and the sheet
+      const behind = (word) => page.evaluate((w) => window.GL.api("originalsFor", { word: w }), word);
+      const names = (r) => r.words.map((w) => `${w.word}: ${w.lemmas.map((l) => `${l.name} ${l.strongs} ${l.lang}`).join(", ")}`).join(" | ");
+      const faith = await behind("faith");
+      check(names(faith) === "faith: pistis G4102 gr, pistos G4103 gr, oligopistos G3640 gr, emet H0571 he, emunah H0530 he, chasid H2623 he", `originalsFor faith: ${names(faith)}`);
+      const pistis = faith.words[0].lemmas[0];
+      check(pistis.n === 241 && pistis.occurrences === 243 && pistis.lemma.normalize("NFC") === "πίστις".normalize("NFC") && pistis.language === "Greek", `pistis: ${JSON.stringify(pistis)}`);
+      check(names(await behind("Covenant")) === "covenant: diatheke G1242 gr, berit H1285 he, chesed H2617 he", `originalsFor covenant: ${names(await behind("covenant"))}`);
+      const life = await behind("eternal life");
+      check(life.words.length === 2 && life.words[0].lemmas[0].name === "aionios" && life.words[1].lemmas[0].name === "zoe", `originalsFor eternal life: ${names(life)}`);
+      // the article is glossed "the son" a few times in twenty thousand: not the word behind "son"
+      check(/^son: uhios G5207 gr, teknon G5043 gr, uhiothesia G5206 gr, ben H1121 he/.test(names(await behind("son"))), `originalsFor son: ${names(await behind("son"))}`);
+      for (const none of ["the", "and it came", "John 3:16", "H2617", "faith hope charity", "\"faith\"", "אמונה", "zzzq", "", "o'"]) {
+        const r = await behind(none);
+        check(r && r.words.length === 0, `originalsFor ${JSON.stringify(none)} should offer nothing: ${names(r)}`);
+      }
+      // the line, in a container of the caller's, and the word's sheet from it
+      await page.fill("#q", "faith"); await page.press("#q", "Enter");
+      await page.waitForSelector("#list .hit", { timeout: 15000 });
+      await page.evaluate(async () => {
+        const list = document.querySelector("#list");
+        const slot = document.createElement("div"); slot.id = "behindTest";
+        (list.querySelector(".smart-line") || list.firstElementChild).after(slot);
+        await window.Original.offerFor("faith", slot);
+        await window.Original.offerFor("faith", document.createElement("div")); // off the page: nothing, no error
+      });
+      const line = await page.textContent("#behindTest .orig-behind");
+      check(line === "Behind this word: pistis (Greek, 241),pistos (Greek, 49),oligopistos (Greek, 5),emet (Hebrew, 73),emunah (Hebrew, 46),chasid (Hebrew, 33)", `the offer: ${line}`);
+      await page.screenshot({ path: `${OUT}${name}-03-behind.png` });
+      await page.click("#behindTest button:has-text('emunah')");
+      await page.waitForSelector("#sheet:not([hidden]) .ow-section", { timeout: 8000 });
+      await page.waitForTimeout(400);
+      const sheetText = await page.textContent("#sheet .sheet-body");
+      check(/אֱמוּנָה/.test(sheetText) && /Read as “faith” \(or a form of it\) in 46 of its 49 occurrences/.test(sheetText) && /Lexicon, Strong's H0530/.test(sheetText) && /All 49 verses with this word/.test(sheetText), `emunah's sheet from the offer: ${sheetText.slice(0, 300)}`);
+      await page.screenshot({ path: `${OUT}${name}-04-behind-sheet.png` });
+      await page.click("#sheet .close");
     } catch (e) { errors.push(`${name} aborted: ${e.message.split("\n")[0]}`); await page.screenshot({ path: `${OUT}${name}-failed.png` }).catch(() => {}); }
     await ctx.close();
   }

@@ -367,5 +367,33 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf } from "./lib/step.js
     ]);
   }
 
-  window.Original = { attach, resultsHeader, hintLine, check, isBible, closeSheet };
+  // An English word typed as a search ("faith"): the Hebrew and Greek words the glossers most
+  // often read that way, under the search line; each opens the word's sheet. The engine counts
+  // them (originalsFor); nothing is drawn for a phrase, a reference or a little word. The
+  // container is the caller's, put where the line should sit; a search that has moved on by
+  // the time the answer comes has taken its container off the page, and nothing is drawn.
+  async function offerFor(word, container) {
+    if (!container || !String(word || "").trim() || !(await check())) return null;
+    let found;
+    try { found = await GL().api("originalsFor", { word }); } catch (_) { return null; }
+    if (!found || !found.words || !found.words.length || !container.isConnected) return null;
+    const one = found.words.length === 1;
+    const lines = found.words.map((w) => el("div", { class: "smart-line orig-behind" }, [
+      el("span", { text: one ? "Behind this word: " : `Behind “${w.word}”: ` }),
+      ...w.lemmas.map((l, i) => el("button", {
+        type: "button", class: "text-btn small", text: `${l.name || l.translit} (${l.language}, ${l.n.toLocaleString()})${i < w.lemmas.length - 1 ? "," : ""}`,
+        title: `${l.lemma} ${l.translit || ""}${l.gloss ? `, ${l.gloss}` : ""}: read as “${w.word}” ${l.n.toLocaleString()} ${l.n === 1 ? "time" : "times"}. Strong's ${l.strongs}`,
+        onclick: () => lemmaSheet(l, w.word),
+      })),
+    ]));
+    container.replaceChildren(...lines);
+    return container;
+  }
+  // The word's sheet from its dictionary entry rather than from a place in a verse.
+  function lemmaSheet(l, english) {
+    const where = `Read as “${english}” (or a form of it) in ${l.n.toLocaleString()} of its ${(l.occurrences || l.n).toLocaleString()} ${(l.occurrences || l.n) === 1 ? "occurrence" : "occurrences"}`;
+    return wordSheet({ word: l.lemma || "", translit: l.translit || "", gloss: "", strongs: l.strongs, morph: "" }, { lang: l.lang, citation: where }, {});
+  }
+
+  window.Original = { attach, resultsHeader, hintLine, offerFor, check, isBible, closeSheet };
 })();
