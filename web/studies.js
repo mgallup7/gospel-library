@@ -12,29 +12,15 @@
 import { markdown as renderMarkdown } from "./lib/markdown.js";
 import { esc, mb } from "./lib/format.js";
 import { findReferences } from "./lib/refs.js";
+import { database } from "./lib/idb.js";
 
 (() => {
   "use strict";
   const DB = "gospel-studies", STORE = "studies", MAX_BYTES = 12 * 1024 * 1024;
 
-  function openDb() {
-    return new Promise((resolve, reject) => {
-      const r = indexedDB.open(DB, 1);
-      r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE, { keyPath: "id" }); };
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error || new Error("the studies database did not open"));
-    });
-  }
-  async function tx(mode, work) {
-    const db = await openDb();
-    return new Promise((resolve, reject) => {
-      const t = db.transaction(STORE, mode);
-      const req = work(t.objectStore(STORE));
-      t.oncomplete = () => { db.close(); resolve(req ? req.result : undefined); };
-      t.onerror = () => { db.close(); reject(t.error || new Error("the studies database failed")); };
-      t.onabort = () => { db.close(); reject(t.error || new Error("the studies database failed")); };
-    });
-  }
+  // lib/idb.js opens the database for each piece of work and closes it after
+  const db = database({ name: DB, label: "studies", upgrade(d) { if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: "id" }); } });
+  const tx = (mode, work) => db.tx(STORE, mode, work);
   // a database that will not open reads as an empty shelf, and goes in the error log
   const list = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.added - a.added).map(meta); } catch (err) { window.GLLog?.note("studies.list", err); return []; } };
   const get = (id) => tx("readonly", (s) => s.get(id));

@@ -5,6 +5,7 @@
 import { chunksOf, fontSize, MAX_CHARS } from "./lib/chunk.js";
 import { talkCitation, chapterOf } from "./lib/cite.js";
 import { esc } from "./lib/format.js";
+import { database } from "./lib/idb.js";
 
 (() => {
   "use strict";
@@ -80,30 +81,12 @@ import { esc } from "./lib/format.js";
   // database, like the marks: "current" holds the deck in progress under the key "deck", "saved"
   // one record per saved deck. What is in memory is the truth; writes follow a moment behind.
   const DB = "gospel-decks";
-  let dbOpen = null;
-  function openDb() {
-    if (dbOpen) return dbOpen;
-    dbOpen = new Promise((resolve, reject) => {
-      const r = indexedDB.open(DB, 1);
-      r.onupgradeneeded = () => {
-        if (!r.result.objectStoreNames.contains("current")) r.result.createObjectStore("current");
-        if (!r.result.objectStoreNames.contains("saved")) r.result.createObjectStore("saved", { keyPath: "id" });
-      };
-      r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); dbOpen = null; }; resolve(db); };
-      r.onerror = () => { dbOpen = null; reject(r.error || new Error("the decks database did not open")); };
-    });
-    return dbOpen;
-  }
-  async function tx(name, mode, work) {
-    const db = await openDb();
-    return new Promise((resolve, reject) => {
-      const t = db.transaction(name, mode);
-      const req = work(t.objectStore(name));
-      t.oncomplete = () => resolve(req ? req.result : undefined);
-      t.onerror = () => reject(t.error || new Error("the decks database failed"));
-      t.onabort = () => reject(t.error || new Error("the decks database failed"));
-    });
-  }
+  // one connection for the life of the page (lib/idb.js), let go when another tab upgrades
+  const db = database({ name: DB, label: "decks", keep: true, upgrade(d) {
+    if (!d.objectStoreNames.contains("current")) d.createObjectStore("current");
+    if (!d.objectStoreNames.contains("saved")) d.createObjectStore("saved", { keyPath: "id" });
+  } });
+  const tx = (name, mode, work) => db.tx(name, mode, work);
   const isFull = (err) => !!err && (err.name === "QuotaExceededError" || /quota|full/i.test(err.message || ""));
   let warnedAt = 0;
   function warn(err) {

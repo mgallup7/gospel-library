@@ -15,7 +15,7 @@
 const SHELL = "gospel-shell-v34";
 const ASSETS = "gospel-assets-v1";
 const FILES = ["./", "./index.html", "./study-frame.html", "./app.css", "./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./marks.js", "./engine.js", "./model-worker.js", "./semantic.js", "./lib/wordpiece.js", "./vendor/pptxgen.bundle.js", "./lib/query.js", "./lib/scriptures.js",
-  "./lib/scriptures-data.js", "./lib/cite.js", "./lib/markdown.js", "./lib/chunk.js", "./lib/checks.js", "./lib/step.js", "./lib/refs.js", "./lib/format.js", "./lib/log.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
+  "./lib/scriptures-data.js", "./lib/cite.js", "./lib/markdown.js", "./lib/chunk.js", "./lib/checks.js", "./lib/step.js", "./lib/refs.js", "./lib/format.js", "./lib/log.js", "./lib/idb.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];
 
 self.addEventListener("install", (e) => {
   // Every file fetched fresh (not from the browser's own cache, which could hold an older one)
