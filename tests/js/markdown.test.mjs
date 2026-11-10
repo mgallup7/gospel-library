@@ -82,3 +82,22 @@ test("page: a fenced code block is kept as written, escaped, and not read as Mar
   assert.equal(page("Before\n```\n# not a heading\n<b>Alma 32:21</b> **x**\n```\nAfter"), "<p>Before</p>\n<pre><code># not a heading\n&lt;b&gt;Alma 32:21&lt;/b&gt; **x**</code></pre>\n<p>After</p>");
   assert.equal(page("```js\nunclosed"), "<pre><code>unclosed</code></pre>");
 });
+
+test("answer: a quotation from a web search is marked as such, and is not counted as unverified", async () => {
+  const { webQuotes } = await import("../../web/lib/markdown.js");
+  const ps = passages();
+  const web = [{ plain: 'The temple was dedicated in 1893, and a report of the day said "the crowd filled the block from end to end" before noon.' }];
+  const src = 'Alma says "faith is not to have a perfect knowledge of things" [1]. A report said "the crowd filled the block from end to end". He never said "this line is in neither place at all".';
+  const html = markdown(src, { passages: ps, web });
+  assert.ok(html.includes("&quot;faith is not to have a perfect knowledge of things&quot;"), "a library quotation is left plain");
+  assert.ok(html.includes('<span class="from-web" title="From the web, not checked against your library">the crowd filled the block from end to end</span>&quot;<sup class="from-web-tag" title="From the web, not checked against your library">web</sup>'), html);
+  assert.ok(html.includes('<span class="unverified" title="Not word for word in any passage found">this line is in neither place at all</span>'), "an invented quotation is still underlined");
+  assert.deepEqual(unverifiedQuotes(src, ps, web), ["this line is in neither place at all"]);
+  assert.deepEqual(webQuotes(src, ps, web), ["the crowd filled the block from end to end"]);
+  // with no web search there is no web mark: the same words are plainly unverified
+  assert.deepEqual(unverifiedQuotes(src, passages()), ["the crowd filled the block from end to end", "this line is in neither place at all"]);
+  assert.deepEqual(webQuotes(src, passages()), []);
+  assert.ok(!markdown(src, { passages: passages() }).includes("from-web"));
+  // a quotation the library holds is the library's, even when a web stretch repeats it
+  assert.deepEqual(webQuotes('"faith is not to have a perfect knowledge of things"', passages(), [{ plain: "faith is not to have a perfect knowledge of things" }]), []);
+});

@@ -1500,7 +1500,6 @@ import { esc, mb } from "./lib/format.js";
     const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
     readerPane.replaceChildren(bar, body, nav, foot);
     readerPane.classList.remove("has-study");
-    releaseStudyUrl();
     readerPane.scrollTop = 0;
     unseen = readerPane.hidden; // drawn behind the board: it finds its verse when it is first shown
     refreshSwitches();
@@ -1789,8 +1788,7 @@ import { esc, mb } from "./lib/format.js";
   // ---- My studies: your own pages in the reader ------------------------------
   // A study opens in a frame of its own (its look and its scripts intact, sandboxed away from
   // the app); its links come back to the app, which opens the local copy.
-  let currentStudy = null, studyScroll = 0, studyUrl = null;
-  function releaseStudyUrl() { if (studyUrl) { try { URL.revokeObjectURL(studyUrl); } catch (_) {} studyUrl = null; } }
+  let currentStudy = null, studyScroll = 0;
   let studyAnchor = null; // a heading to open the study at (from a match in the results), once
   async function openStudy(id, { push: doPush = true, scroll = 0, anchor = null } = {}) {
     if (!id || !window.Studies) return;
@@ -1824,11 +1822,9 @@ import { esc, mb } from "./lib/format.js";
       el("span", { class: "pane-switch-slot" }),
     ]);
     const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts allow-forms" });
-    // a blob address rather than srcdoc, so the page's own #links and hash navigation work as they
-    // do anywhere; the address stays valid while the page is open (its #links need it)
-    releaseStudyUrl();
-    studyUrl = URL.createObjectURL(new Blob([window.Studies.frameHtml(rec)], { type: "text/html;charset=utf-8" }));
-    frame.src = studyUrl;
+    // the frame goes to study-frame.html, which asks for the page and writes it into itself: the
+    // app's own page is pinned by a policy that a blob or srcdoc page would inherit
+    window.Studies.mount(frame, rec);
     frame.addEventListener("load", () => {
       if (studyAnchor) { frame.contentWindow?.postMessage({ type: "gospel:anchor", id: studyAnchor }, "*"); studyAnchor = null; }
       else if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*");
@@ -1891,7 +1887,7 @@ import { esc, mb } from "./lib/format.js";
         el("button", { type: "button", class: "icon-btn study-remove", "aria-label": `Remove ${rec.title}`, title: "Remove from this device", text: "×", onclick: async () => {
           if (!confirm(`Remove “${rec.title}” from this device?`)) return;
           try { await window.Studies.remove(rec.id); } catch (_) { toast("Could not remove it just now."); return; }
-          if (state.studyId === rec.id) { currentStudy = null; state.studyId = null; releaseStudyUrl(); readerPane.replaceChildren(); readerPane.classList.remove("has-study"); push(true); }
+          if (state.studyId === rec.id) { currentStudy = null; state.studyId = null; readerPane.replaceChildren(); readerPane.classList.remove("has-study"); push(true); }
           toast("Removed.");
           renderHome(); showList();
         } }),
@@ -2219,9 +2215,21 @@ import { esc, mb } from "./lib/format.js";
     ]);
     // About
     const ver = el("p", { class: "set-note" });
+    // the error log (lib/log.js): what has gone wrong on this device since the app was opened,
+    // copied whole so it can be pasted into a message. It never holds the key or the passphrase.
+    let errLog = null;
+    if (window.GLLog) {
+      const n = window.GLLog.count();
+      const errSaid = el("p", { class: "set-said", role: "status", text: n ? `${n} ${n === 1 ? "error" : "errors"} noted since the app was opened. The log never holds your key or passphrase.` : "Nothing has gone wrong since the app was opened." });
+      errLog = el("div", { class: "set-errlog" }, [
+        el("div", { class: "set-acts" }, [el("button", { type: "button", class: "text-btn", text: `Copy error log (${n})`, onclick: async () => { errSaid.textContent = (await window.GLLog.copy()) ? "Copied. Paste it into a message." : "The log could not be copied here."; } })]),
+        errSaid,
+      ]);
+    }
     sec("about", "About", [
       el("p", { class: "set-note", text: "A personal copy of the scriptures, general conference and the manuals, kept on this device and searched here; it works offline. The text and study helps are the Church's, copied from churchofjesuschrist.org and josephsmithpapers.org for personal study." }),
       ver,
+      errLog,
     ]);
     try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
     $(".sheet-body", sheet).replaceChildren(box);
@@ -2495,7 +2503,7 @@ import { esc, mb } from "./lib/format.js";
     if (/^(mailto|tel|sms):$/.test(u.protocol)) { const a = el("a", { href: u.href, hidden: true }); document.body.append(a); a.click(); a.remove(); return; }
     if (!/^https?:$/.test(u.protocol)) return;
     const url = u.href;
-    if (toastEl?.querySelector("a.toast-action")) { outsideAsk++; toastClose(); } // the offer for the link before this one
+    if (toastEl?.querySelector("a.toast-action")) toastClose(); // the offer for the link before this one
     if (!CHURCH.test(url)) { openOutside(url); return; }
     let res = null;
     try { res = await api("resolve", { href: url }); } catch (_) { res = null; }
@@ -2593,7 +2601,6 @@ import { esc, mb } from "./lib/format.js";
   // toast says the page is not here, names the site, and carries a real link: that tap opens it.
   // church: the address is on one of the sites the library copies, so it could have been held.
   const OFFLINE = "That page is not in the library, and you are offline.";
-  let outsideAsk = 0;
   // near: the book or conference the library does hold around a page it lacks; its contents are
   // offered beside the way out, and are all there is to offer offline.
   function openOutside(url, church = false, near = null) {
@@ -2605,14 +2612,8 @@ import { esc, mb } from "./lib/format.js";
     const host = u.hostname.replace(/^www\./, "");
     const say = (text, action) => toast(text, { action: contents ? "Open on the web" : action, href: u.href, more: contents ? [contents] : null });
     say(church ? "Not in your library." : "That link leaves the library.", `Open on ${host}`);
-    // navigator.onLine says yes on Wi-Fi with no internet behind it; one small request to the
-    // site tells. If it fails while this toast is still up, the toast says so. The link stays,
-    // since a content blocker can refuse the request while the site itself is fine.
-    const ask = ++outsideAsk;
-    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 4000);
-    fetch(u.href, { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit", signal: stop.signal })
-      .catch(() => { if (ask === outsideAsk && toastEl?.classList.contains("show") && toastEl.querySelector("a.toast-action")?.href === u.href) say(church ? `Not in your library, and ${host} is not answering.` : `${host} is not answering.`, "Try anyway"); })
-      .finally(() => clearTimeout(timer));
+    // The link is simply offered: the page's policy lets it reach its own files and Claude and
+    // nothing else, so it cannot ask the site first whether it is answering.
   }
   // The reader's own links to the source site are real links, which a tap opens with no help.
   // Offline they would open a dead tab, so the tap gets the message instead; the toast's link too.

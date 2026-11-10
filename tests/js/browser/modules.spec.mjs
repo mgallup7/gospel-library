@@ -17,11 +17,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
     const got = await page.evaluate(() => ({
       types: [...document.querySelectorAll("body > script[src]")].map((s) => `${s.getAttribute("src")}:${s.type}`),
-      globals: ["GL", "Ask", "Original", "Deck", "Studies", "Marks"].filter((g) => !window[g]),
+      globals: ["GLLog", "GL", "Ask", "Original", "Deck", "Studies", "Marks"].filter((g) => !window[g]),
       md: window.Studies.frameHtml({ kind: "md", text: "# Notes\n\n> A quote\n\n- one\n- *two*\n\n[site](https://example.com/)" }),
       chunks: window.Deck.chunksOf({ kind: "verse", verses: [1, 2, 3].map((n) => ({ n, text: "word ".repeat(60).trim() })), citation: "Alma 32:1–3" }).map((c) => c.label),
     }));
-    const want = ["./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./marks.js"].map((s) => `${s}:module`);
+    const want = ["./lib/log.js", "./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./marks.js"].map((s) => `${s}:module`);
     if (JSON.stringify(got.types) !== JSON.stringify(want)) errors.push(`${name} scripts: ${got.types.join(", ")}`);
     if (got.globals.length) errors.push(`${name} missing: ${got.globals.join(", ")}`);
     for (const bit of ['<h1 id="notes">Notes</h1>', "<blockquote>A quote</blockquote>", "<li><i>two</i></li>", '<a href="https://example.com/">site</a>']) if (!got.md.includes(bit)) errors.push(`${name} study markdown lacks ${bit}`);

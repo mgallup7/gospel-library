@@ -5,37 +5,24 @@
    the scriptures or to a talk opens the local copy. The files live in the browser's own
    database (IndexedDB), apart from the library, so a library update leaves them alone.
 
-   The page is shown in a sandboxed frame (from a blob address of its own, so its #links
-   work): its own styles and scripts run, but it cannot see the app or the library key.
+   The page is shown in a sandboxed frame (study-frame.html, which writes the page into
+   itself): its own styles and scripts run, but it cannot see the app or the library key.
    A small script added to the page hands its links to the web over to the app, which
    resolves them against the library (app.js followLink). */
 import { markdown as renderMarkdown } from "./lib/markdown.js";
 import { esc, mb } from "./lib/format.js";
 import { findReferences } from "./lib/refs.js";
+import { database } from "./lib/idb.js";
 
 (() => {
   "use strict";
   const DB = "gospel-studies", STORE = "studies", MAX_BYTES = 12 * 1024 * 1024;
 
-  function openDb() {
-    return new Promise((resolve, reject) => {
-      const r = indexedDB.open(DB, 1);
-      r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE, { keyPath: "id" }); };
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error || new Error("the studies database did not open"));
-    });
-  }
-  async function tx(mode, work) {
-    const db = await openDb();
-    return new Promise((resolve, reject) => {
-      const t = db.transaction(STORE, mode);
-      const req = work(t.objectStore(STORE));
-      t.oncomplete = () => { db.close(); resolve(req ? req.result : undefined); };
-      t.onerror = () => { db.close(); reject(t.error || new Error("the studies database failed")); };
-      t.onabort = () => { db.close(); reject(t.error || new Error("the studies database failed")); };
-    });
-  }
-  const list = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.added - a.added).map(meta); } catch (_) { return []; } };
+  // lib/idb.js opens the database for each piece of work and closes it after
+  const db = database({ name: DB, label: "studies", upgrade(d) { if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: "id" }); } });
+  const tx = (mode, work) => db.tx(STORE, mode, work);
+  // a database that will not open reads as an empty shelf, and goes in the error log
+  const list = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.added - a.added).map(meta); } catch (err) { window.GLLog?.note("studies.list", err); return []; } };
   const get = (id) => tx("readonly", (s) => s.get(id));
   // the app keeps what it read from the studies (their words for search, the chapters they link to)
   // until this says they changed
@@ -117,6 +104,24 @@ a{color:var(--accent)}code{font:14px ui-monospace,Menlo,monospace;background:rgb
 pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px solid var(--rule);margin:1.6em 0}
 </style></head><body>${body}</body></html>`;
   }
+  // The app's own page is pinned by a Content-Security-Policy (index.html), and a page shown
+  // from a blob address inherits the policy of the page that made it: the study's own scripts,
+  // and the hand-off script above, would all be refused. So the frame is sent to
+  // study-frame.html instead, a page of the app's with no policy of its own; sandboxed as
+  // before, it asks for the study and writes it into itself. mount does that for one frame.
+  const FRAME_URL = new URL("./study-frame.html", import.meta.url).href;
+  const waiting = new WeakMap(); // frame -> the HTML it is to show
+  function mount(frame, rec) {
+    waiting.set(frame, typeof rec === "string" ? rec : frameHtml(rec));
+    frame.src = FRAME_URL;
+  }
+  window.addEventListener("message", (e) => {
+    if (!e.data || e.data.type !== "gospel:frame-ready") return;
+    for (const frame of document.querySelectorAll("iframe.study-frame")) {
+      // the frame has no origin to name (it is sandboxed), so the test is that it is ours
+      if (frame.contentWindow === e.source && waiting.has(frame)) e.source.postMessage({ type: "gospel:page", html: waiting.get(frame) }, "*");
+    }
+  });
   // Enough Markdown for notes and lessons: headings, paragraphs, lists, quotes, emphasis, links.
   // The renderer is Ask's (lib/markdown.js) in its page mode: no citation buttons and no
   // quotation check, since the frame has neither the passages nor the app.
@@ -221,5 +226,5 @@ pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px 
     if (added) changed();
     return added;
   }
-  window.Studies = { list, get, add, remove, frameHtml, plainText, mb, index, exportAll, importAll };
+  window.Studies = { list, get, add, remove, frameHtml, mount, plainText, mb, index, exportAll, importAll };
 })();

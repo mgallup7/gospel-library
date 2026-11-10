@@ -7,36 +7,26 @@
    last; records from before ranges simply have none. The records live in
    the browser's database (IndexedDB), apart from the library, so updates leave them alone;
    Export writes them to a file for safekeeping or another device, Import reads one back. */
+import { database } from "./lib/idb.js";
+
 (() => {
   "use strict";
   const DB = "gospel-marks", STORE = "marks";
   const COLORS = ["y", "g", "b", "p"];
   const COLOR_NAME = { y: "yellow", g: "green", b: "blue", p: "pink" };
 
-  function openDb() {
-    return new Promise((resolve, reject) => {
-      const r = indexedDB.open(DB, 1);
-      r.onupgradeneeded = () => {
-        const s = r.result.objectStoreNames.contains(STORE) ? r.transaction.objectStore(STORE) : r.result.createObjectStore(STORE, { keyPath: "id" });
-        if (!s.indexNames.contains("uri")) s.createIndex("uri", "uri", { unique: false });
-      };
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error || new Error("the marks database did not open"));
-    });
-  }
-  async function tx(mode, work) {
-    const db = await openDb();
-    return new Promise((resolve, reject) => {
-      const t = db.transaction(STORE, mode);
-      const req = work(t.objectStore(STORE));
-      t.oncomplete = () => { db.close(); resolve(req ? req.result : undefined); };
-      t.onerror = () => { db.close(); reject(t.error || new Error("the marks database failed")); };
-      t.onabort = () => { db.close(); reject(t.error || new Error("the marks database failed")); };
-    });
-  }
+  // lib/idb.js opens the database for each piece of work and closes it after
+  const db = database({ name: DB, label: "marks", upgrade(d, t) {
+    const s = d.objectStoreNames.contains(STORE) ? t.objectStore(STORE) : d.createObjectStore(STORE, { keyPath: "id" });
+    if (!s.indexNames.contains("uri")) s.createIndex("uri", "uri", { unique: false });
+  } });
+  const tx = (mode, work) => db.tx(STORE, mode, work);
   const idFor = (uri, pid) => `${uri}#${pid}`;
-  const forDoc = async (uri) => { try { return (await tx("readonly", (s) => s.index("uri").getAll(uri))) || []; } catch (_) { return []; } };
-  const all = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.updated - a.updated); } catch (_) { return []; } };
+  // A database that will not open reads as an empty list, so the page still shows; it is also
+  // written to the error log, so "no highlights" can be told from "the highlights could not be read".
+  const failed = (where, err) => { window.GLLog?.note(where, err); return []; };
+  const forDoc = async (uri) => { try { return (await tx("readonly", (s) => s.index("uri").getAll(uri))) || []; } catch (err) { return failed("marks.forDoc", err); } };
+  const all = async () => { try { return ((await tx("readonly", (s) => s.getAll())) || []).sort((a, b) => b.updated - a.updated); } catch (err) { return failed("marks.all", err); } };
   const count = async () => (await all()).length;
   const get = (uri, pid) => tx("readonly", (s) => s.get(idFor(uri, pid)));
 
