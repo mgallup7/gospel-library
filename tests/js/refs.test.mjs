@@ -22,3 +22,22 @@ test("each reference carries the address the study frame hands to the app", () =
   assert.equal(range.href, "https://www.churchofjesuschrist.org/study/scriptures/bofm/alma/32.21-27?lang=eng");
   assert.equal(findReferences("Psalm 23:1")[0].href, "https://www.churchofjesuschrist.org/study/scriptures/ot/ps/23?lang=eng&id=p1#p1");
 });
+
+test("the words of an HTML page: references beside punctuation, and none made from part of another", () => {
+  // studies.js hands each text node of a page here once its markup is parsed (so &amp; is already &)
+  assert.deepEqual(found("(See Alma 32:21.) Then D&C 76:22-24; then \u201cMoses 1:39\u201d, and 2 Nephi 2:25!"), [["Alma 32:21", "Alma 32:21"], ["D&C 76:22-24", "D&C 76:22\u201324"], ["Moses 1:39", "Moses 1:39"], ["2 Nephi 2:25", "2 Nephi 2:25"]]);
+  // a list of verses links its first verse and leaves the rest as words
+  assert.deepEqual(found("Alma 32:21, 23-25"), [["Alma 32:21", "Alma 32:21"]]);
+  // a time, a ratio, a chapter that does not exist, a range written backwards
+  assert.deepEqual(found("Meet at 7:30pm. Odds of 3:1. Jude 4:2."), []);
+  assert.deepEqual(findReferences("Alma 32:27-21").map((r) => [r.verse, r.verseEnd]), [[27, null]]);
+});
+
+test("positions are exact, so the text around a link is kept as written", () => {
+  const text = "Read 1 Ne. 3:7 first, then Mosiah 2:17.";
+  const parts = findReferences(text);
+  let rebuilt = "", last = 0;
+  for (const r of parts) { rebuilt += text.slice(last, r.start) + "[" + text.slice(r.start, r.end) + "]"; last = r.end; }
+  assert.equal(rebuilt + text.slice(last), "Read [1 Ne. 3:7] first, then [Mosiah 2:17].");
+  assert.ok(parts.every((r) => r.href.startsWith("https://www.churchofjesuschrist.org/study/scriptures/")));
+});

@@ -1657,7 +1657,13 @@ import { esc, mb } from "./lib/format.js";
   window.addEventListener("message", (e) => {
     const frame = readerPane.querySelector(".study-frame");
     if (!frame || e.source !== frame.contentWindow || !e.data || typeof e.data !== "object") return;
-    if (e.data.type === "gospel:link" && typeof e.data.href === "string") followLink(e.data.href);
+    if (e.data.type === "gospel:link" && typeof e.data.href === "string") {
+      // a link with no site in it ("other.html", "../alma/33") pointed at a file beside the page
+      // where it was written; nothing here knows where that was
+      const h = e.data.href.trim();
+      if (h && !/^[a-z][a-z0-9+.-]*:/i.test(h) && !h.startsWith("/")) toast("That link leads to a file beside this page, which is not on this device.");
+      else if (h) followLink(h);
+    }
     else if (e.data.type === "gospel:scroll") studyScroll = Number(e.data.y) || 0;
   });
   // The shelf: the pages on this device, and a way to add one
@@ -2018,7 +2024,9 @@ import { esc, mb } from "./lib/format.js";
   let toastEl = null, toastTimer = null, toastAct = null;
   function toastClose() { clearTimeout(toastTimer); toastAct = null; toastEl?.classList.remove("show"); }
   function toastArm(ms) { clearTimeout(toastTimer); toastTimer = setTimeout(toastClose, ms); }
-  function toast(text, { action, onAction } = {}) {
+  // With href the action is a real link to the web in a new tab: the tap on it is its own gesture,
+  // which Safari wants before it opens anything. more: [{ action, onAction or href }] adds others.
+  function toast(text, { action, onAction, href, more } = {}) {
     if (!toastEl) {
       toastEl = el("div", { id: "toast", class: "toast", role: "status", "aria-live": "polite", "aria-atomic": "true" });
       // a finger or the focus on its button keeps it from going away under them
@@ -2030,10 +2038,15 @@ import { esc, mb } from "./lib/format.js";
       void toastEl.offsetWidth; // laid out hidden first, so the first toast slides in like the rest
     }
     const t = toastEl;
-    toastAct = action ? () => { toastClose(); try { onAction?.(); } catch (_) {} } : null;
-    t.className = "toast show" + (action ? " has-action" : "");
-    t.replaceChildren(...[el("span", { text }), action ? el("button", { type: "button", class: "toast-action", text: action, onclick: () => toastAct?.() }) : null].filter(Boolean));
-    toastArm(action ? 5000 : 1800);
+    const press = (fn) => () => { toastClose(); try { fn?.(); } catch (_) {} };
+    toastAct = action ? press(href ? null : onAction) : null;
+    const control = (a, first) => a.href
+      ? el("a", { class: "toast-action", href: a.href, target: "_blank", rel: "noopener", text: a.action, onclick: () => setTimeout(toastClose, 0) })
+      : el("button", { type: "button", class: "toast-action", text: a.action, onclick: first ? () => toastAct?.() : press(a.onAction) });
+    const extra = action && Array.isArray(more) ? more.filter((a) => a && a.action) : [];
+    t.className = "toast show" + (action ? " has-action" : "") + (extra.length ? " has-more" : "");
+    t.replaceChildren(...[el("span", { text }), action ? control({ action, href }, true) : null, ...extra.map((a) => control(a, false))].filter(Boolean));
+    toastArm(action ? (href || extra.length ? 8000 : 5000) : 1800);
   }
   // Outside a field Cmd+Z is always the app's: the toast's Undo while one shows, else the deck's own
   // undo. Left to the browser it would rewind the search box, and a search would run from nowhere.
@@ -2042,7 +2055,8 @@ import { esc, mb } from "./lib/format.js";
     const a = document.activeElement;
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return; // a field's own undo comes first
     e.preventDefault();
-    if (toastAct) toastAct();
+    // a toast whose action is a link to the web has nothing to undo
+    if (toastAct && !toastEl?.querySelector("a.toast-action")) toastAct();
     else if (window.Deck && window.Deck.undo) window.Deck.undo();
   });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
@@ -2091,47 +2105,107 @@ import { esc, mb } from "./lib/format.js";
       return;
     }
     if (href.startsWith("#")) { e.preventDefault(); focusParagraph(href.slice(1)); return; }
-    if (href.startsWith("/") || /^https?:/i.test(href)) { e.preventDefault(); followLink(href); }
+    // every web link, a relative one too (read against the page's own address on its site, not the
+    // app's, which would reload the app somewhere it has no page); mail and phone links are the browser's
+    const u = href.trim() ? linkUrl(href, currentDoc && currentDoc.source_url) : null;
+    if (u && /^https?:$/.test(u.protocol)) { e.preventDefault(); followLink(u.href); }
   }
   // Every link goes through here: the library's own copy when it holds the page (a verse shows
   // in a sheet first, a page or a book opens), the web otherwise.
-  const CHURCH = /^https?:\/\/([a-z0-9-]+\.)*(churchofjesuschrist\.org|lds\.org)(\/|$)/i;
-  async function followLink(href) {
-    const url = href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href;
+  // The sites the library copies: the Church's, its old addresses, and the Joseph Smith Papers.
+  const CHURCH = /^https?:\/\/([a-z0-9-]+\.)*(churchofjesuschrist\.org|lds\.org|josephsmithpapers\.org)(\/|$)/i;
+  const CHURCH_SITE = "https://www.churchofjesuschrist.org/";
+  // Every shape of address becomes a whole one the same way (/study/..., //www..., http:...): a
+  // path with no site is the Church's, which is where the library's pages and most notes point.
+  function linkUrl(href, base) {
+    try { return new URL(String(href || "").trim(), base || CHURCH_SITE); } catch (_) { return null; }
+  }
+  async function followLink(href, base) {
+    const u = linkUrl(href, base);
+    if (!u) return;
+    // mail and phone links belong to the device. The link was tapped where it cannot act (a
+    // study's frame is shut in), so a real link is clicked here in its place, at once.
+    if (/^(mailto|tel|sms):$/.test(u.protocol)) { const a = el("a", { href: u.href, hidden: true }); document.body.append(a); a.click(); a.remove(); return; }
+    if (!/^https?:$/.test(u.protocol)) return;
+    const url = u.href;
+    if (toastEl?.querySelector("a.toast-action")) { outsideAsk++; toastClose(); } // the offer for the link before this one
     if (!CHURCH.test(url)) { openOutside(url); return; }
     let res = null;
     try { res = await api("resolve", { href: url }); } catch (_) { res = null; }
-    if (!res || !res.found) { openOutside(url); return; }
-    if (res.kind === "book") { openBook(res); return; }
+    if (!res || !res.found) { openOutside(url, true, res && res.near); return; }
+    if (res.kind === "book" || res.kind === "shelf") { openBook(res); return; }
     if (res.pid && /^p\d+$/.test(res.pid) && res.collection === "scriptures" && !(currentDoc && currentDoc.id === res.doc_id && state.docId === res.doc_id)) { peekPassage(res); return; }
     hideNote();
-    openDoc(res.doc_id, res.pid);
+    await openDoc(res.doc_id, res.pid);
+    markListed(res);
+  }
+  // A link that lists verses (32.21,23-25) opens at the first with every one of them marked
+  function markListed(res) {
+    if (!res.pids || !currentDoc || currentDoc.id !== res.doc_id || state.docId !== res.doc_id) return;
+    const body = $(".doc", readerPane);
+    for (const pid of res.pids) {
+      const v = body && (body.querySelector(`#${CSS.escape(pid)}`) || body.querySelector(`.verse:nth-of-type(${pid.slice(1)})`));
+      if (v) v.classList.add("is-target");
+    }
   }
   const TAB_OF = { "general-conference": "conference", scriptures: "scriptures", "preach-my-gospel": "preach-my-gospel", "missionary-standards": "missionary-standards", handbook: "handbook", "come-follow-me": "come-follow-me", manuals: "manuals", "study-helps": "study-helps" };
   function openBook(res) {
     hideNote();
     rememberScroll();
     const tab = TAB_OF[res.collection] || (res.collection.startsWith("jsp-") ? "jsp" : "manuals");
-    const browse = res.book_slug ? { tab, book: res.book_slug } : { tab, bookUri: res.book_uri };
+    const browse = res.kind === "shelf" ? { tab } : res.book_slug ? { tab, book: res.book_slug } : { tab, bookUri: res.book_uri };
     if (tab === "jsp") browse.series = res.collection.replace(/^jsp-/, "");
     leaveSearch(); state.q = ""; if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
     if (TAB_SCOPE[tab]) state.scope = TAB_SCOPE[tab];
     syncControls(); state.browse = browse; renderHome(); showList(); push();
   }
+  // ["p21","p23","p24","p25"] as it is written in a reference: 21, 23–25
+  function verseList(pids) {
+    const ns = pids.map((p) => Number(p.slice(1))), out = [];
+    for (let i = 0; i < ns.length; i++) {
+      let j = i;
+      while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
+      out.push(j > i ? `${ns[i]}–${ns[j]}` : String(ns[i]));
+      i = j;
+    }
+    return out.join(", ");
+  }
   // A verse someone linked to, read where you are; Open goes to the chapter.
+  // When the verse takes the place of a footnote in the sheet, Back returns to the note (and the
+  // next Back closes the sheet). The note is kept here. Back with the sheet up pops its marker
+  // entry and the listener above closes it; this one puts the note back with a marker of its
+  // own. Browsers differ on which of the two hears Back first, so it answers either way.
+  let noteUnder = null;
+  window.addEventListener("popstate", () => {
+    const n = noteUnder; noteUnder = null;
+    if (!n || n.url !== location.href || history.state?.overlay || sheet.getAttribute("aria-label") !== "Passage") return;
+    if (!sheet.hidden && overlay === "sheet") { // heard first: the sheet stays up, and the other listener leaves this Back alone
+      $(".sheet-body", sheet).replaceChildren(...n.nodes);
+      sheet.setAttribute("aria-label", n.label);
+      history.pushState({ ...(history.state || {}), overlay: "sheet" }, "", location.href);
+      poppingOverlay = true;
+    } else if (sheet.hidden && !overlay) { // heard second: the sheet has just been closed, and opens again on the note
+      $(".sheet-body", sheet).replaceChildren(...n.nodes);
+      openSheet(n.label);
+    }
+  }, true);
   async function peekPassage(res) {
     const bodyEl = $(".sheet-body", sheet);
+    noteUnder = !sheet.hidden && sheet.getAttribute("aria-label") === "Footnote" ? { label: "Footnote", url: location.href, nodes: [...bodyEl.childNodes] } : null;
     bodyEl.replaceChildren(el("div", { class: "status", text: "Opening…" }));
     openSheet("Passage");
     let ctx = null;
-    const start = Number(res.pid.slice(1)), end = res.pid_end && /^p\d+$/.test(res.pid_end) ? Number(res.pid_end.slice(1)) : start;
-    try { ctx = await api("context", { doc_id: res.doc_id, pid: res.pid, before: 0, after: Math.max(0, Math.min(12, end - start)) }); } catch (_) { ctx = null; }
+    // a list of verses (21, 23-25) shows those and no others; a range shows the run
+    const listed = res.pids && res.pids.length ? res.pids : null;
+    const from = listed ? listed[0] : res.pid;
+    const start = Number(from.slice(1)), end = listed ? Number(listed[listed.length - 1].slice(1)) : res.pid_end && /^p\d+$/.test(res.pid_end) ? Number(res.pid_end.slice(1)) : start;
+    try { ctx = await api("context", { doc_id: res.doc_id, pid: from, before: 0, after: Math.max(0, Math.min(listed ? 40 : 12, end - start)) }); } catch (_) { ctx = null; }
     if (sheet.hidden) return;
-    if (!ctx) { hideNote(); openDoc(res.doc_id, res.pid); return; }
-    const open = () => { hideNote(); openDoc(res.doc_id, res.pid); };
-    const verses = ctx.paragraphs.filter((x) => x.kind !== "heading");
+    const open = async () => { noteUnder = null; hideNote(); await openDoc(res.doc_id, res.pid); markListed(res); };
+    if (!ctx) { open(); return; }
+    const verses = ctx.paragraphs.filter((x) => x.kind !== "heading" && (!listed || listed.includes(x.pid)));
     bodyEl.replaceChildren(
-      el("div", { class: "nm", text: ctx.citation || res.title }),
+      el("div", { class: "nm", text: listed ? `${res.title}:${verseList(listed)}` : ctx.citation || res.title }),
       el("div", { class: "peek" }, verses.map((x) => el("p", { class: x.kind === "verse" ? "verse" : "para" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean)))),
       el("div", { class: "peek-row" }, [
         el("button", { type: "button", class: "primary", text: `Open ${res.title}`, onclick: open }),
@@ -2146,12 +2220,42 @@ import { esc, mb } from "./lib/format.js";
       ].filter(Boolean)),
     );
   }
-  // A page the library does not hold: on the web, if there is a web
-  function openOutside(url) {
-    if (!/^https?:\/\//i.test(String(url || ""))) return; // only a web address leaves the app (a study page could hand over anything)
-    if (!navigator.onLine) { toast("That page is not in the library, and you are offline."); return; }
-    window.open(url, "_blank", "noopener");
+  // A page the library does not hold. Nothing is opened from here: by the time the library has
+  // answered, the tap is over (a tap inside a study's frame never reached this window at all),
+  // and Safari, the home-screen app above all, quietly refuses a window opened after it. The
+  // toast says the page is not here, names the site, and carries a real link: that tap opens it.
+  // church: the address is on one of the sites the library copies, so it could have been held.
+  const OFFLINE = "That page is not in the library, and you are offline.";
+  let outsideAsk = 0;
+  // near: the book or conference the library does hold around a page it lacks; its contents are
+  // offered beside the way out, and are all there is to offer offline.
+  function openOutside(url, church = false, near = null) {
+    let u = null;
+    try { u = new URL(String(url || "")); } catch (_) { return; }
+    if (!/^https?:$/.test(u.protocol)) return; // only a web address leaves the app (a study page could hand over anything)
+    const contents = near && near.title ? { action: `Open ${near.title} contents`, onAction: () => openBook(near) } : null;
+    if (!navigator.onLine) { toast(OFFLINE, contents || {}); return; }
+    const host = u.hostname.replace(/^www\./, "");
+    const say = (text, action) => toast(text, { action: contents ? "Open on the web" : action, href: u.href, more: contents ? [contents] : null });
+    say(church ? "Not in your library." : "That link leaves the library.", `Open on ${host}`);
+    // navigator.onLine says yes on Wi-Fi with no internet behind it; one small request to the
+    // site tells. If it fails while this toast is still up, the toast says so. The link stays,
+    // since a content blocker can refuse the request while the site itself is fine.
+    const ask = ++outsideAsk;
+    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 4000);
+    fetch(u.href, { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit", signal: stop.signal })
+      .catch(() => { if (ask === outsideAsk && toastEl?.classList.contains("show") && toastEl.querySelector("a.toast-action")?.href === u.href) say(church ? `Not in your library, and ${host} is not answering.` : `${host} is not answering.`, "Try anyway"); })
+      .finally(() => clearTimeout(timer));
   }
+  // The reader's own links to the source site are real links, which a tap opens with no help.
+  // Offline they would open a dead tab, so the tap gets the message instead; the toast's link too.
+  document.addEventListener("click", (e) => {
+    if (navigator.onLine) return;
+    const a = e.target.closest?.('a[target="_blank"][href^="http"]');
+    if (!a || a.closest(".doc, .sheet-body")) return; // a link in the words of a page goes through followLink
+    e.preventDefault(); e.stopPropagation();
+    toast(OFFLINE);
+  }, true);
 
   function focusParagraph(pid, { scroll = true } = {}) {
     if (!pid || !currentDoc) return;
@@ -2546,10 +2650,12 @@ import { esc, mb } from "./lib/format.js";
     $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;
-      e.preventDefault();
       const href = a.getAttribute("href") || "";
+      const u = linkUrl(href, currentDoc && currentDoc.source_url);
+      if (u && /^(mailto|tel|sms):$/.test(u.protocol)) return; // the tap itself opens Mail or the phone
+      e.preventDefault();
       if (href.startsWith("#")) { closeSheet(); focusParagraph(href.slice(1)); return; }
-      followLink(href);
+      if (u) followLink(u.href);
     };
   }
   // hideNote takes the sheet down and leaves history alone: for the moment before a move, whose
@@ -2565,7 +2671,7 @@ import { esc, mb } from "./lib/format.js";
     if (wasOpen && sheetOpener && sheetOpener.isConnected) { try { sheetOpener.focus({ preventScroll: true }); } catch (_) {} }
     sheetOpener = null;
   }
-  function closeSheet() { const had = overlay === "sheet"; hideNote(); if (had) dropOverlay("sheet"); }
+  function closeSheet() { const had = overlay === "sheet"; noteUnder = null; hideNote(); if (had) dropOverlay("sheet"); }
   // A dialog over the page (the sheet, the stage) is modal: aria-modal on it, and everything else
   // in the body inert while it is open, so VoiceOver and Tab stay inside it. The toast stays live
   // (its Undo must stay reachable). inertBehind(node, false) undoes exactly what it did; the stage

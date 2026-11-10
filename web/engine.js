@@ -1259,55 +1259,102 @@ function normalizeUri(uri) {
 //   /study/manual/preach-my-gospel-2023?lang=eng               (a book: its contents open)
 //   https://www.churchofjesuschrist.org/study/general-conference/2023/10/51nelson?lang=eng
 //   https://www.lds.org/scriptures/bofm/alma/32.21?lang=eng#20   (the old site: verses counted from 0)
+//   https://scriptures.lds.org/en/alma/32/21                    (older still: book, chapter, verses)
+//   /study/scriptures/bofm/alma/32.21,23-25                      (a list: the first verse, and all of them in pids)
+//   https://www.josephsmithpapers.org/paper-summary/journal-1832-1834/3   (a page of a document the library holds)
+//   /study/scriptures                                            (a whole shelf)
+// A page the library lacks is not found, whatever it holds around it: the link goes to the web.
+// When the book or the conference it belongs to is here, that comes back as near, so the app
+// can offer its contents beside the way out; it does not open them in the page's place.
 const CHURCH_HOST = /(^|\.)(churchofjesuschrist\.org|lds\.org)$/i;
+const PAPERS_HOST = /(^|\.)josephsmithpapers\.org$/i;
+const SHELF_URI = { "/scriptures": ["scriptures", "Scriptures"], "/general-conference": ["general-conference", "General Conference"] };
 function resolve(href) {
   let u;
-  try { u = new URL(href, "https://www.churchofjesuschrist.org"); } catch (_) { return { found: false, href }; }
-  if (!CHURCH_HOST.test(u.hostname)) return { found: false, href };
-  let uri = normalizeUri(u.pathname);
-  let pid = null, pidEnd = null;
-  const span = (txt) => { // "p21-p27", "21-27", "p21,p23" -> the first and last paragraph named
-    const parts = String(txt || "").split(/[,;]/)[0].split("-").map((x) => x.trim()).filter(Boolean);
-    if (!parts.length) return;
+  try { u = new URL(String(href || "").trim(), "https://www.churchofjesuschrist.org"); } catch (_) { return { found: false, href }; }
+  const papers = PAPERS_HOST.test(u.hostname);
+  if (!/^https?:$/.test(u.protocol) || !(papers || CHURCH_HOST.test(u.hostname))) return { found: false, href };
+  let path = u.pathname;
+  try { path = decodeURIComponent(path); } catch (_) {}
+  let uri = normalizeUri(path);
+  let pid = null, pidEnd = null, pids = null;
+  // "p21-p27", "21-27" -> the first and last paragraph named; "21,23-25" -> the first, and every verse listed
+  const span = (txt) => {
+    const groups = String(txt || "").split(/[,;]/).map((g) => g.split("-").map((x) => x.trim()).filter(Boolean)).filter((g) => g.length);
+    if (!groups.length) return;
     const norm = (x) => /^\d+$/.test(x) ? `p${x}` : x;
-    pid = norm(parts[0]);
-    if (parts.length > 1 && /^p?\d+$/.test(parts[parts.length - 1])) pidEnd = norm(parts[parts.length - 1]);
+    const first = groups[0];
+    pid = norm(first[0]);
+    if (first.length > 1 && /^p?\d+$/.test(first[first.length - 1])) pidEnd = norm(first[first.length - 1]);
+    if (groups.length > 1 && groups.every((g) => g.every((x) => /^p?\d+$/.test(x)))) {
+      const all = new Set();
+      for (const g of groups) {
+        const from = Number(g[0].replace("p", "")), to = Number(g[g.length - 1].replace("p", ""));
+        for (let v = from; v <= Math.max(from, to) && all.size < 200; v++) all.add(v);
+      }
+      pids = [...all].sort((x, y) => x - y).map((v) => `p${v}`);
+    }
   };
   const idp = u.searchParams.get("id");
   if (idp) span(idp);
+  // scriptures.lds.org/en/alma/32/21: the book by the name it still has in an address (1_ne is 1-ne)
+  const old = /^scriptures\./i.test(u.hostname) ? path.match(/^\/[a-z]{2,3}\/([a-z0-9_]+)(?:\/(\d+)(?:\/([\d,-]+))?)?\/?$/i) : null;
+  const oldBook = old ? S.books.find((b) => b.uri.endsWith("/" + old[1].toLowerCase().replace(/_/g, "-"))) : null;
+  if (oldBook) { uri = old[2] ? `${oldBook.uri}/${old[2]}` : oldBook.uri; if (old[3] && !pid) span(old[3]); }
   // a verse written into the path: alma/32.21-27
-  const m = uri.match(/^(.*\/[^/.]+)\.(\d+(?:-\d+)?)$/);
+  const m = uri.match(/^(.*\/[^/.]+)\.(\d+(?:[-,]\d+)*)$/);
   if (m && !row("SELECT 1 FROM documents WHERE uri=?", [uri])) { uri = m[1]; if (!pid) span(m[2]); }
   if (!pid && u.hash) {
-    const h = decodeURIComponent(u.hash.slice(1));
+    let h = u.hash.slice(1);
+    try { h = decodeURIComponent(h); } catch (_) {}
     if (/^\d+$/.test(h)) pid = /lds\.org$/i.test(u.hostname) ? `p${Number(h) + 1}` : `p${h}`;
-    else if (h) pid = h.split(/[,-]/)[0];
+    else if (h) pid = /^p?\d/.test(h) ? h.split(/[,-]/)[0] : h; // #p21-p23 is its first; #title_number87 or #source-note is itself
   }
-  const find = (x) => row("SELECT d.id, d.uri, d.title, c.slug AS collection FROM documents d JOIN collections c ON c.id=d.collection_id WHERE d.uri=?", [x]);
+  // the Papers and the Church's site are different places: a path on one is not a page of the other
+  // (an address with no site at all, the library's own uri, is whichever it is)
+  const bare = /^\/(?!\/)/.test(String(href || "").trim());
+  const ours = (r) => r && (bare || papers === String(r.collection || "").startsWith("jsp-")) ? r : null;
+  const find = (x) => ours(row("SELECT d.id, d.uri, d.title, c.slug AS collection FROM documents d JOIN collections c ON c.id=d.collection_id WHERE d.uri=?", [x]));
+  const page = (r, at) => ({ found: true, kind: "page", doc_id: r.id, uri: r.uri, title: r.title, pid: at, pid_end: pidEnd, pids, collection: r.collection });
+  if (papers) {
+    // a Papers address ends in the page of the document it shows (/journal-1832-1834/3); the library
+    // holds the document whole. #source-note and #historical-intro are pages of their own here.
+    const whole = uri.replace(/\/\d+$/, "");
+    const part = { "source-note": "source-note", "historical-intro": "introduction" }[u.hash.slice(1)];
+    const own = part ? find(`${whole}/${part}`) : null;
+    const pr = own || find(uri) || find(whole);
+    if (pr) return page(pr, own ? null : pid);
+  }
   const r = find(uri);
-  if (r) return { found: true, kind: "page", doc_id: r.id, uri: r.uri, title: r.title, pid, pid_end: pidEnd, collection: r.collection };
-  if (/^\/scriptures\/[^/]+\/[^/]+$/.test(uri)) { // a book of scripture: its chapters
-    const sb = S.bookForUri(uri);
-    if (sb && sb.book && !sb.chapter) return { found: true, kind: "book", collection: "scriptures", book_slug: sb.book.slug, title: sb.book.name };
+  if (r) return page(r, pid);
+  if (!papers && SHELF_URI[uri] && row("SELECT 1 FROM documents d JOIN collections c ON c.id=d.collection_id WHERE c.slug=? LIMIT 1", [SHELF_URI[uri][0]])) {
+    return { found: true, kind: "shelf", collection: SHELF_URI[uri][0], title: SHELF_URI[uri][1] };
   }
-  const findBook = (x) => row("SELECT b.id, b.uri, b.title, c.slug AS collection FROM books b JOIN collections c ON c.id=b.collection_id WHERE b.uri=?", [x]);
-  const asBook = (b) => ({ found: true, kind: "book", book_id: b.id, book_uri: b.uri, title: b.title, collection: b.collection });
+  const sb = papers ? null : S.bookForUri(uri);
+  const scriptureBook = (b) => ({ kind: "book", collection: "scriptures", book_slug: b.slug, title: b.name });
+  if (sb && sb.book && !sb.chapter) return { found: true, ...scriptureBook(sb.book) }; // a book of scripture: its chapters
+  const findBook = (x) => ours(row("SELECT b.id, b.uri, b.title, c.slug AS collection FROM books b JOIN collections c ON c.id=b.collection_id WHERE b.uri=?", [x]));
+  const asBook = (b) => ({ kind: "book", book_id: b.id, book_uri: b.uri, title: b.title, collection: b.collection });
   const b = findBook(uri);
-  if (b) return asBook(b);
-  // a section of a page the library holds under the page's own address (/manual/x/chapter/section),
-  // or a page of a book the library holds without that page: the book's contents open
-  let parent = uri.replace(/\/[^/]+$/, "");
+  if (b) return { found: true, ...asBook(b) };
+  // a section of a page the library holds under the page's own address (/manual/x/chapter/section)
+  const parent = uri.replace(/\/[^/]+$/, "");
   if (parent.split("/").length >= 3) {
     const pr = find(parent);
-    if (pr) return { found: true, kind: "page", doc_id: pr.id, uri: pr.uri, title: pr.title, pid: pid || uri.slice(parent.length + 1), pid_end: pidEnd, collection: pr.collection };
+    if (pr) return page(pr, pid || uri.slice(parent.length + 1));
   }
+  // a chapter or a talk the library lacks, in a book or a conference it holds
+  if (sb && sb.book && row("SELECT 1 FROM documents WHERE uri LIKE ? LIMIT 1", [sb.book.uri + "/%"])) return { found: false, href, near: scriptureBook(sb.book) };
   for (let up = parent; up.split("/").length >= 3; up = up.replace(/\/[^/]+$/, "")) {
     const pb = findBook(up);
-    if (pb) return asBook(pb);
+    if (pb) return { found: false, href, near: asBook(pb) };
   }
-  // an earlier edition of a book the library holds: the edition it holds opens
-  for (const [old, now] of EDITIONS) {
-    if (uri === old || uri.startsWith(old + "/")) { const nb = findBook(now); if (nb) return asBook(nb); }
+  // an earlier edition of a book the library holds: the edition it holds opens, and a page of
+  // the earlier one is offered the contents of the one held
+  for (const [was, now] of EDITIONS) {
+    if (uri !== was && !uri.startsWith(was + "/")) continue;
+    const nb = findBook(now);
+    if (nb) return uri === was ? { found: true, ...asBook(nb) } : { found: false, href, near: asBook(nb) };
   }
   return { found: false, href };
 }
