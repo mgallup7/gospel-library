@@ -210,6 +210,7 @@ test("every mode sends the same core, his standing instructions and his notes, w
   const chain = per.chain;
   assert.match(chain[1].text, /^CHAIN-PARAGRAPH\n\nThis call has no tools/);
   assert.doesNotMatch(textOf(chain), /\nTools:/);
+  assert.match(textOf(chain), /On this device/); // the deck's call is told what the library holds, as the others are
   assert.match(textOf(chain), /STYLE-MARK/);
   assert.match(chain.at(-1).text, /^Today is \w+ \d+, \d{4}\.$/);
   assert.ok(chain.at(-2).cache_control && !chain.at(-1).cache_control);
@@ -303,7 +304,9 @@ test("the planner does not wait on a busy server, and names every shelf and what
   assert.match(sys, /jsp \(the Joseph Smith Papers/);
   assert.match(sys, /scope is one of: all, scriptures, conference, pmg, standards, handbook, cfm, helps, jsp\./);
   assert.match(sys, /The original text comes first/);
-  assert.match(sys, /\n\nOn this device: scriptures, jsp\. Not on this device: conference, pmg, standards, cfm, handbook, helps\.$/);
+  assert.match(sys, /\n\nOn this device: scriptures, jsp\. Not on this device: conference, pmg, standards, cfm, handbook, helps\.(\n\n|$)/);
+  // his own instructions go with the plan too, in brief
+  assert.match(sys, /\n\nHis standing instructions, for choosing what to search \(plan searches only; do not answer him\):\nNo em dashes/);
   assert.doesNotMatch(sys, /1971/);
 });
 

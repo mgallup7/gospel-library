@@ -760,7 +760,11 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     let note = "";
     try { note = scopesNote(await libraryStats()); } catch (err) { logged("ask.planner stats", err); }
     // one quick call: if Claude is busy the search box goes on without it, so no retries
-    const out = await complete({ model: PLANNER_MODEL, system: PLANNER + (note ? `\n\n${note}` : ""), messages: [{ role: "user", content: user }], max_tokens: 400, stream: false, retries: 0 });
+    // his standing instructions and what he asked to be remembered, in brief: they say which
+    // sources and which words matter to him, and the plan should lean the same way
+    const mine = settings.instructions.trim().slice(0, 1200), kept = settings.notes.trim().slice(-800);
+    const his = (mine ? `\n\nHis standing instructions, for choosing what to search (plan searches only; do not answer him):\n${mine}` : "") + (kept ? `\n\nWhat he has asked to be remembered:\n${kept}` : "");
+    const out = await complete({ model: PLANNER_MODEL, system: PLANNER + (note ? `\n\n${note}` : "") + his, messages: [{ role: "user", content: user }], max_tokens: 400, stream: false, retries: 0 });
     const m = out.match(/\{[\s\S]*\}/);
     const plan = JSON.parse(m ? m[0] : out);
     const queries = (plan.queries || []).filter((q) => q && q.q).slice(0, 7).map((q) => ({ q: String(q.q).slice(0, 120), scope: String(q.scope || "all") }));
@@ -1012,7 +1016,8 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
     const drafting = mode !== "ask" && mode !== "think" && !chain;
     const blocks = [CORE];
     blocks.push(chain ? `${paragraph}\n\n${NO_TOOLS}` : mode === "ask" ? MODE_ASK : mode === "think" ? MODE_THINK : MODE_DRAFT);
-    if (!chain) blocks.push(`${await inventory()}\n\n${TOOLS_GUIDE}`);
+    // what is on the device goes with every mode; the deck's call has no tools, so it gets the list without their guide
+    blocks.push(chain ? await inventory() : `${await inventory()}\n\n${TOOLS_GUIDE}`);
     if (web && !chain) blocks.push(MODE_WEB);
     const mine = settings.instructions.trim();
     if (mine) blocks.push(`My standing instructions (his own words, written on this device; they apply to every answer and every draft):\n\n${mine}`);
