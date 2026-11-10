@@ -2776,11 +2776,11 @@ import { esc, mb } from "./lib/format.js";
     };
     if (wide()) {
       if (nav.parentElement !== bar) $(".spacer", bar)?.before(nav);
-  window.addEventListener("resize", placeMatchNav);
       fitReaderBar(bar);
       if (bar.classList.contains("tight")) { toStrip(); fitReaderBar(bar); } else if (strip) { strip.remove(); strip = null; }
     } else toStrip();
   }
+  window.addEventListener("resize", placeMatchNav);
 
   function resize(delta) {
     const sizes = [15, 16, 17, 18, 19, 21, 23, 26, 30, 34];

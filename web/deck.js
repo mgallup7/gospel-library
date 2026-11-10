@@ -1515,8 +1515,8 @@ import { database } from "./lib/idb.js";
     const link = addLink(from, { id: t.item.id, hl });
     if (!link) return;
     if (made) link.made = made; // the one-word highlight this link brought: it leaves with the link
-    active = null; pending = null;
     store.set("deckLinkHintDone", true); // he has linked once: the line that says how is not needed again
+    active = null; pending = null;
     holding = true;
     save();
     did("Linked.");
