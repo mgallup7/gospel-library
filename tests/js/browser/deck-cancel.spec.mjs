@@ -91,6 +91,146 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.evaluate(() => window.Deck.undo());
     check((await state()).items.map((i) => i.id).join("") === "abc", "Deck.undo() should put the card back");
 
+    // ---- link mode can always be left: the banner stays in view, and Cancel, Escape, a tap on
+    // empty board and Back each leave it, with no connection made
+    const linking = () => page.evaluate(() => !!document.querySelector(".board-banner:not([hidden]) .bb"));
+    const inView = (sel) => page.evaluate((s) => { const n = document.querySelector(s); if (!n) return false; const r = n.getBoundingClientRect(); return r.width > 0 && r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth && (document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(s) === n); }, sel);
+    const startLink = async () => {
+      await page.evaluate(() => document.querySelector(".bcard[data-id='a']").scrollIntoView({ block: "start" }));
+      if (!(await page.locator(".bcard[data-id='a'] .hl-tools").count())) await page.click(".bcard[data-id='a'] .hl-run .w");
+      await page.click(".bcard[data-id='a'] .hl-tools button:has-text('Link to')");
+      await settle();
+    };
+    const hashBefore = await page.evaluate(() => location.hash);
+    await startLink();
+    check(await linking(), "Link to… should show the banner");
+    check((await page.locator(".bcard[data-id='a'] .hl-run.src").count()) === 1 && (await page.locator(".bcard.link-src").count()) === 1, "the source phrase and its card should be marked while linking");
+    await page.evaluate(() => document.querySelector(".bcard[data-id='c']").scrollIntoView({ block: "end" }));
+    await page.evaluate(() => { const b = document.querySelector(".board"); const sc = b.closest(".pane") && getComputedStyle(b.closest(".pane")).overflowY === "auto" ? b.closest(".pane") : document.scrollingElement; sc.scrollTop = sc.scrollHeight; });
+    await settle();
+    check(await inView(".board-banner .bb"), "the banner should stay in view when the board has scrolled to its end");
+    check(await inView(".board-banner .bb button"), "and its Cancel with it");
+    await shot("05-linking-scrolled");
+    await page.click(".board-banner .bb button:has-text('Cancel')");
+    await settle();
+    check(!(await linking()) && (await state()).links.length === 1, "Cancel should leave link mode with nothing linked");
+    await startLink();
+    await page.keyboard.press("Escape");
+    await settle();
+    check(!(await linking()), "Escape should leave link mode");
+    await startLink();
+    await page.click(word("a", 24));
+    await settle();
+    check(!(await linking()) && (await state()).links.length === 1, "a tap on the source card should leave link mode");
+    check((await page.locator(".bcard .w.first").count()) === 0, "and start no highlight");
+    await startLink();
+    await page.click(".board > .deck-hint");
+    await settle();
+    check(!(await linking()), "a tap on empty board should leave link mode");
+    await startLink();
+    await page.goBack();
+    await settle();
+    check(!(await linking()), "Back should leave link mode");
+    check((await page.evaluate(() => location.hash)) === hashBefore && (await page.locator(".board .bcard").count()) >= 3 && (await page.evaluate(() => document.querySelector(".board").offsetParent !== null)), "and stay on the deck");
+    check((await state()).links.length === 1, "no connection should have been made by any of the ways out");
+
+    // ---- the first word of a phrase: Escape or a tap elsewhere drops it
+    await page.click(word("c", 3));
+    check((await page.locator(".bcard[data-id='c'] .w.first").count()) === 1, "the first word should be marked");
+    await page.keyboard.press("Escape");
+    check((await page.locator(".bcard .w.first").count()) === 0 && (await page.locator(".bc-hint.first-word").count()) === 0, "Escape should drop the first word");
+    await page.click(word("c", 3));
+    await page.click(".board .deck-title");
+    check((await page.locator(".bcard .w.first").count()) === 0, "a tap outside the passage should drop the first word");
+    check((await state()).items[2].hl.length === 0, "and nothing is highlighted");
+
+    // ---- a connection by drag, with real pointer events; then each way of cancelling a drag
+    const center = async (sel) => { const b = await page.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const dragFrom = async (to, { release = true, esc = false } = {}) => {
+      await page.evaluate(() => document.querySelector(".bcard[data-id='a']").scrollIntoView({ block: "start" }));
+      await page.evaluate(() => window.scrollBy(0, -140)); // out from under the phone's header
+      await settle();
+      const from = await center(".bcard[data-id='a'] .bc-text .port");
+      const dest = typeof to === "string" ? await center(to) : to(from);
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move(from.x + 8, from.y + 12, { steps: 2 });
+      await page.mouse.move(dest.x, dest.y, { steps: 8 });
+      await page.waitForTimeout(80);
+      const mid = await page.evaluate(() => ({ src: !!document.querySelector(".bcard.drag-src"), banner: !!document.querySelector(".board-banner:not([hidden]) .bb"), line: !!document.querySelector(".board-lines .temp") }));
+      if (esc) await page.keyboard.press("Escape");
+      if (release) await page.mouse.up();
+      await settle();
+      return mid;
+    };
+    let mid = await dragFrom(word("c", 1));
+    check(mid.src && mid.banner && mid.line, `while dragging, the source card and the banner should say how to cancel: ${JSON.stringify(mid)}`);
+    s = await state();
+    check(s.links.length === 2 && s.links[1].from.id === "a" && s.links[1].to.id === "c", `a drag onto a word should link to it: ${s.links.length}`);
+    await page.waitForSelector(".bpop", { timeout: 3000 });
+    await shot("06-drag-linked");
+    await undoToast();
+    s = await state();
+    check(s.links.length === 1 && s.items[2].hl.length === 0, "Undo should take the dragged connection back, and the highlight it made");
+    mid = await dragFrom(word("c", 1), { esc: true });
+    check((await state()).links.length === 1, "Escape during a drag should cancel it, even with the finger let go over a target");
+    check(!(await page.evaluate(() => !!document.querySelector(".board.dragging, .bcard.drag-src, .board-lines .temp, .board-banner:not([hidden]) .bb"))), "and leave no trace of the drag");
+    await dragFrom(".bcard[data-id='a'] .bc-cite");
+    check((await state()).links.length === 1, "a release over its own card should cancel the drag");
+    check(/Nothing linked/.test(await toastText()), "and say so");
+    await dragFrom(".board > .deck-hint");
+    check((await state()).links.length === 1, "a release over empty space should cancel the drag");
+    await page.click(word("c", 1)); await page.keyboard.press("Escape");
+    check((await page.locator(".bcard .w.first").count()) === 0, "the board should still take taps after cancelled drags");
+
+    // ---- the label editor: inside the screen, Remove link beside Done, Escape and Back close it
+    await page.evaluate(() => { const b = document.querySelector(".board"); const sc = b.closest(".pane") && getComputedStyle(b.closest(".pane")).overflowY === "auto" ? b.closest(".pane") : document.scrollingElement; sc.scrollTop = 0; });
+    await page.evaluate(() => document.querySelector(".bcard[data-id='b'] .link-chip").scrollIntoView({ block: "end" }));
+    await settle();
+    await page.click(".bcard[data-id='b'] .link-chip");
+    await page.waitForSelector(".bpop", { timeout: 3000 });
+    check((await inView(".bpop .deck-actions .danger")) && (await inView(".bpop .bpop-t")), "the label editor should be inside the screen when its chip is at the bottom");
+    const row = await page.evaluate(() => [...document.querySelectorAll(".bpop .deck-actions button")].map((b) => b.textContent));
+    check(row[0] === "Done" && row[1] === "Remove link", `Remove link should sit beside Done: ${row.join(", ")}`);
+    await shot("07-editor-low");
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press("Escape");
+    await settle();
+    check((await page.locator(".bpop").count()) === 0, "Escape should close the label editor with no field in focus");
+    await page.click(".bcard[data-id='b'] .link-chip");
+    await page.waitForSelector(".bpop", { timeout: 3000 });
+    await page.goBack();
+    await settle();
+    check((await page.locator(".bpop").count()) === 0 && (await page.evaluate(() => location.hash)) === hashBefore, "Back should close the label editor and stay on the deck");
+    check((await state()).links.length === 1, "closing the editor keeps the connection");
+
+    // ---- the Markdown sheet and My decks: focus inside, the page behind inert, Escape and Back close them
+    if (!(await page.locator(".board .deck-actions.secondary:not([hidden])").count())) await page.click(".board-row button:has-text('More')");
+    await page.click(".board .deck-actions button:has-text('Markdown')");
+    await page.waitForSelector(".dsheet", { timeout: 3000 });
+    const md = await page.evaluate(() => ({ focus: !!document.activeElement.closest(".dsheet"), inert: document.querySelector("main").inert }));
+    check(md.focus && md.inert, `the Markdown sheet should take the focus and make the page inert: ${JSON.stringify(md)}`);
+    await page.keyboard.press("Escape");
+    await settle();
+    check((await page.locator(".dsheet").count()) === 0 && !(await page.evaluate(() => document.querySelector("main").inert)), "Escape should close the Markdown sheet and free the page");
+    await page.click(".board .deck-actions button:has-text('Markdown')");
+    await page.waitForSelector(".dsheet", { timeout: 3000 });
+    await page.goBack();
+    await settle();
+    check((await page.locator(".dsheet").count()) === 0 && (await page.evaluate(() => location.hash)) === hashBefore && (await page.evaluate(() => document.querySelector(".board").offsetParent !== null)), "Back should close the Markdown sheet and stay on the deck");
+    await page.click(".board .deck-actions button:text-is('My decks')");
+    await page.waitForSelector(".board-saved .saved", { timeout: 3000 });
+    check(await page.evaluate(() => !!document.activeElement.closest(".board-saved")), "My decks should take the focus");
+    await page.goBack();
+    await settle();
+    check((await page.locator(".board-saved .saved").count()) === 0 && (await page.locator(".board .bcard").count()) >= 3 && (await page.evaluate(() => location.hash)) === hashBefore, "Back should close My decks and show the cards again");
+    await page.click(".board .deck-actions button:text-is('My decks')");
+    await page.waitForSelector(".board-saved .saved", { timeout: 3000 });
+    await page.keyboard.press("Escape");
+    await settle();
+    check((await page.locator(".board-saved .saved").count()) === 0, "Escape should close My decks");
+    await page.click(".board-row button:has-text('More')"); // closed again, as the next part expects
+
     // ---- a saved deck opened over unsaved work asks first, and Undo brings the work back
     await page.click(".board-row button:has-text('More')");
     await page.click(".board button:has-text('Save to my decks')");

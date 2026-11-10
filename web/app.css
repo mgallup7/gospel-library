@@ -822,8 +822,15 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
 .board-think .think-row .chip { flex: none; }
 .board-think .think-row .chip:disabled { opacity: .6; }
 .stage-caption { font-size: .5em; font-style: italic; opacity: .85; text-align: center; margin-top: 2vmin; line-height: 1.35; }
-.board-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 6px 0; border-radius: 10px; background: var(--target); font-size: 14px; }
-.board-banner span { flex: 1; }
+/* a link in progress: the banner takes no room in the page and sticks under the pane's bar, so Cancel is in reach however far the cards have scrolled */
+.board-banner { position: sticky; top: 6px; z-index: 7; height: 0; }
+.board-banner .bb { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 2px 4px 2px 12px; border-radius: 12px; background: var(--target); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); box-shadow: 0 6px 18px rgba(0,0,0,.2); font: 14px/1.35 var(--sans); color: var(--ink); }
+.board-banner .bb span { flex: 1; min-width: 0; padding: 6px 0; }
+.board-banner .bb .text-btn { flex: none; height: 44px; }
+.bcard.link-src { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.bcard .hl-run.src { background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 2px var(--accent); }
+.bcard.drag-src { border-style: dashed; border-color: var(--accent); }
+.bcard.drag-src::after { content: "Let go here to cancel"; position: absolute; top: 8px; right: 44px; padding: 4px 10px; border-radius: 8px; background: var(--target); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); font: 600 12px/1.5 var(--sans); color: var(--ink); pointer-events: none; }
 .board-canvas { position: relative; padding-right: 30px; }
 .board-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; color: var(--accent); }
 .board-lines .blink { fill: none; stroke: currentColor; stroke-width: 2; opacity: .8; stroke-linecap: round; }
@@ -926,6 +933,9 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
 .bpop .deck-subtitle { margin-bottom: 6px; }
 .bpop .shelf { padding: 0; margin: 4px 0 6px; }
 .bpop .deck-actions { margin: 4px 0 0; }
+.bpop .deck-actions .danger { color: var(--danger); }
+.bpop:focus { outline: none; }
+.dsheet:focus { outline: none; }
 .stage-link { display: grid; grid-template-columns: 1fr auto 1fr; gap: 3vmin; align-items: center; width: 100%; max-width: none; }
 .stage-text:has(.stage-link) { max-width: none; width: 100%; }
 .stage-link .side .x { font-size: .62em; line-height: 1.35; }

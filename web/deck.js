@@ -564,9 +564,88 @@ import { esc } from "./lib/format.js";
   let linking = null;   // {id, hl}: tap-to-link in progress
   let drag = null;      // a port being dragged
   let editing = null;   // the link whose label editor is open
+  let holding = false;  // a link just made: its label editor is about to open, so the marker below stays
   let hintShown = false;
   let selectedId = null; // the card last tapped or typed in: where a new question or slide text goes
   let naming = false;     // "Name this deck" was tapped on an empty deck: its title fields show
+
+  // Link mode, the label editor, the deck's sheets and My decks are states to leave, not places.
+  // While any is up, one marker entry sits in history (app.js openOverlay), so Back leaves the
+  // state and stays on the deck; leaving by hand pops the marker. The browser pops it a moment
+  // after it is asked to, so anything that must follow the pop (a new marker, a move to another
+  // page) waits on settled().
+  let marker = false, popping = null;
+  const sheets = new Set(); // the close() of each dialog() that is open
+  let savedOpen = null;     // closes the My decks list while it shows
+  const savedUp = () => !!(savedOpen && savedShown && savedShown.box.isConnected);
+  const inMode = () => !!(linking || editing || holding || sheets.size || savedUp());
+  const settled = () => popping || Promise.resolve();
+  function syncMarker() {
+    if (popping) { popping.then(syncMarker); return; }
+    const want = inMode();
+    if (want && !marker) { marker = true; GL().openOverlay?.("deck"); }
+    else if (!want && marker) {
+      marker = false;
+      const mine = history.state?.overlay === "deck";
+      GL().dropOverlay?.("deck");
+      if (mine) popping = new Promise((resolve) => {
+        const done = () => { window.removeEventListener("popstate", done); clearTimeout(timer); popping = null; resolve(); };
+        const timer = setTimeout(done, 500);
+        window.addEventListener("popstate", done);
+      });
+    }
+  }
+  // Everything left at once: Back was pressed.
+  function leaveModes() {
+    for (const close of [...sheets]) close();
+    if (savedUp()) savedOpen();
+    const redraw = !!(linking || editing || pending);
+    linking = null; pending = null; holding = false; closeEditor();
+    if (redraw) draw();
+  }
+  window.addEventListener("popstate", () => { if (marker && history.state?.overlay !== "deck") { marker = false; leaveModes(); } });
+  function cancelLink() {
+    if (!linking) return;
+    linking = null;
+    draw();
+    GL().toast("Link cancelled.");
+  }
+  // The first word of a phrase, tapped and then left: the mark comes off without a redraw.
+  function clearPending() {
+    if (!pending) return;
+    pending = null;
+    if (!ui) return;
+    for (const w of ui.cards.querySelectorAll(".w.first")) w.classList.remove("first");
+    for (const h of ui.cards.querySelectorAll(".bc-hint.first-word")) h.remove();
+  }
+  document.addEventListener("click", (e) => { if (pending && !(e.target.closest && e.target.closest(".bcard[data-type='passage'] .bc-text"))) clearPending(); }, true);
+  // Escape leaves the innermost thing: a drag, the label editor, link mode, a first word, My decks.
+  // (A sheet takes its own Escape.)
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented || sheets.size) return;
+    if (drag) drag.end(null, true);
+    else if (editing) { closeEditor(); draw(); }
+    else if (linking) cancelLink();
+    else if (pending) clearPending();
+    else if (savedUp()) savedOpen();
+    else return;
+    e.preventDefault();
+  });
+  // The height of whatever sticks to the top of the board's scroller: the pane's bar on a wide
+  // screen, the search header on a phone.
+  function stickyTop() {
+    if (!board) return 0;
+    if (GL().wide) { const bar = board.parentElement && board.parentElement.querySelector(".reader-bar"); return bar ? bar.offsetHeight : 0; }
+    const head = $("header.bar");
+    return head && getComputedStyle(head).position === "sticky" ? head.offsetHeight : 0;
+  }
+  // The part of the board's scroller that shows, in viewport coordinates.
+  function visibleBox() {
+    const sc = scrollerOf(ui.canvas);
+    const whole = sc === document.scrollingElement || sc === document.documentElement;
+    const r = whole ? { top: 0, bottom: window.innerHeight } : sc.getBoundingClientRect();
+    return { top: r.top + stickyTop(), bottom: Math.min(r.bottom, window.innerHeight) };
+  }
 
   // The card tools, drawn as strokes in the app's icon style rather than text arrows,
   // which sit at different heights in different fonts.
@@ -584,6 +663,7 @@ import { esc } from "./lib/format.js";
   /** The Deck tab. Wide screens: a summary here, the board on the right. */
   function render(container) {
     container.replaceChildren();
+    if (savedOpen && !savedUp()) savedOpen = null; // its list went with the tab
     if (GL().wide) {
       container.append(el("div", { class: "deck-summary" }, [
         el("h2", { text: deck.title || "Deck" }),
@@ -631,7 +711,7 @@ import { esc } from "./lib/format.js";
     const hint = el("p", { class: "deck-hint" });
     const thinkBox = el("div", { class: "board-think", hidden: true });
     const actions = el("div", { class: "board-row" }, [download, present, more, undoBtn]);
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, actions, moreRow, banner, thinkBox]);
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, actions, moreRow, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -640,7 +720,18 @@ import { esc } from "./lib/format.js";
     const canvas = el("div", { class: "board-canvas" }, [cards, svg, labels]);
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
-    board.append(head, canvas, saved, status, hint);
+    // the banner is a child of the board itself, so it can stick to the top of the pane while the cards scroll
+    board.append(head, banner, canvas, saved, status, hint);
+    // While linking, a tap on the board that is not on a phrase or passage to link to cancels:
+    // the source card, a section, a tool, the head, empty space. swallowTap keeps that same tap
+    // from starting a highlight.
+    board.addEventListener("click", (e) => {
+      if (!linking || e.target.closest(".board-banner, .bpop")) return;
+      const card = e.target.closest(".bcard");
+      if (card && card.dataset.type === "passage" && card.dataset.id !== linking.id && !e.target.closest("button:not(.port), textarea, input")) return;
+      swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
+      cancelLink();
+    }, true);
     ui = { title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
@@ -652,11 +743,30 @@ import { esc } from "./lib/format.js";
     if (window.ResizeObserver) new ResizeObserver(() => drawLines()).observe(cards);
   }
 
+  let swallowTap = false;
   function draw() {
     if (!ui) return;
     syncHead();
     drawCards();
     raf(drawLines);
+    syncMarker();
+  }
+  // The banner for a link in progress, by tap or by drag. It takes no room in the page (so the
+  // cards do not jump when it comes and goes) and sticks under the bar at the top of the pane.
+  function syncBanner() {
+    if (!ui) return;
+    const b = ui.banner;
+    if (linking) {
+      const from = endOf(linking);
+      b.replaceChildren(el("div", { class: "bb", role: "status" }, [
+        el("span", { html: `Tap a phrase or a passage to link <b>${esc(from && from.hl ? `“${phraseOf(from.item, from.hl)}”` : from ? from.item.citation : "")}</b> to it.` }),
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => cancelLink() }),
+      ]));
+    } else if (drag) {
+      b.replaceChildren(el("div", { class: "bb", role: "status" }, [el("span", { text: "Let go on a phrase or a passage to link. To cancel, let go on empty space or on the card you started from, or press Esc." })]));
+    } else { b.hidden = true; b.replaceChildren(); return; }
+    b.hidden = false;
+    b.style.top = `${stickyTop() + 6}px`;
   }
   function syncHead() {
     if (document.activeElement !== ui.title) ui.title.value = deck.title || "";
@@ -681,14 +791,7 @@ import { esc } from "./lib/format.js";
     ui.md.disabled = empty;
     syncDownloadButton();
     schedulePrepare();
-    if (linking) {
-      const from = endOf(linking);
-      ui.banner.hidden = false;
-      ui.banner.replaceChildren(
-        el("span", { html: `Tap a phrase or a passage to link <b>${esc(from && from.hl ? `“${phraseOf(from.item, from.hl)}”` : from ? from.item.citation : "")}</b> to it.` }),
-        el("button", { type: "button", class: "text-btn small", text: "Cancel", onclick: () => { linking = null; draw(); } }),
-      );
-    } else ui.banner.hidden = true;
+    syncBanner();
     ui.hint.hidden = empty;
     ui.hint.textContent = empty ? ""
       : count() === 1 ? "To highlight: tap the first and last word of a phrase. To link: add another passage, then drag the dot at the end of a highlight onto a phrase there."
@@ -706,7 +809,7 @@ import { esc } from "./lib/format.js";
     cards.replaceChildren();
     if (selectedId && !byId(selectedId)) selectedId = null;
     deck.items.forEach((it, idx) => {
-      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : ""), "data-id": it.id, "data-type": it.type });
+      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : "") + (linking && linking.id === it.id ? " link-src" : ""), "data-id": it.id, "data-type": it.type });
       const tools = el("div", { class: "bc-tools" }, [
         el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
         el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
@@ -740,7 +843,8 @@ import { esc } from "./lib/format.js";
       // the talk and conference sit under the words, the way an attribution follows a quote
       if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
       card.append(notesEl(it));
-      if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint", text: "Now tap the last word of the phrase." }));
+      if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint first-word", text: "Now tap the last word of the phrase. Tap anywhere else to drop it." }));
+      if (linking && linking.id === it.id) card.append(el("div", { class: "bc-hint", text: "Linking from here. Tap this card, or Cancel, to stop." }));
       if (active && active.id === it.id) {
         const h = hlById(it, active.hl);
         if (h) card.append(el("div", { class: "hl-tools" }, [
@@ -827,7 +931,7 @@ import { esc } from "./lib/format.js";
       if (x.n !== null && x.n !== undefined) host.append(el("span", { class: "vn", text: String(x.n) }));
       const h = hlAt(it, i);
       if (h && host === text) {
-        host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : ""), "data-hl": h.id });
+        host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : "") + (linking && linking.id === it.id && linking.hl === h.id ? " src" : ""), "data-hl": h.id });
         text.append(host);
       }
       const cls = ["w"];
@@ -860,7 +964,7 @@ import { esc } from "./lib/format.js";
 
   // Taps: mark phrases (first word, then last), pick a highlight, or finish a tap-to-link.
   function onCardClick(e) {
-    if (drag) return;
+    if (drag || swallowTap) return;
     const port = e.target.closest(".port");
     const card = e.target.closest(".bcard");
     if (!card || card.dataset.type !== "passage") return;
@@ -912,7 +1016,10 @@ import { esc } from "./lib/format.js";
     port.classList.add("src");
     try { port.setPointerCapture(e.pointerId); } catch (_) {}
     closeEditor();
-    drag = { from, port, temp, start, target: null, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false, loop: null };
+    const srcCard = port.closest(".bcard");
+    if (srcCard) srcCard.classList.add("drag-src");
+    drag = { from, port, temp, start, target: null, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false, loop: null, pointerId: e.pointerId, end: null };
+    syncBanner();
     const update = () => {
       if (!drag) return;
       const c = ui.canvas.getBoundingClientRect();
@@ -921,26 +1028,36 @@ import { esc } from "./lib/format.js";
       setDropTarget(resolveAt(drag.x, drag.y, from));
     };
     const onMove = (ev) => {
+      if (!drag) return;
       drag.x = ev.clientX; drag.y = ev.clientY;
       if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) > 6) drag.moved = true;
       update();
     };
-    const onEnd = (ev) => {
+    // The end of the drag: a release (onto a target it links; onto empty space or its own card
+    // it does not), or cancelled, by Escape or by the browser taking the pointer away.
+    const onEnd = (ev, cancelled = false) => {
+      if (!drag || drag.port !== port) return;
       port.removeEventListener("pointermove", onMove);
       port.removeEventListener("pointerup", onEnd);
       port.removeEventListener("pointercancel", onEnd);
-      try { port.releasePointerCapture(ev.pointerId); } catch (_) {}
+      try { port.releasePointerCapture(drag.pointerId); } catch (_) {}
       if (drag.loop) cancelAnimationFrame(drag.loop);
       temp.remove();
       board.classList.remove("dragging");
       port.classList.remove("src");
-      const target = ev.type === "pointerup" && drag.moved ? resolveAt(ev.clientX, ev.clientY, from) : null;
+      if (srcCard) srcCard.classList.remove("drag-src");
+      const up = !cancelled && !!ev && ev.type === "pointerup";
+      const target = up && drag.moved ? resolveAt(ev.clientX, ev.clientY, from) : null;
       setDropTarget(null);
       const moved = drag.moved;
+      if (moved) hintShown = true; // someone who has dragged the dot does not need telling how
       drag = null;
+      syncBanner();
       if (target) finishLink(from, target);
-      else if (!moved && !hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
+      else if (moved || cancelled) GL().toast("Nothing linked.");
+      else if (!hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
     };
+    drag.end = onEnd;
     port.addEventListener("pointermove", onMove);
     port.addEventListener("pointerup", onEnd);
     port.addEventListener("pointercancel", onEnd);
@@ -1003,9 +1120,14 @@ import { esc } from "./lib/format.js";
     if (!link) return;
     if (made) link.made = made; // the one-word highlight this link brought: it leaves with the link
     active = null; pending = null;
+    holding = true;
     save();
     did("Linked.");
-    raf(() => raf(() => { const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) openLabelEditor(link, pill); }));
+    raf(() => raf(() => {
+      holding = false;
+      const pill = deck.links.includes(link) ? ui.labels.querySelector(`[data-link="${link.id}"]`) : null; // an Undo may have been quicker
+      if (pill) openLabelEditor(link, pill); else syncMarker();
+    }));
   }
 
   // The arrows: from the port at the end of one highlight, out through the
@@ -1066,29 +1188,39 @@ import { esc } from "./lib/format.js";
     const input = el("input", { class: "deck-subtitle", placeholder: "What the arrow says", value: link.label || "", "aria-label": "Connection label", autocapitalize: "off" });
     const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) { pill.classList.toggle("empty", !v); pill.title = v ? `${v} (edit)` : "Name this connection"; } };
     input.addEventListener("input", () => setLabel(input.value));
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); closeEditor(); draw(); } });
-    const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Connection" }, [
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); closeEditor(); draw(); } }); // Escape is taken at the document, focus or no focus
+    const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Connection", tabindex: "-1" }, [
       el("div", { class: "bpop-t", html: `<b class="num">${linkNumber(link)}</b> ${esc(name(a))} <span class="arrow">→</span> ${esc(name(b))}` }),
       el("div", { class: "bpop-s", text: `${a ? a.item.citation : ""} → ${b ? b.item.citation : ""}` }),
       input,
       el("div", { class: "shelf" }, QUICK_LABELS.map((q) => el("button", { type: "button", class: "chip small" + (link.label === q ? " on" : ""), text: q, onclick: () => { setLabel(q); closeEditor(); draw(); } }))),
       el("div", { class: "deck-actions" }, [
         el("button", { type: "button", class: "primary", text: "Done", onclick: () => { closeEditor(); draw(); } }),
-        el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); did("Direction swapped."); } }),
         el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { removeLink(link); closeEditor(); save(); did("Connection removed."); } }),
+        el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); did("Direction swapped."); } }),
       ]),
     ]);
     const cr = ui.canvas.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
     const width = Math.min(380, cr.width - 16);
     pop.style.width = `${width}px`;
     pop.style.left = `${Math.max(8, Math.min(ar.left - cr.left - width / 2 + ar.width / 2, cr.width - width - 8))}px`;
-    pop.style.top = `${ar.bottom - cr.top + 8}px`;
     ui.canvas.append(pop);
     ui.pop = pop;
+    // Under the badge when it fits in what shows of the pane, else above it, else against the
+    // bottom (clear of the toast that follows a new link when there is room for that).
+    const box = visibleBox(), h = pop.offsetHeight;
+    let top = ar.bottom + 8;
+    if (top + h > box.bottom - 8) {
+      const above = ar.top - 8 - h;
+      const low = box.bottom - h - (box.bottom - box.top - h >= 96 ? 80 : 8);
+      top = above >= box.top + 8 ? above : Math.max(box.top + 8, low);
+    }
+    pop.style.top = `${top - cr.top}px`;
     drawLines();
     outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor) { closeEditor(); draw(); } };
     setTimeout(() => document.addEventListener("pointerdown", outside, true), 0);
-    if (GL().wide) input.focus();
+    try { (GL().wide ? input : pop).focus({ preventScroll: true }); } catch (_) {}
+    syncMarker();
   }
   function closeEditor() {
     if (outside) { document.removeEventListener("pointerdown", outside, true); outside = null; }
@@ -1110,10 +1242,11 @@ import { esc } from "./lib/format.js";
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     asking = new Promise((resolve) => {
       const n = count(), l = deck.links.length;
-      const scrim = el("div", { class: "dscrim" });
-      const sheet = el("div", { class: "dsheet", role: "dialog", "aria-modal": "true", "aria-label": "Deck in progress" });
-      const onKey = (e) => { if (e.key === "Escape") finish("cancel"); };
-      const finish = (v) => { scrim.remove(); sheet.remove(); document.removeEventListener("keydown", onKey); asking = null; resolve(v); };
+      // The answer goes back once the sheet's marker is out of history, so the search or question
+      // that was waiting on it makes its own entry on firm ground. Escape, Back and a tap outside
+      // are Cancel.
+      let answer = "cancel";
+      const finish = (v) => { answer = v; dlg.close(); };
       const what = `${n} ${n === 1 ? "passage" : "passages"}${l ? ` and ${l} ${l === 1 ? "connection" : "connections"}` : ""}`;
       const name = el("input", { class: "deck-subtitle", value: deck.title || `Deck ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}`, "aria-label": "Name for the saved deck", autocapitalize: "words" });
       const nameRow = el("div", { class: "dsheet-save", hidden: true }, [
@@ -1129,7 +1262,7 @@ import { esc } from "./lib/format.js";
           finish("new");
         } }),
       ]);
-      sheet.append(
+      const dlg = dialog("Deck in progress", () => [
         el("h2", { text: `Clear the deck for this ${kind}?` }),
         el("p", { class: "lede", text: `${deck.title ? `“${deck.title}” has` : "The deck has"} ${what}.` }),
         el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { store.set("deckKept", deck.id); finish("keep"); } }),
@@ -1137,10 +1270,7 @@ import { esc } from "./lib/format.js";
         nameRow,
         el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; naming = false; save(); did("The deck is empty."); finish("new"); } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => finish("cancel") }),
-      );
-      scrim.addEventListener("click", () => finish("cancel"));
-      document.addEventListener("keydown", onKey);
-      document.body.append(scrim, sheet);
+      ], { onClose: () => { asking = null; settled().then(() => resolve(answer)); } });
     });
     return asking;
   }
@@ -1210,11 +1340,8 @@ import { esc } from "./lib/format.js";
   function exportMarkdown() {
     const text = markdownOf();
     const name = `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.md`;
-    const scrim = el("div", { class: "dscrim" });
-    const sheet = el("div", { class: "dsheet", role: "dialog", "aria-label": "Markdown" });
-    const close = () => { scrim.remove(); sheet.remove(); };
     const msg = el("p", { class: "lede", text: `${text.split("\n").length} lines. Copy it and paste into a new Bear note, or save the file and share it to Bear.` });
-    sheet.append(
+    const { sheet } = dialog("Markdown", (close) => [
       el("h2", { text: "The deck as Markdown" }),
       msg,
       el("button", { type: "button", class: "primary", text: "Copy", onclick: async () => {
@@ -1230,9 +1357,7 @@ import { esc } from "./lib/format.js";
         msg.textContent = `Saved ${name}.`;
       } }),
       el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
-    );
-    scrim.addEventListener("click", close);
-    document.body.append(scrim, sheet);
+    ]);
   }
 
   // ------------------------------------------------------------ thinking --
@@ -1396,23 +1521,36 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     savedDecks = [entry, ...savedDecks.filter((d) => d.id !== deck.id)];
     putSaved(entry).then((ok) => { if (ok !== false) flash(`Saved “${name}”.`); });
   }
-  // A small sheet of the deck's own: a question before a deck is replaced, a new name. build(close)
-  // returns its children; Cancel, Escape and a tap outside close it.
-  function dialog(label, build) {
+  // A sheet of the deck's own: the question before a deck is replaced or cleared, a new name, the
+  // Markdown export. build(close) returns its children. It goes the way the app's sheets go: the
+  // focus moves in and comes back, the page behind is inert, and Cancel, Escape, a tap outside
+  // and Back all close it (onClose hears every one of them).
+  function dialog(label, build, { onClose } = {}) {
     const scrim = el("div", { class: "dscrim" });
-    const sheet = el("div", { class: "dsheet", role: "dialog", "aria-modal": "true", "aria-label": label });
+    const sheet = el("div", { class: "dsheet", role: "dialog", "aria-modal": "true", "aria-label": label, tabindex: "-1" });
+    const wrap = el("div", { class: "dwrap" }, [scrim, sheet]); // one node for inertBehind to leave live
+    const opener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     let open = true;
     const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
     function close() {
       if (!open) return;
       open = false;
-      scrim.remove(); sheet.remove();
+      sheets.delete(close);
+      GL().inertBehind?.(wrap, false); // before the focus goes back to what opened it
+      wrap.remove();
       document.removeEventListener("keydown", onKey);
+      if (opener && opener.isConnected) { try { opener.focus({ preventScroll: true }); } catch (_) {} }
+      syncMarker();
+      onClose?.();
     }
     sheet.append(...build(close).filter(Boolean));
     scrim.addEventListener("click", close);
     document.addEventListener("keydown", onKey);
-    document.body.append(scrim, sheet);
+    document.body.append(wrap);
+    GL().inertBehind?.(wrap, true);
+    sheets.add(close);
+    syncMarker();
+    try { (sheet.querySelector("input, textarea, button") || sheet).focus({ preventScroll: true }); } catch (_) {}
     return { sheet, close };
   }
   // Is the deck in progress in My decks exactly as it stands? Then replacing it loses nothing.
@@ -1485,15 +1623,24 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     savedShown = { box, onBack, onPick };
     return box;
   }
+  // My decks, in place of the cards (or, from the summary on a wide screen, in place of it).
+  // Back, Escape and its own Back button all close it; the focus goes to its first button.
   function showSaved() {
+    if (savedUp()) return;
     ui.canvas.hidden = true;
     ui.saved.hidden = false;
-    const back = () => { ui.saved.hidden = true; ui.canvas.hidden = false; ui.saved.replaceChildren(); draw(); };
+    const back = () => { savedOpen = null; ui.saved.hidden = true; ui.canvas.hidden = false; ui.saved.replaceChildren(); draw(); };
+    savedOpen = back;
     ui.saved.replaceChildren(savedList(back, back));
+    syncMarker();
+    try { ui.saved.querySelector("button")?.focus({ preventScroll: true }); } catch (_) {}
   }
   function renderSaved(container) {
-    const back = () => render(container);
+    const back = () => { const live = savedUp() && container.contains(savedShown.box); savedOpen = null; if (live) render(container); syncMarker(); };
+    savedOpen = back;
     container.replaceChildren(savedList(back, back));
+    syncMarker();
+    try { container.querySelector("button")?.focus({ preventScroll: true }); } catch (_) {}
   }
   function flash(text) {
     const s = ui ? ui.status : null;
