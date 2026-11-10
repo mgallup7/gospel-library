@@ -534,12 +534,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
         el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => {
-          const was = settings.key;
+          const was = settings.key, said = thread.slice(); // Undo puts back the key and the conversation it took with it
           settings.key = "";
           setThread([]);
           close();
           if (live()) render(live());
-          GL().toast("The key is off this device.", { action: "Undo", onAction: () => { settings.key = was; if (live()) render(live()); } });
+          GL().toast("The key is off this device.", { action: "Undo", onAction: () => { settings.key = was; setThread(said); if (live()) render(live()); } });
         } }),
       ]),
     ]);
