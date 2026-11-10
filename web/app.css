@@ -1184,6 +1184,11 @@ a.toast-action { display: inline-flex; align-items: center; }
 .port.src, .port.drop { transform: scale(1.2); }
 .port.drop { background: var(--paper); }
 .port.card-port { margin: 4px 0 0; flex: none; }
+.bcard .port-word { flex: none; height: 25px; margin: 0 -2px 0 0; padding: 0 2px 0 6px; font: 600 var(--ui-12) var(--sans); color: var(--accent); border-radius: 6px; position: relative; }
+.board:not(.can-link) .port-word { display: none; }
+.bcard .port-word::after { content: ""; position: absolute; inset: -9px -2px; }
+.board .deck-hint.link-hint { margin: 10px 0 0; color: var(--ink-2); }
+.board-empty .what { margin-bottom: 10px; color: var(--ink); }
 .bcard .bc-hint { font: var(--ui-13) var(--sans); color: var(--ink-2); margin-top: 6px; }
 .bcard .hl-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-family: var(--sans); font-size: var(--ui-13); }
 .bcard .hl-tools .ph { color: var(--ink-2); font-style: italic; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

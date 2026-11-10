@@ -1102,7 +1102,8 @@ import { database } from "./lib/idb.js";
     if (!deck.items.length) {
       const savedAny = savedDecks.length > 0;
       cards.append(el("div", { class: "board-empty" }, [
-        el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
+        el("p", { class: "what", text: "Your deck: the passages you collect for a talk or lesson. Add verses with + Deck while reading, then present them or download a PowerPoint." }),
+        el("p", { text: "To add a passage another way, tap + on a search result, or tick one under an Ask answer." }),
         el("p", { class: "then", text: "Then, here: tap the first and last word of a phrase to highlight it, and drag the dot at its end onto a phrase in another passage to link the two." }),
         naming || deck.title || deck.subtitle ? null : el("button", { type: "button", class: "text-btn", text: "Name this deck", onclick: () => { naming = true; draw(); ui.title.focus(); } }),
         savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
