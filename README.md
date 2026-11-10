@@ -154,6 +154,13 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
 - Page | Deck: on an iPad, once the deck is open and a page is too, a switch at
   the top of the right pane flips between them. Neither is closed: the page
   keeps its place and its selected verses while the board is up.
+- Undo and Cancel on the board: every change to the deck (a connection made
+  or removed, a highlight, a card removed or moved, a new deck, a saved deck
+  opened or deleted) shows a toast with Undo, the board has its own Undo
+  button for the last 30 changes, and Cmd+Z works. A link in progress, a
+  drag, the label editor and the deck's sheets are all left by Cancel,
+  Escape, a tap outside or Back. A card's citation opens its chapter at the
+  verse.
 - The board: each passage is a card. Tap the first and last word of a phrase
   to highlight it. Every highlight ends in a dot; drag the dot onto a phrase
   in another passage (or onto the passage itself) and an arrow is drawn

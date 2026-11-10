@@ -117,17 +117,39 @@ import { esc } from "./lib/format.js";
   let savedDecks = []; // [{id, title, updated, deck}], newest first
   const bc = typeof BroadcastChannel === "function" ? new BroadcastChannel(DB) : null;
 
+  let dirty = false;    // a change the database does not have yet
+  let firstWanted = 0;  // when the oldest of those changes was made
   async function writeCurrent() {
-    clearTimeout(writeTimer); writeTimer = null;
+    clearTimeout(writeTimer); writeTimer = null; firstWanted = 0;
     if (!loaded) { writeWanted = true; return; }
     writeWanted = false;
-    if (noDb) { store.set("deck", deck); return; }
-    try { await tx("current", "readwrite", (s) => s.put(deck, "deck")); bc?.postMessage({ what: "current", updated: deck.updated }); }
-    catch (err) { warn(err); }
+    const stamp = deck.updated;
+    if (noDb) { store.set("deck", deck); dirty = false; return; }
+    try {
+      await tx("current", "readwrite", (s) => s.put(deck, "deck"));
+      if (deck.updated === stamp) dirty = false;
+      bc?.postMessage({ what: "current", updated: deck.updated });
+    } catch (err) { warn(err); }
   }
-  function scheduleWrite() { clearTimeout(writeTimer); writeTimer = setTimeout(writeCurrent, 400); }
-  // A deck being typed into when the page goes away is written at once.
-  const flushNow = () => { if (writeTimer) writeCurrent(); };
+  // A change is written a moment after it is made: at once for a card added, moved or removed,
+  // after a pause in typing, and never more than a second and a half behind steady typing (a
+  // wait that started again at every key was never reached by someone who kept typing).
+  function scheduleWrite(typing = false) {
+    dirty = true;
+    const now = Date.now();
+    if (!firstWanted) firstWanted = now;
+    clearTimeout(writeTimer);
+    writeTimer = setTimeout(writeCurrent, typing ? Math.max(0, Math.min(400, firstWanted + 1500 - now)) : 30);
+  }
+  // The page going away (a reload, the app sent to the background) with a change not yet in the
+  // database: the write is started, and since the browser may not let it finish, a copy goes to
+  // localStorage, which is written before this returns. The next start takes the newer of the
+  // two (see ready) and clears the copy. A deck too big for localStorage has only the first.
+  const flushNow = () => {
+    if (!dirty && !writeTimer) return;
+    writeCurrent();
+    if (loaded && !noDb) { try { localStorage.setItem("gospel.deck", JSON.stringify(deck)); } catch (_) {} }
+  };
   window.addEventListener("pagehide", flushNow);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushNow(); });
 
@@ -171,9 +193,18 @@ import { esc } from "./lib/format.js";
     }
     savedDecks = (saved || []).filter((d) => d && d.id && d.deck);
     sortSaved();
+    // A stored deck that cannot be read (damaged, or a shape this version does not know) is kept
+    // aside under another key and a new deck starts, so the changes made from here on are saved.
+    let stored = null;
+    try { stored = migrate(current); }
+    catch (err) {
+      console.warn("the stored deck could not be read:", err?.message);
+      try { if (noDb) store.set("deck-unreadable", current); else await tx("current", "readwrite", (s) => s.put(current, "deck-unreadable")); } catch (_) {}
+      setTimeout(() => GL()?.toast("The deck kept on this device could not be read. It was set aside and a new one started."), 800);
+    }
     // Anything added in the moment before the stored deck arrived joins it rather than replacing it.
     const early = deck;
-    deck = migrate(current) || deck;
+    deck = stored || deck;
     if (early !== deck && early.items.length) {
       for (const it of early.items) if (!(it.type === "passage" && has(it.doc_id, it.pid))) deck.items.push(it);
       deck.links.push(...early.links);
@@ -181,17 +212,23 @@ import { esc } from "./lib/format.js";
       writeWanted = true;
     }
     loaded = true;
+    forgetPast(); // the deck that arrived is where the history starts
     if (writeWanted) writeCurrent();
     draw(); updateBadge();
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
-  })();
+  })().catch((err) => {
+    // whatever went wrong on the way in, the deck in memory must still be written from here on
+    console.warn("the deck did not load:", err?.message);
+    loaded = true;
+    try { forgetPast(); draw(); updateBadge(); } catch (_) {}
+  });
 
   // Another tab saved: take its newer deck rather than writing over it later.
   if (bc) bc.onmessage = async (e) => {
     try {
       if (e.data?.what === "current") {
         const other = await tx("current", "readonly", (s) => s.get("deck"));
-        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
+        if (other && other.updated > deck.updated) { deck = migrate(other); pending = active = linking = null; forgetPast(); draw(); updateBadge(); window.dispatchEvent(new CustomEvent("deck:change")); }
       } else if (e.data?.what === "saved") {
         savedDecks = (await tx("saved", "readonly", (s) => s.getAll())) || [];
         sortSaved();
@@ -201,12 +238,93 @@ import { esc } from "./lib/format.js";
 
   function save({ redraw = true } = {}) {
     deck.updated = Date.now();
-    scheduleWrite();
+    keep(!redraw);
+    scheduleWrite(!redraw);
     updateBadge();
     if (redraw) draw();
-    else if (ui) { syncDownloadButton(); schedulePrepare(); }
+    else if (ui) { syncDownloadButton(); syncUndo(); }
     try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
   }
+
+  // ----------------------------------------------------------------- undo --
+  // One history for the deck. Every change goes through save(), which keeps the deck as it stood
+  // before the change (as text, 30 deep); undo() puts one back. Typing (a title, a note, a label)
+  // saves on every key, so a run of it is one step. An entry can carry something beside the deck
+  // to put back (a saved deck that was deleted). What is on the screen is redrawn from the deck,
+  // so nothing else needs to know how a change was made to take it back.
+  const UNDO_DEPTH = 30;
+  const snap = () => JSON.stringify({ ...deck, updated: 0 });
+  let past = [];          // [{json, extra, typing, at}], newest last
+  let lastJson = snap();  // the deck as of the last save
+  let lastEntry = null;   // the entry the last save made, for the toast that follows it
+  let batching = 0, batchEntry = null; // several saves that are one step (Use everything, Clear)
+  function pushPast(entry) {
+    past.push(entry);
+    if (past.length > UNDO_DEPTH) past.shift();
+    return entry;
+  }
+  function keep(typing) {
+    lastEntry = null;
+    const now = snap();
+    if (now === lastJson) return;
+    const top = past[past.length - 1];
+    if (batching && batchEntry) lastEntry = batchEntry;
+    else if (typing && !batching && top && top.typing && Date.now() - top.at < 3000) top.at = Date.now();
+    else {
+      lastEntry = pushPast({ json: lastJson, extra: null, typing: typing && !batching, at: Date.now() });
+      if (batching) batchEntry = lastEntry;
+    }
+    lastJson = now;
+  }
+  /** Several changes as one step of the history. */
+  function batch(fn) {
+    if (!batching) batchEntry = null;
+    batching++;
+    try { fn(); } finally { batching--; }
+    lastEntry = batchEntry;
+    if (!batching) batchEntry = null;
+  }
+  /** A step that changed something other than the deck: extra puts it back. */
+  function record(extra) { lastEntry = pushPast({ json: lastJson, extra, typing: false, at: Date.now() }); syncUndo(); }
+  function forgetPast() { past = []; lastJson = snap(); lastEntry = null; syncUndo(); }
+  const canUndo = () => past.length > 0;
+  /** Take back the last change, or everything back to the entry given. Returns true when it did. */
+  function undo(entry = past[past.length - 1]) {
+    const at = past.indexOf(entry);
+    if (at < 0) return false;
+    let d = null;
+    try { d = migrate(JSON.parse(entry.json)); } catch (_) {}
+    if (!d) return false;
+    const undone = past.splice(at).reverse();
+    deck = d; deck.updated = Date.now();
+    pending = active = linking = null; closeEditor();
+    lastJson = snap(); lastEntry = null;
+    for (const u of undone) { try { u.extra?.(); } catch (_) {} }
+    scheduleWrite(); updateBadge(); draw(); // written at once, like any other change
+    try { window.dispatchEvent(new CustomEvent("deck:change")); } catch (_) {}
+    return true;
+  }
+  // The toast after a change, with Undo for exactly that change (and whatever came after it).
+  function did(text, after) {
+    const entry = lastEntry;
+    if (!entry) { GL().toast(text); return; }
+    GL().toast(text, { action: "Undo", onAction: () => { if (undo(entry)) { after?.(); GL().toast("Undone."); } } });
+  }
+  function syncUndo() { if (ui) ui.undo.hidden = !canUndo(); }
+  // Cmd+Z or Ctrl+Z with the board up takes back the last deck change. A toast's own Undo (app.js)
+  // and a field's own undo come first; with nothing to undo the key is still taken, so the
+  // browser does not rewind the search box instead.
+  document.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || e.defaultPrevented) return;
+    if (!board || !board.isConnected || board.offsetParent === null) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+    if (document.querySelector("#toast.show.has-action")) return;
+    e.preventDefault();
+    if (undo()) GL().toast("Undone.");
+  });
+  const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+  const linksOn = (it) => deck.links.filter((l) => l.from.id === it.id || l.to.id === it.id).length;
 
   function count() { return deck.items.filter((i) => i.type === "passage").length; }
   // The header button carries the count as a small pill, so the teacher sees the deck grow
@@ -222,7 +340,26 @@ import { esc } from "./lib/format.js";
   const byId = (id) => deck.items.find((i) => i.id === id) || null;
   function find(doc_id, pid) { return deck.items.find((i) => i.type === "passage" && i.doc_id === doc_id && i.pid === pid) || null; }
   function has(doc_id, pid) { return !!find(doc_id, pid); }
-  function remove(doc_id, pid) { const it = find(doc_id, pid); if (it) removeItem(it); return !!it; }
+  // Taken off from outside the board (a result's +, an Ask tick, Findings Clear): everything one
+  // tap took off is one step, and its toast, with Undo, comes after the caller's own plain one.
+  let takenOff = null;
+  function remove(doc_id, pid) {
+    const it = find(doc_id, pid);
+    if (!it) return false;
+    if (!takenOff) {
+      takenOff = { n: 0, links: 0 };
+      if (!batching) batchEntry = null;
+      batching++;
+      setTimeout(() => {
+        const t = takenOff; takenOff = null;
+        batching--; lastEntry = batchEntry; if (!batching) batchEntry = null;
+        did(`${t.n === 1 ? "Taken off the deck" : `${t.n} passages taken off the deck`}${t.links ? `, with ${plural(t.links, "connection")}` : ""}.`);
+      }, 0);
+    }
+    takenOff.n++; takenOff.links += linksOn(it);
+    removeItem(it);
+    return true;
+  }
   function removeItem(it) {
     deck.items = deck.items.filter((i) => i !== it);
     deck.links = deck.links.filter((l) => l.from.id !== it.id && l.to.id !== it.id);
@@ -289,7 +426,8 @@ import { esc } from "./lib/format.js";
     return added;
   }
   // The reader's marks come along: a verse he colored arrives with that color (item.color, and on
-  // each verse; the PowerPoint does not read it, the board can), and a note on a verse the card
+  // each verse; the board shows it on the verse number, the stage and the PowerPoint as a bar
+  // beside the words, see RC), and a note on a verse the card
   // holds becomes its speaker note. The marks store answers after the add has returned, so the
   // cards are filled in a moment later; a card already taken off (Undo) is left alone.
   function carryMarks(doc, cards) {
@@ -463,9 +601,98 @@ import { esc } from "./lib/format.js";
   let linking = null;   // {id, hl}: tap-to-link in progress
   let drag = null;      // a port being dragged
   let editing = null;   // the link whose label editor is open
+  let holding = false;  // a link just made: its label editor is about to open, so the marker below stays
   let hintShown = false;
   let selectedId = null; // the card last tapped or typed in: where a new question or slide text goes
   let naming = false;     // "Name this deck" was tapped on an empty deck: its title fields show
+
+  // Link mode, the label editor, the deck's sheets and My decks are states to leave, not places.
+  // While any is up, one marker entry sits in history (app.js openOverlay), so Back leaves the
+  // state and stays on the deck; leaving by hand pops the marker. The browser pops it a moment
+  // after it is asked to, so anything that must follow the pop (a new marker, a move to another
+  // page) waits on settled().
+  let marker = false, popping = null;
+  const sheets = new Set(); // the close() of each dialog() that is open
+  let savedOpen = null;     // closes the My decks list while it shows
+  const savedUp = () => !!(savedOpen && savedShown && savedShown.box.isConnected);
+  const inMode = () => !!(linking || editing || holding || sheets.size || savedUp());
+  const settled = () => popping || Promise.resolve();
+  function syncMarker() {
+    if (popping) { popping.then(syncMarker); return; }
+    const want = inMode();
+    if (want && !marker) { marker = true; GL().openOverlay?.("deck"); }
+    else if (!want && marker) {
+      marker = false;
+      const mine = history.state?.overlay === "deck";
+      GL().dropOverlay?.("deck");
+      if (mine) popping = new Promise((resolve) => {
+        const done = () => { window.removeEventListener("popstate", done); clearTimeout(timer); popping = null; resolve(); };
+        const timer = setTimeout(done, 500);
+        window.addEventListener("popstate", done);
+      });
+    }
+  }
+  // Everything left at once: Back was pressed.
+  function leaveModes() {
+    for (const close of [...sheets]) close();
+    if (savedUp()) savedOpen();
+    const redraw = !!(linking || editing || pending);
+    linking = null; pending = null; holding = false; closeEditor();
+    if (redraw) draw();
+  }
+  window.addEventListener("popstate", () => { if (marker && history.state?.overlay !== "deck") { marker = false; leaveModes(); } });
+  // A card's citation: the page it came from, opened at the passage (beside the board on a wide
+  // screen, where the Page | Deck switch brings the board back; Back does on a phone). While
+  // linking, the citation is a place to tap like the rest of its card, so it does not open.
+  // Whatever mode was up is left first, and its marker is out of history before the page goes in.
+  async function openPassage(it) {
+    if (linking || swallowTap || drag) return;
+    leaveModes(); syncMarker();
+    await settled();
+    GL().openDoc(it.doc_id, it.pid);
+  }
+  function cancelLink() {
+    if (!linking) return;
+    linking = null;
+    draw();
+    GL().toast("Link cancelled.");
+  }
+  // The first word of a phrase, tapped and then left: the mark comes off without a redraw.
+  function clearPending() {
+    if (!pending) return;
+    pending = null;
+    if (!ui) return;
+    for (const w of ui.cards.querySelectorAll(".w.first")) w.classList.remove("first");
+    for (const h of ui.cards.querySelectorAll(".bc-hint.first-word")) h.remove();
+  }
+  document.addEventListener("click", (e) => { if (pending && !(e.target.closest && e.target.closest(".bcard[data-type='passage'] .bc-text"))) clearPending(); }, true);
+  // Escape leaves the innermost thing: a drag, the label editor, link mode, a first word, My decks.
+  // (A sheet takes its own Escape.)
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented || sheets.size) return;
+    if (drag) drag.end(null, true);
+    else if (editing) { closeEditor(); draw(); }
+    else if (linking) cancelLink();
+    else if (pending) clearPending();
+    else if (savedUp()) savedOpen();
+    else return;
+    e.preventDefault();
+  });
+  // The height of whatever sticks to the top of the board's scroller: the pane's bar on a wide
+  // screen, the search header on a phone.
+  function stickyTop() {
+    if (!board) return 0;
+    if (GL().wide) { const bar = board.parentElement && board.parentElement.querySelector(".reader-bar"); return bar ? bar.offsetHeight : 0; }
+    const head = $("header.bar");
+    return head && getComputedStyle(head).position === "sticky" ? head.offsetHeight : 0;
+  }
+  // The part of the board's scroller that shows, in viewport coordinates.
+  function visibleBox() {
+    const sc = scrollerOf(ui.canvas);
+    const whole = sc === document.scrollingElement || sc === document.documentElement;
+    const r = whole ? { top: 0, bottom: window.innerHeight } : sc.getBoundingClientRect();
+    return { top: r.top + stickyTop(), bottom: Math.min(r.bottom, window.innerHeight) };
+  }
 
   // The card tools, drawn as strokes in the app's icon style rather than text arrows,
   // which sit at different heights in different fonts.
@@ -483,6 +710,7 @@ import { esc } from "./lib/format.js";
   /** The Deck tab. Wide screens: a summary here, the board on the right. */
   function render(container) {
     container.replaceChildren();
+    if (savedOpen && !savedUp()) savedOpen = null; // its list went with the tab
     if (GL().wide) {
       container.append(el("div", { class: "deck-summary" }, [
         el("h2", { text: deck.title || "Deck" }),
@@ -517,22 +745,22 @@ import { esc } from "./lib/format.js";
     const present = el("button", { type: "button", class: "primary quiet", text: "Present", onclick: () => presentDeck() });
     const think = el("button", { type: "button", class: "text-btn", text: "Think it through", title: "Claude studies the chain: labels, connections, a caption", onclick: () => thinkChain() });
     const md = el("button", { type: "button", class: "text-btn", text: "Markdown", title: "The deck as Markdown, for Bear or any notes app", onclick: () => exportMarkdown() });
-    const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); } });
+    const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); if (open) prepareSoon(); } });
+    // the file is built as the finger comes down on Download (or a pointer comes over it, or it takes the focus), so the tap finds it ready
+    for (const ev of ["pointerdown", "pointerenter", "focus"]) download.addEventListener(ev, () => prepareSoon());
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       think, md,
-      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); } }),
+      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); did("Section added, at the end."); } }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
-      el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => {
-        if (deck.items.length && !confirm("Start a new, empty deck? The current one is kept only if you saved it.")) return;
-        deck = blank(); pending = active = linking = null; naming = false; save();
-      } }),
+      el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => replaceDeck(blank(), { what: "Start a new deck", done: "A new, empty deck." }) }),
     ]);
+    const undoBtn = el("button", { type: "button", class: "text-btn board-undo", text: "Undo", title: "Take back the last change to the deck", hidden: true, onclick: () => { if (undo()) GL().toast("Undone."); } });
     const banner = el("div", { class: "board-banner", hidden: true });
     const hint = el("p", { class: "deck-hint" });
     const thinkBox = el("div", { class: "board-think", hidden: true });
-    const actions = el("div", { class: "board-row" }, [download, present, more]);
-    const head = el("div", { class: "board-head" }, [title, subtitle, themes, actions, moreRow, banner, thinkBox]);
+    const actions = el("div", { class: "board-row" }, [download, present, more, undoBtn]);
+    const head = el("div", { class: "board-head" }, [title, subtitle, themes, actions, moreRow, thinkBox]);
     const cards = el("div", { class: "board-cards" });
     const svg = document.createElementNS(SVG, "svg");
     svg.setAttribute("class", "board-lines");
@@ -541,23 +769,57 @@ import { esc } from "./lib/format.js";
     const canvas = el("div", { class: "board-canvas" }, [cards, svg, labels]);
     const saved = el("div", { class: "board-saved", hidden: true });
     const status = el("div", { class: "deck-status" });
-    board.append(head, canvas, saved, status, hint);
-    ui = { title, subtitle, themes, download, present, more, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
+    // the banner is a child of the board itself, so it can stick to the top of the pane while the cards scroll
+    board.append(head, banner, canvas, saved, status, hint);
+    // While linking, a tap on the board that is not on a phrase or passage to link to cancels:
+    // the source card, a section, a tool, the head, empty space. swallowTap keeps that same tap
+    // from starting a highlight.
+    board.addEventListener("click", (e) => {
+      if (!linking || e.target.closest(".board-banner, .bpop")) return;
+      const card = e.target.closest(".bcard");
+      if (card && card.dataset.type === "passage" && card.dataset.id !== linking.id && !e.target.closest("button:not(.port):not(.bc-cite), textarea, input")) return;
+      swallowTap = true; setTimeout(() => { swallowTap = false; }, 0);
+      cancelLink();
+    }, true);
+    ui = { title, subtitle, themes, download, present, more, undo: undoBtn, actions, think, md, thinkBox, moreRow, banner, hint, cards, svg, labels, canvas, saved, status };
 
     cards.addEventListener("click", onCardClick);
     cards.addEventListener("pointerdown", onPortDown);
     const touch = (e) => { const card = e.target.closest && e.target.closest(".bcard"); if (card) select(card.dataset.id); };
     cards.addEventListener("pointerdown", touch);
     cards.addEventListener("focusin", touch);
-    window.addEventListener("resize", () => { if (board.isConnected) drawLines(); });
-    if (window.ResizeObserver) new ResizeObserver(() => drawLines()).observe(cards);
+    window.addEventListener("resize", () => { if (board.isConnected) queueLines(); });
+    if (window.ResizeObserver) new ResizeObserver(() => queueLines()).observe(cards);
   }
 
+  let swallowTap = false;
   function draw() {
     if (!ui) return;
+    // A redraw replaces the dot being dragged (a passage added from the other pane, marks
+    // arriving, another tab), and its pointer events with it: the drag ends here, cancelled,
+    // rather than leaving the board deaf to taps.
+    if (drag) drag.end(null, true);
     syncHead();
     drawCards();
-    raf(drawLines);
+    queueLines();
+    syncMarker();
+  }
+  // The banner for a link in progress, by tap or by drag. It takes no room in the page (so the
+  // cards do not jump when it comes and goes) and sticks under the bar at the top of the pane.
+  function syncBanner() {
+    if (!ui) return;
+    const b = ui.banner;
+    if (linking) {
+      const from = endOf(linking);
+      b.replaceChildren(el("div", { class: "bb", role: "status" }, [
+        el("span", { html: `Tap a phrase or a passage to link <b>${esc(from && from.hl ? `“${phraseOf(from.item, from.hl)}”` : from ? from.item.citation : "")}</b> to it.` }),
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => cancelLink() }),
+      ]));
+    } else if (drag) {
+      b.replaceChildren(el("div", { class: "bb", role: "status" }, [el("span", { text: "Let go on a phrase or a passage to link. To cancel, let go on empty space or on the card you started from, or press Esc." })]));
+    } else { b.hidden = true; b.replaceChildren(); return; }
+    b.hidden = false;
+    b.style.top = `${stickyTop() + 6}px`;
   }
   function syncHead() {
     if (document.activeElement !== ui.title) ui.title.value = deck.title || "";
@@ -572,6 +834,7 @@ import { esc } from "./lib/format.js";
     const empty = !deck.items.length;
     // An empty deck has nothing to theme, download or present: the board shows only how to add a passage.
     ui.themes.hidden = empty; ui.actions.hidden = empty;
+    syncUndo();
     // nor anything to name: the title and subtitle wait for the first card, or for "Name this deck"
     const named = !empty || naming || !!(deck.title || deck.subtitle);
     ui.title.hidden = !named; ui.subtitle.hidden = !named;
@@ -580,15 +843,7 @@ import { esc } from "./lib/format.js";
     ui.think.disabled = count() < 2;
     ui.md.disabled = empty;
     syncDownloadButton();
-    schedulePrepare();
-    if (linking) {
-      const from = endOf(linking);
-      ui.banner.hidden = false;
-      ui.banner.replaceChildren(
-        el("span", { html: `Tap a phrase or a passage to link <b>${esc(from && from.hl ? `“${phraseOf(from.item, from.hl)}”` : from ? from.item.citation : "")}</b> to it.` }),
-        el("button", { type: "button", class: "text-btn small", text: "Cancel", onclick: () => { linking = null; draw(); } }),
-      );
-    } else ui.banner.hidden = true;
+    syncBanner();
     ui.hint.hidden = empty;
     ui.hint.textContent = empty ? ""
       : count() === 1 ? "To highlight: tap the first and last word of a phrase. To link: add another passage, then drag the dot at the end of a highlight onto a phrase there."
@@ -606,11 +861,11 @@ import { esc } from "./lib/format.js";
     cards.replaceChildren();
     if (selectedId && !byId(selectedId)) selectedId = null;
     deck.items.forEach((it, idx) => {
-      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : ""), "data-id": it.id, "data-type": it.type });
+      const card = el("div", { class: "bcard" + (it.type === "section" ? " section" : "") + (it.id === selectedId ? " selected" : "") + (linking && linking.id === it.id ? " link-src" : ""), "data-id": it.id, "data-type": it.type });
       const tools = el("div", { class: "bc-tools" }, [
         el("button", { type: "button", "aria-label": "Move up", title: "Move up", html: TOOL_UP, disabled: idx === 0, onclick: (e) => { e.stopPropagation(); move(idx, -1); } }),
         el("button", { type: "button", "aria-label": "Move down", title: "Move down", html: TOOL_DOWN, disabled: idx === deck.items.length - 1, onclick: (e) => { e.stopPropagation(); move(idx, 1); } }),
-        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeItem(it); } }),
+        el("button", { type: "button", "aria-label": "Remove from the deck", title: "Remove", html: TOOL_REMOVE, onclick: (e) => { e.stopPropagation(); removeCard(it); } }),
       ]);
       if (it.type === "section") {
         const inp = el("input", { value: it.title, placeholder: "Section title", "aria-label": "Section title" });
@@ -633,20 +888,31 @@ import { esc } from "./lib/format.js";
         cards.append(card);
         return;
       }
-      const meta = el("div", { class: "bc-meta" }, [el("div", { class: "bc-cite", text: it.citation })]);
+      // the citation is the way back to the page: it opens the chapter or talk at this passage
+      const meta = el("div", { class: "bc-meta" }, [it.doc_id
+        ? el("button", { type: "button", class: "bc-cite", text: it.citation, title: "Open this page at the passage", "aria-label": `${it.citation}: open the page at this passage`, onclick: () => openPassage(it) })
+        : el("div", { class: "bc-cite", text: it.citation })]);
+      // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
+      if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
       const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
       card.append(el("div", { class: "bc-head" }, [meta, tools, port]));
       card.append(textEl(it));
       // the talk and conference sit under the words, the way an attribution follows a quote
       if (it.where || it.label) card.append(el("div", { class: "bc-src", text: [it.where, it.label].filter(Boolean).join(", ") }));
       card.append(notesEl(it));
-      if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint", text: "Now tap the last word of the phrase." }));
+      if (pending && pending.id === it.id) card.append(el("div", { class: "bc-hint first-word", text: "Now tap the last word of the phrase. Tap anywhere else to drop it." }));
+      if (linking && linking.id === it.id) card.append(el("div", { class: "bc-hint", text: "Linking from here. Tap this card, or Cancel, to stop." }));
       if (active && active.id === it.id) {
         const h = hlById(it, active.hl);
         if (h) card.append(el("div", { class: "hl-tools" }, [
           el("span", { class: "ph", text: `“${phraseOf(it, h)}”` }),
           el("button", { type: "button", class: "chip small", text: "Link to…", onclick: (e) => { e.stopPropagation(); linking = { id: it.id, hl: h.id }; active = null; draw(); } }),
-          el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => { e.stopPropagation(); removeHighlight(it, h); active = null; save(); } }),
+          el("button", { type: "button", class: "chip small", text: "Remove highlight", onclick: (e) => {
+            e.stopPropagation();
+            const links = deck.links.filter((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)).length;
+            removeHighlight(it, h); active = null; save();
+            did(links ? `Highlight removed, with its ${plural(links, "connection")}.` : "Highlight removed.");
+          } }),
           el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
         ]));
       }
@@ -670,8 +936,8 @@ import { esc } from "./lib/format.js";
     });
     // A question or slide text is added from the foot of the list, after the selected card.
     if (deck.items.length) cards.append(el("div", { class: "board-foot" }, [
-      el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => addCard("question") }),
-      el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => addCard("note") }),
+      el("button", { type: "button", class: "foot-add", text: "+ Question", title: "A question for the room, as a slide of its own, after the selected card", onclick: () => { addCard("question"); did("Question added."); } }),
+      el("button", { type: "button", class: "foot-add", text: "+ Slide text", title: "Words for the room to read, as a slide of its own, after the selected card", onclick: () => { addCard("note"); did("Slide text added."); } }),
     ]));
     if (!deck.items.length) {
       const savedAny = savedDecks.length > 0;
@@ -679,6 +945,8 @@ import { esc } from "./lib/format.js";
         el("p", { text: "To add a passage, tap + on a search result, tick one under an Ask answer, or select verses while reading and choose Add to deck." }),
         naming || deck.title || deck.subtitle ? null : el("button", { type: "button", class: "text-btn", text: "Name this deck", onclick: () => { naming = true; draw(); ui.title.focus(); } }),
         savedAny ? el("button", { type: "button", class: "text-btn", text: "Open one of my decks", onclick: () => showSaved() }) : null,
+        // the row with Undo is hidden on an empty deck, and the deck may have just been emptied
+        canUndo() ? el("button", { type: "button", class: "text-btn", text: "Undo the last change", onclick: () => { if (undo()) GL().toast("Undone."); } }) : null,
       ].filter(Boolean)));
     }
   }
@@ -708,6 +976,12 @@ import { esc } from "./lib/format.js";
     wrap.append(toggle, ta);
     return wrap;
   }
+  // The reader's highlight colors (marks.js: y, g, b, p), as the PowerPoint wants them. On the
+  // board a colored verse wears the color on its number, and a talk beside its citation; the
+  // words themselves stay plain, so the deck's own highlight (the phrase the slide stresses) is
+  // never confused with it.
+  const RC = { y: "F3CF3A", g: "6CBF6A", b: "6B9FF0", p: "F08BB5" };
+  const RC_NAME = { y: "yellow", g: "green", b: "blue", p: "pink" };
   // A passage as tappable words, with verse numbers, highlights and a port after each highlight.
   // A highlighted phrase is one run (its words and the spaces between them in one span), so it
   // reads as a phrase, not a row of boxes, and its active outline goes round the whole of it.
@@ -717,10 +991,13 @@ import { esc } from "./lib/format.js";
     let host = text;
     words.forEach((x, i) => {
       if (x.first && x.para > 0) host.append(el("br"), el("br"));
-      if (x.n !== null && x.n !== undefined) host.append(el("span", { class: "vn", text: String(x.n) }));
+      if (x.n !== null && x.n !== undefined) {
+        const color = it.verses.find((v) => v.n === x.n)?.color;
+        host.append(el("span", { class: "vn" + (RC[color] ? ` rc rc-${color}` : ""), text: String(x.n), ...(RC[color] ? { title: `Highlighted ${RC_NAME[color]} in the reader` } : {}) }));
+      }
       const h = hlAt(it, i);
       if (h && host === text) {
-        host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : ""), "data-hl": h.id });
+        host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : "") + (linking && linking.id === it.id && linking.hl === h.id ? " src" : ""), "data-hl": h.id });
         text.append(host);
       }
       const cls = ["w"];
@@ -740,11 +1017,20 @@ import { esc } from "./lib/format.js";
     if (j < 0 || j >= deck.items.length) return;
     [deck.items[i], deck.items[j]] = [deck.items[j], deck.items[i]];
     save();
+    did(d < 0 ? "Moved up." : "Moved down.");
+  }
+  const cardName = (it) => (it.type === "passage" ? it.citation || "the passage" : it.type === "section" ? "the section" : it.type === "question" ? "the question" : "the slide text");
+  // The card's own remove: its highlights, connections and speaker notes go with it, and come back with Undo.
+  function removeCard(it) {
+    const links = linksOn(it), notes = !!(it.notes || "").trim();
+    removeItem(it);
+    const also = [links ? plural(links, "connection") : "", notes ? "speaker notes" : ""].filter(Boolean).join(" and ");
+    did(`Removed ${cardName(it)}${also ? `, with its ${also}` : ""}.`);
   }
 
   // Taps: mark phrases (first word, then last), pick a highlight, or finish a tap-to-link.
   function onCardClick(e) {
-    if (drag) return;
+    if (drag || swallowTap) return;
     const port = e.target.closest(".port");
     const card = e.target.closest(".bcard");
     if (!card || card.dataset.type !== "passage") return;
@@ -771,6 +1057,7 @@ import { esc } from "./lib/format.js";
       const h = setHighlight(item, pending.i, i);
       pending = null; active = { id: item.id, hl: h.id };
       save();
+      did("Highlighted.");
       return;
     }
     const h = hlAt(item, i);
@@ -795,7 +1082,10 @@ import { esc } from "./lib/format.js";
     port.classList.add("src");
     try { port.setPointerCapture(e.pointerId); } catch (_) {}
     closeEditor();
-    drag = { from, port, temp, start, target: null, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false, loop: null };
+    const srcCard = port.closest(".bcard");
+    if (srcCard) srcCard.classList.add("drag-src");
+    drag = { from, port, temp, start, target: null, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false, loop: null, pointerId: e.pointerId, end: null };
+    syncBanner();
     const update = () => {
       if (!drag) return;
       const c = ui.canvas.getBoundingClientRect();
@@ -804,29 +1094,42 @@ import { esc } from "./lib/format.js";
       setDropTarget(resolveAt(drag.x, drag.y, from));
     };
     const onMove = (ev) => {
+      if (!drag) return;
       drag.x = ev.clientX; drag.y = ev.clientY;
       if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) > 6) drag.moved = true;
       update();
     };
-    const onEnd = (ev) => {
+    // The end of the drag: a release (onto a target it links; onto empty space or its own card
+    // it does not), or cancelled, by Escape or by the browser taking the pointer away.
+    const onEnd = (ev, cancelled = false) => {
+      if (!drag || drag.port !== port) return;
       port.removeEventListener("pointermove", onMove);
       port.removeEventListener("pointerup", onEnd);
-      port.removeEventListener("pointercancel", onEnd);
-      try { port.releasePointerCapture(ev.pointerId); } catch (_) {}
+      port.removeEventListener("pointercancel", onLost);
+      port.removeEventListener("lostpointercapture", onLost);
+      try { port.releasePointerCapture(drag.pointerId); } catch (_) {}
       if (drag.loop) cancelAnimationFrame(drag.loop);
       temp.remove();
       board.classList.remove("dragging");
       port.classList.remove("src");
-      const target = ev.type === "pointerup" && drag.moved ? resolveAt(ev.clientX, ev.clientY, from) : null;
+      if (srcCard) srcCard.classList.remove("drag-src");
+      const up = !cancelled && !!ev && ev.type === "pointerup";
+      const target = up && drag.moved ? resolveAt(ev.clientX, ev.clientY, from) : null;
       setDropTarget(null);
       const moved = drag.moved;
+      if (moved) hintShown = true; // someone who has dragged the dot does not need telling how
       drag = null;
+      syncBanner();
       if (target) finishLink(from, target);
-      else if (!moved && !hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
+      else if (moved || cancelled) GL().toast("Nothing linked.");
+      else if (!hintShown) { hintShown = true; GL().toast("Drag this dot onto a phrase in another passage to link them."); }
     };
+    drag.end = onEnd;
+    const onLost = (ev) => onEnd(ev, true); // the browser took the pointer away (a system gesture, the dot removed)
     port.addEventListener("pointermove", onMove);
     port.addEventListener("pointerup", onEnd);
-    port.addEventListener("pointercancel", onEnd);
+    port.addEventListener("pointercancel", onLost);
+    port.addEventListener("lostpointercapture", onLost);
     // Scroll the pane when the finger nears its edge, so far-away passages can be reached.
     const scroller = scrollerOf(ui.canvas);
     const step = () => {
@@ -880,47 +1183,134 @@ import { esc } from "./lib/format.js";
     if (t && t.el) t.el.classList.add("drop");
   }
   function finishLink(from, t) {
-    let hl = t.hl;
-    if (!hl && t.word !== null && t.word !== undefined) hl = setHighlight(t.item, t.word, t.word).id;
+    let hl = t.hl, made = null;
+    if (!hl && t.word !== null && t.word !== undefined) hl = made = setHighlight(t.item, t.word, t.word).id;
     const link = addLink(from, { id: t.item.id, hl });
     if (!link) return;
+    if (made) link.made = made; // the one-word highlight this link brought: it leaves with the link
     active = null; pending = null;
+    holding = true;
     save();
-    GL().toast("Linked.");
-    raf(() => raf(() => { const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) openLabelEditor(link, pill); }));
+    did("Linked.");
+    raf(() => raf(() => {
+      holding = false;
+      const pill = deck.links.includes(link) ? ui.labels.querySelector(`[data-link="${link.id}"]`) : null; // an Undo may have been quicker
+      if (pill) openLabelEditor(link, pill); else syncMarker();
+    }));
   }
 
-  // The arrows: from the port at the end of one highlight, out through the
-  // right-hand gutter, into the port of the other. Positions are measured
-  // from the live layout, so they follow scrolling, wrapping and reordering.
+  // The arrows. Each runs in the white space, never across words or the card tools: from the
+  // dot at the end of a highlight it drops into the gap under that line of text, goes right to
+  // a lane outside the cards, along the lane, back in under the other phrase's line and up into
+  // its dot. A whole-passage dot sits at the right of the card head, so its arrow goes straight
+  // to the lane. A connection with a name wears it, beside its number, where the lane passes
+  // between two cards; one without is a numbered circle on the lane. Positions are measured from
+  // the live layout, so they follow scrolling, wrapping and reordering: every position is read
+  // first and everything written after, so a board of many arrows costs one layout, not one
+  // for each end of each arrow; and however many things ask for a redraw, a frame draws once.
+  let linesQueued = false;
+  function queueLines() {
+    if (linesQueued) return;
+    linesQueued = true;
+    raf(() => { linesQueued = false; drawLines(); });
+  }
+  // A path through the points, its corners rounded.
+  function cornered(points, r = 5) {
+    const pts = points.filter((p, i) => i === 0 || Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]) > 0.5);
+    const f = (v) => v.toFixed(1);
+    let d = `M ${f(pts[0][0])} ${f(pts[0][1])}`;
+    for (let i = 1; i < pts.length; i++) {
+      const [x, y] = pts[i];
+      if (i === pts.length - 1) { d += ` L ${f(x)} ${f(y)}`; break; }
+      const [px, py] = pts[i - 1], [nx, ny] = pts[i + 1];
+      const li = Math.hypot(x - px, y - py), lo = Math.hypot(nx - x, ny - y);
+      const q = Math.min(r, li / 2, lo / 2);
+      d += ` L ${f(x - ((x - px) / li) * q)} ${f(y - ((y - py) / li) * q)} Q ${f(x)} ${f(y)} ${f(x + ((nx - x) / lo) * q)} ${f(y + ((ny - y) / lo) * q)}`;
+    }
+    return d;
+  }
   function drawLines() {
     if (!ui || !board.isConnected) return;
+    // read: the canvas, every dot, every card
     const cr = ui.canvas.getBoundingClientRect();
     const W = Math.max(1, cr.width), H = Math.max(1, cr.height);
+    const ports = new Map();
+    for (const p of ui.cards.querySelectorAll(".port")) {
+      const r = p.getBoundingClientRect();
+      ports.set(`${p.dataset.item}|${p.dataset.hl || ""}`, { x: r.left + r.width / 2 - cr.left, y: r.top + r.height / 2 - cr.top, bottom: r.bottom - cr.top, right: r.right - cr.left, whole: p.classList.contains("card-port") });
+    }
+    const gaps = []; // the middle of the space between each card and the next
+    let last = null;
+    for (const c of ui.cards.querySelectorAll(".bcard")) {
+      const r = c.getBoundingClientRect();
+      if (last !== null && r.top > last) gaps.push((last + r.top) / 2 - cr.top);
+      last = r.bottom;
+    }
+    // write
     ui.svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const defs = document.createElementNS(SVG, "defs");
-    defs.innerHTML = `<marker id="bArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>`;
-    ui.svg.replaceChildren(defs);
-    ui.labels.replaceChildren();
+    defs.innerHTML = `<marker id="bArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>`;
+    const paths = [defs], labels = [];
+    const taken = []; // where a badge already sits: [left, top, right, bottom]
+    const free = (b) => !taken.some((t) => b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]);
     let k = 0;
     for (const l of deck.links) {
-      const a = portPoint(l.from, cr), b = portPoint(l.to, cr);
+      const a = ports.get(`${l.from.id}|${l.from.hl || ""}`), b = ports.get(`${l.to.id}|${l.to.hl || ""}`);
       if (!a || !b) continue;
-      const gx = W - 15 - (k % 3) * 4;
-      const bx = b.x + 10;
+      const lane = k % 3;
+      const gx = W - 8 - lane * 7; // three lanes in the 30px beside the cards
+      const ya = a.whole ? a.y : a.bottom + 4 + lane * 3;  // the gap under the phrase's line
+      const yb = b.whole ? b.y : b.bottom + 7 + lane * 2;
+      const pts = [];
+      if (a.whole) pts.push([a.right + 2, a.y]); else pts.push([a.x, a.bottom + 2], [a.x, ya]);
+      pts.push([gx, ya], [gx, yb]);
+      if (b.whole) pts.push([b.right + 3, b.y]); else pts.push([b.x, yb], [b.x, b.bottom + 2]);
       const path = document.createElementNS(SVG, "path");
-      path.setAttribute("d", `M ${a.x} ${a.y} C ${gx} ${a.y}, ${gx} ${b.y}, ${bx} ${b.y}`);
+      path.setAttribute("d", cornered(pts));
       path.setAttribute("class", "blink" + (editing === l ? " on" : ""));
       path.setAttribute("marker-end", "url(#bArrow)");
-      ui.svg.append(path);
-      // A numbered badge on the arrow's run down the gutter; the label itself
-      // is read on the chip under each card, where there is room for it.
-      ui.labels.append(el("button", { type: "button", class: "blabel" + (l.label ? "" : " empty") + (editing === l ? " on" : ""), "data-link": l.id, text: String(linkNumber(l)), title: l.label ? `${l.label} (edit)` : "Name this connection",
-        "aria-label": `Connection ${linkNumber(l)}${l.label ? `: ${l.label}` : ""}`, style: `left:${gx}px;top:${(a.y + b.y) / 2}px`, onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }));
+      paths.push(path);
+      // The badge. Named: number and name, at the right edge in a gap between cards that the lane
+      // passes, the one nearest the middle of its run that is free. Unnamed, or with no gap free:
+      // a numbered circle on the lane, moved along it when another badge is in the way.
+      const top = Math.min(ya, yb), bottom = Math.max(ya, yb), mid = (top + bottom) / 2;
+      const num = linkNumber(l);
+      const common = { type: "button", "data-link": l.id, title: l.label ? `${l.label} (edit)` : "Name this connection", "aria-label": `Connection ${num}${l.label ? `: ${l.label}` : ""}`, onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } };
+      let placed = false;
+      if (l.label) {
+        const w = Math.min(W - 12, 260, 34 + l.label.length * 6.4);
+        for (const y of gaps.filter((g) => g > top && g < bottom).sort((p, q) => Math.abs(p - mid) - Math.abs(q - mid))) {
+          const box = [W - w, y - 11, W, y + 11];
+          if (!free(box)) continue;
+          taken.push(box);
+          labels.push(el("button", { ...common, class: "blabel named" + (editing === l ? " on" : ""), style: `top:${y.toFixed(1)}px;max-width:${Math.round(W - 12)}px` }, [el("b", { text: String(num) }), el("span", { text: l.label })]));
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        let y = mid;
+        for (const dy of [0, 26, -26, 52, -52, 78, -78]) { if (mid + dy > top - 4 && mid + dy < bottom + 4 && free([gx - 12, mid + dy - 12, gx + 12, mid + dy + 12])) { y = mid + dy; break; } }
+        taken.push([gx - 12, y - 12, gx + 12, y + 12]);
+        labels.push(el("button", { ...common, class: "blabel" + (l.label ? "" : " empty") + (editing === l ? " on" : ""), text: String(num), style: `left:${gx.toFixed(1)}px;top:${y.toFixed(1)}px` }));
+      }
       k++;
     }
+    if (drag && drag.temp) paths.push(drag.temp); // a drag in progress keeps its own line
+    ui.svg.replaceChildren(...paths);
+    ui.labels.replaceChildren(...labels);
   }
   const linkNumber = (l) => deck.links.indexOf(l) + 1;
+  // Take a connection off. A one-word highlight that finishLink made for it goes too, unless it
+  // has since been widened or another connection uses it.
+  function removeLink(link) {
+    deck.links = deck.links.filter((x) => x !== link);
+    for (const end of [link.from, link.to]) {
+      if (!link.made || end.hl !== link.made) continue;
+      const it = byId(end.id), h = it && hlById(it, link.made);
+      if (h && h.s === h.e && !deck.links.some((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id))) it.hl = it.hl.filter((x) => x !== h);
+    }
+  }
   function portPoint(end, cr) {
     const p = ui.cards.querySelector(`.port[data-item="${end.id}"][data-hl="${end.hl || ""}"]`);
     if (!p) return null;
@@ -936,31 +1326,41 @@ import { esc } from "./lib/format.js";
     const a = endOf(link.from), b = endOf(link.to);
     const name = (end) => (end ? (end.hl ? `“${phraseOf(end.item, end.hl)}”` : end.item.citation) : "");
     const input = el("input", { class: "deck-subtitle", placeholder: "What the arrow says", value: link.label || "", "aria-label": "Connection label", autocapitalize: "off" });
-    const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); const pill = ui.labels.querySelector(`[data-link="${link.id}"]`); if (pill) { pill.classList.toggle("empty", !v); pill.title = v ? `${v} (edit)` : "Name this connection"; } };
+    const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); queueLines(); }; // the arrow wears the label as it is typed
     input.addEventListener("input", () => setLabel(input.value));
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); closeEditor(); draw(); } });
-    const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Connection" }, [
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); closeEditor(); draw(); } }); // Escape is taken at the document, focus or no focus
+    const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Connection", tabindex: "-1" }, [
       el("div", { class: "bpop-t", html: `<b class="num">${linkNumber(link)}</b> ${esc(name(a))} <span class="arrow">→</span> ${esc(name(b))}` }),
       el("div", { class: "bpop-s", text: `${a ? a.item.citation : ""} → ${b ? b.item.citation : ""}` }),
       input,
       el("div", { class: "shelf" }, QUICK_LABELS.map((q) => el("button", { type: "button", class: "chip small" + (link.label === q ? " on" : ""), text: q, onclick: () => { setLabel(q); closeEditor(); draw(); } }))),
       el("div", { class: "deck-actions" }, [
         el("button", { type: "button", class: "primary", text: "Done", onclick: () => { closeEditor(); draw(); } }),
-        el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); } }),
-        el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { deck.links = deck.links.filter((x) => x !== link); closeEditor(); save(); GL().toast("Connection removed."); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { removeLink(link); closeEditor(); save(); did("Connection removed."); } }),
+        el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); did("Direction swapped."); } }),
       ]),
     ]);
     const cr = ui.canvas.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
     const width = Math.min(380, cr.width - 16);
     pop.style.width = `${width}px`;
     pop.style.left = `${Math.max(8, Math.min(ar.left - cr.left - width / 2 + ar.width / 2, cr.width - width - 8))}px`;
-    pop.style.top = `${ar.bottom - cr.top + 8}px`;
     ui.canvas.append(pop);
     ui.pop = pop;
-    drawLines();
+    // Under the badge when it fits in what shows of the pane, else above it, else against the
+    // bottom (clear of the toast that follows a new link when there is room for that).
+    const box = visibleBox(), h = pop.offsetHeight;
+    let top = ar.bottom + 8;
+    if (top + h > box.bottom - 8) {
+      const above = ar.top - 8 - h;
+      const low = box.bottom - h - (box.bottom - box.top - h >= 96 ? 80 : 8);
+      top = above >= box.top + 8 ? above : Math.max(box.top + 8, low);
+    }
+    pop.style.top = `${top - cr.top}px`;
+    queueLines();
     outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor) { closeEditor(); draw(); } };
     setTimeout(() => document.addEventListener("pointerdown", outside, true), 0);
-    if (GL().wide) input.focus();
+    try { (GL().wide ? input : pop).focus({ preventScroll: true }); } catch (_) {}
+    syncMarker();
   }
   function closeEditor() {
     if (outside) { document.removeEventListener("pointerdown", outside, true); outside = null; }
@@ -982,10 +1382,11 @@ import { esc } from "./lib/format.js";
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     asking = new Promise((resolve) => {
       const n = count(), l = deck.links.length;
-      const scrim = el("div", { class: "dscrim" });
-      const sheet = el("div", { class: "dsheet", role: "dialog", "aria-modal": "true", "aria-label": "Deck in progress" });
-      const onKey = (e) => { if (e.key === "Escape") finish("cancel"); };
-      const finish = (v) => { scrim.remove(); sheet.remove(); document.removeEventListener("keydown", onKey); asking = null; resolve(v); };
+      // The answer goes back once the sheet's marker is out of history, so the search or question
+      // that was waiting on it makes its own entry on firm ground. Escape, Back and a tap outside
+      // are Cancel.
+      let answer = "cancel";
+      const finish = (v) => { answer = v; dlg.close(); };
       const what = `${n} ${n === 1 ? "passage" : "passages"}${l ? ` and ${l} ${l === 1 ? "connection" : "connections"}` : ""}`;
       const name = el("input", { class: "deck-subtitle", value: deck.title || `Deck ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}`, "aria-label": "Name for the saved deck", autocapitalize: "words" });
       const nameRow = el("div", { class: "dsheet-save", hidden: true }, [
@@ -995,23 +1396,21 @@ import { esc } from "./lib/format.js";
           const v = name.value.trim();
           if (!deck.title && v) deck.title = v;
           saveNamed(v);
+          const was = v || deck.title;
           deck = blank(); pending = active = linking = null; naming = false; save();
-          GL().toast(`Saved “${v || deck.title}”. The deck is empty.`);
+          did(`Saved “${was}”. The deck is empty.`);
           finish("new");
         } }),
       ]);
-      sheet.append(
+      const dlg = dialog("Deck in progress", () => [
         el("h2", { text: `Clear the deck for this ${kind}?` }),
         el("p", { class: "lede", text: `${deck.title ? `“${deck.title}” has` : "The deck has"} ${what}.` }),
         el("button", { type: "button", class: "primary", text: "No, keep adding to it", onclick: () => { store.set("deckKept", deck.id); finish("keep"); } }),
         el("button", { type: "button", class: "text-btn", text: "No, save it as it is, then start a new deck", onclick: (e) => { nameRow.hidden = false; e.currentTarget.hidden = true; name.focus(); name.select(); } }),
         nameRow,
-        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; naming = false; save(); GL().toast("The deck is empty."); finish("new"); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Yes, delete it and start over", onclick: () => { deck = blank(); pending = active = linking = null; naming = false; save(); did("The deck is empty."); finish("new"); } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => finish("cancel") }),
-      );
-      scrim.addEventListener("click", () => finish("cancel"));
-      document.addEventListener("keydown", onKey);
-      document.body.append(scrim, sheet);
+      ], { onClose: () => { asking = null; settled().then(() => resolve(answer)); } });
     });
     return asking;
   }
@@ -1081,11 +1480,8 @@ import { esc } from "./lib/format.js";
   function exportMarkdown() {
     const text = markdownOf();
     const name = `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.md`;
-    const scrim = el("div", { class: "dscrim" });
-    const sheet = el("div", { class: "dsheet", role: "dialog", "aria-label": "Markdown" });
-    const close = () => { scrim.remove(); sheet.remove(); };
     const msg = el("p", { class: "lede", text: `${text.split("\n").length} lines. Copy it and paste into a new Bear note, or save the file and share it to Bear.` });
-    sheet.append(
+    const { sheet } = dialog("Markdown", (close) => [
       el("h2", { text: "The deck as Markdown" }),
       msg,
       el("button", { type: "button", class: "primary", text: "Copy", onclick: async () => {
@@ -1101,9 +1497,7 @@ import { esc } from "./lib/format.js";
         msg.textContent = `Saved ${name}.`;
       } }),
       el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
-    );
-    scrim.addEventListener("click", close);
-    document.body.append(scrim, sheet);
+    ]);
   }
 
   // ------------------------------------------------------------ thinking --
@@ -1199,35 +1593,61 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const passages = deck.items.filter((i) => i.type === "passage");
     const byNum = (n) => passages[Number(n) - 1] || null;
     const list = el("div", { class: "think-list" });
-    const row = (text, btn, act) => { const b = el("button", { type: "button", class: "chip small", text: btn }); const line = el("div", { class: "think-row" }, [el("span", { html: text }), b]); b.addEventListener("click", () => { const ok = act(); if (ok !== false) { b.textContent = "Done"; b.disabled = true; } }); list.append(line); return line; };
+    // Each suggestion changes the deck when its button is tapped, and the toast takes it back
+    // (the button is offered again). The passages and arrows are looked up by id at the tap,
+    // since an Undo in between has replaced the deck's objects. quiet: Use everything is one step
+    // with one toast.
+    let quiet = false;
+    const row = (text, btn, act, done) => {
+      const b = el("button", { type: "button", class: "chip small", text: btn });
+      const line = el("div", { class: "think-row" }, [el("span", { html: text }), b]);
+      b.addEventListener("click", () => {
+        const ok = act();
+        if (ok === false) { if (!quiet) GL().toast("That passage or arrow is no longer on the deck."); return; }
+        b.textContent = "Done"; b.disabled = true;
+        if (!quiet) did(done, () => { b.textContent = btn; b.disabled = false; });
+      });
+      list.append(line);
+      return line;
+    };
     const applied = [];
-    if (r.caption) { const cap = String(r.caption).trim(); applied.push(row(`<b>Caption for the chain slide:</b> ${esc(cap)}`, "Use", () => { deck.chain = { ...(deck.chain || {}), caption: cap }; save({ redraw: false }); flash("Caption added to the chain slide."); })); }
+    if (r.caption) { const cap = String(r.caption).trim(); applied.push(row(`<b>Caption for the chain slide:</b> ${esc(cap)}`, "Use", () => { deck.chain = { ...(deck.chain || {}), caption: cap }; save({ redraw: false }); }, "Caption added to the chain slide.")); }
     for (const x of r.labels || []) {
-      const l = deck.links[Number(x.link) - 1];
-      if (!l || !x.label) continue;
-      applied.push(row(`<b>Label arrow ${x.link}:</b> “${esc(x.label)}”${l.label ? ` (now “${esc(l.label)}”)` : ""}`, "Apply", () => { l.label = String(x.label).trim(); save(); }));
+      const l0 = deck.links[Number(x.link) - 1];
+      if (!l0 || !x.label) continue;
+      applied.push(row(`<b>Label arrow ${x.link}:</b> “${esc(x.label)}”${l0.label ? ` (now “${esc(l0.label)}”)` : ""}`, "Apply", () => { const l = deck.links.find((y) => y.id === l0.id); if (!l) return false; l.label = String(x.label).trim(); save(); }, "Label applied."));
     }
     for (const c of r.connections || []) {
-      const a = byNum(c.from?.passage), b = byNum(c.to?.passage);
-      if (!a || !b || a === b) continue;
+      const a0 = byNum(c.from?.passage), b0 = byNum(c.to?.passage);
+      if (!a0 || !b0 || a0 === b0) continue;
+      let a = a0, b = b0;
       const ra = findPhrase(a, c.from.words), rb = findPhrase(b, c.to.words);
       const text = `<b>Connect</b> ${esc(a.citation)} “${esc(c.from.words)}” → ${esc(b.citation)} “${esc(c.to.words)}”${c.label ? `, <i>${esc(c.label)}</i>` : ""}${c.why ? `<br><span class="why">${esc(c.why)}</span>` : ""}${!ra || !rb ? `<br><span class="why">(those words were not found exactly; it will link the whole passage on that side)</span>` : ""}`;
       applied.push(row(text, "Add", () => {
+        a = byId(a0.id); b = byId(b0.id);
+        if (!a || !b) return false;
         const from = { id: a.id, hl: ra ? (hlAt(a, ra.s) && hlAt(a, ra.s).e === ra.e && hlAt(a, ra.s).s === ra.s ? hlAt(a, ra.s).id : setHighlight(a, ra.s, ra.e).id) : null };
         const to = { id: b.id, hl: rb ? (hlAt(b, rb.s) && hlAt(b, rb.s).e === rb.e && hlAt(b, rb.s).s === rb.s ? hlAt(b, rb.s).id : setHighlight(b, rb.s, rb.e).id) : null };
         addLink(from, to, String(c.label || "").trim()); save();
-      }));
+      }, "Connection added."));
     }
     for (const k of r.key_phrases || []) {
       const p = byNum(k.passage);
       if (!p || !k.words) continue;
       const range = findPhrase(p, k.words);
       if (!range) continue;
-      applied.push(row(`<b>Highlight in ${esc(p.citation)}:</b> “${esc(k.words)}”`, "Highlight", () => { setHighlight(p, range.s, range.e); save(); }));
+      applied.push(row(`<b>Highlight in ${esc(p.citation)}:</b> “${esc(k.words)}”`, "Highlight", () => { const now = byId(p.id); if (!now) return false; setHighlight(now, range.s, range.e); save(); }, "Highlighted."));
     }
-    if (r.notes) { const notes = String(r.notes).trim(); applied.push(row(`<b>Speaker notes for the chain slide:</b> ${esc(notes)}`, "Add", () => { deck.chain = { ...(deck.chain || {}), notes }; save({ redraw: false }); flash("Notes added to the chain slide."); })); }
+    if (r.notes) { const notes = String(r.notes).trim(); applied.push(row(`<b>Speaker notes for the chain slide:</b> ${esc(notes)}`, "Add", () => { deck.chain = { ...(deck.chain || {}), notes }; save({ redraw: false }); }, "Notes added to the chain slide.")); }
     if (!applied.length) list.append(el("div", { class: "deck-hint", text: "Nothing to add: the chain reads well as it is." }));
-    const all = el("button", { type: "button", class: "primary", text: "Use everything", onclick: () => { for (const line of list.querySelectorAll(".think-row button:not(:disabled)")) line.click(); } });
+    const all = el("button", { type: "button", class: "primary", text: "Use everything", onclick: () => {
+      const open = [...list.querySelectorAll(".think-row button:not(:disabled)")];
+      const labels = open.map((b) => b.textContent);
+      quiet = true;
+      try { batch(() => { for (const b of open) b.click(); }); } finally { quiet = false; }
+      const used = open.filter((b) => b.disabled);
+      if (used.length) did(`${plural(used.length, "suggestion")} applied.`, () => open.forEach((b, i) => { b.textContent = labels[i]; b.disabled = false; }));
+    } });
     box.querySelector(".think-status")?.remove();
     box.append(list, el("div", { class: "deck-actions" }, [all]));
   }
@@ -1241,14 +1661,86 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     savedDecks = [entry, ...savedDecks.filter((d) => d.id !== deck.id)];
     putSaved(entry).then((ok) => { if (ok !== false) flash(`Saved “${name}”.`); });
   }
-  function renameSaved(d) {
-    const name = (prompt("A new name for this deck", d.title) || "").trim();
-    if (!name || name === d.title) return false;
-    d.title = name;
-    if (d.deck) d.deck.title = d.deck.title || name;
-    putSaved(d);
-    return true;
+  // A sheet of the deck's own: the question before a deck is replaced or cleared, a new name, the
+  // Markdown export. build(close) returns its children. It goes the way the app's sheets go: the
+  // focus moves in and comes back, the page behind is inert, and Cancel, Escape, a tap outside
+  // and Back all close it (onClose hears every one of them).
+  function dialog(label, build, { onClose } = {}) {
+    const scrim = el("div", { class: "dscrim" });
+    const sheet = el("div", { class: "dsheet", role: "dialog", "aria-modal": "true", "aria-label": label, tabindex: "-1" });
+    const wrap = el("div", { class: "dwrap" }, [scrim, sheet]); // one node for inertBehind to leave live
+    const opener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+    let open = true;
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+    function close() {
+      if (!open) return;
+      open = false;
+      sheets.delete(close);
+      GL().inertBehind?.(wrap, false); // before the focus goes back to what opened it
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+      if (opener && opener.isConnected) { try { opener.focus({ preventScroll: true }); } catch (_) {} }
+      syncMarker();
+      onClose?.();
+    }
+    sheet.append(...build(close).filter(Boolean));
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    document.body.append(wrap);
+    GL().inertBehind?.(wrap, true);
+    sheets.add(close);
+    syncMarker();
+    try { (sheet.querySelector("input, textarea, button") || sheet).focus({ preventScroll: true }); } catch (_) {}
+    return { sheet, close };
   }
+  // Is the deck in progress in My decks exactly as it stands? Then replacing it loses nothing.
+  function isSaved() {
+    const s = savedDecks.find((d) => d.id === deck.id);
+    return !!s && JSON.stringify({ ...s.deck, updated: 0 }) === snap();
+  }
+  // Put another deck (a saved one, or an empty one) in place of the one in progress. A deck that
+  // is not in My decks as it stands is asked about first, in the app's own sheet; either way the
+  // toast's Undo, and the board's, bring the old one back.
+  function replaceDeck(next, { what, done, then }) {
+    const go = () => { deck = next; pending = active = linking = null; naming = false; save(); did(done); then?.(); };
+    if (!deck.items.length || isSaved()) { go(); return; }
+    // the saved copy of this very deck: saving first would write over the copy being opened
+    const same = next.id === deck.id;
+    dialog(what, (close) => [
+      el("h2", { text: `${what}?` }),
+      el("p", { class: "lede", text: `The deck in progress${deck.title ? ` (“${deck.title}”)` : ""} is not in My decks as it stands: ${summaryText().replace(/\.$/, "").toLowerCase()}. ${same ? "This opens its saved copy, without the changes since. " : ""}Undo brings it back while the app stays open.` }),
+      same ? null : el("button", { type: "button", class: "primary", text: "Save it to my decks first", onclick: () => { close(); saveNamed(); go(); } }),
+      el("button", { type: "button", class: "text-btn danger", text: "Go on without saving it", onclick: () => { close(); go(); } }),
+      el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
+    ]);
+  }
+  function renameSaved(d, done) {
+    const name = el("input", { class: "deck-subtitle", value: d.title, "aria-label": "A new name for this deck", autocapitalize: "words" });
+    dialog("Rename this deck", (close) => {
+      const ok = () => {
+        const v = name.value.trim();
+        close();
+        if (!v || v === d.title) return;
+        d.title = v;
+        if (d.deck) d.deck.title = d.deck.title || v;
+        putSaved(d);
+        done();
+      };
+      name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ok(); } });
+      return [el("h2", { text: "A new name for this deck" }), name, el("button", { type: "button", class: "primary", text: "Rename", onclick: ok }), el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close })];
+    });
+    name.focus(); name.select();
+  }
+  // Deleting a saved deck does not ask: the toast's Undo puts it back, and so does the board's.
+  function deleteSaved(d) {
+    savedDecks = savedDecks.filter((x) => x.id !== d.id);
+    dropSaved(d.id);
+    record(() => { if (!savedDecks.some((x) => x.id === d.id)) { savedDecks.push(d); sortSaved(); putSaved(d); } redrawSaved(); });
+    redrawSaved();
+    did(`Deleted “${d.title}” from my decks.`);
+  }
+  let savedShown = null; // the list on screen and what it was drawn with, so a delete or an Undo can redraw it
+  function redrawSaved() { if (savedShown && savedShown.box.isConnected) savedShown.box.replaceWith(savedList(savedShown.onBack, savedShown.onPick)); }
   function savedList(onBack, onPick) {
     const all = savedDecks;
     const box = el("div", { class: "deck saved" }, [
@@ -1258,27 +1750,37 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     for (const d of all) {
       const n = (d.deck.items || []).filter((i) => i.type === "passage").length;
       box.append(el("div", { class: "deck-item" }, [
-        el("button", { type: "button", class: "body preview", onclick: () => { deck = migrate(JSON.parse(JSON.stringify(d.deck))) || blank(); pending = active = linking = null; naming = false; save(); onPick(); } }, [
+        el("button", { type: "button", class: "body preview", onclick: () => replaceDeck(migrate(JSON.parse(JSON.stringify(d.deck))) || blank(), { what: `Open “${d.title}”`, done: `Opened “${d.title}”.`, then: onPick }) }, [
           el("div", { class: "cite-edit", text: d.title }),
           el("div", { class: "where", text: `${n} ${n === 1 ? "passage" : "passages"}, ${new Date(d.updated).toLocaleDateString()}` }),
         ]),
         el("div", { class: "tools" }, [
-          el("button", { type: "button", class: "rename", "aria-label": `Rename “${d.title}”`, text: "Rename", onclick: () => { if (renameSaved(d)) box.replaceWith(savedList(onBack, onPick)); } }),
-          el("button", { type: "button", class: "delete", "aria-label": `Delete “${d.title}”`, title: "Delete", text: "×", onclick: () => { if (!confirm(`Delete “${d.title}”?`)) return; savedDecks = savedDecks.filter((x) => x.id !== d.id); dropSaved(d.id); box.replaceWith(savedList(onBack, onPick)); } }),
+          el("button", { type: "button", class: "rename", "aria-label": `Rename “${d.title}”`, text: "Rename", onclick: () => renameSaved(d, redrawSaved) }),
+          el("button", { type: "button", class: "delete", "aria-label": `Delete “${d.title}”`, title: "Delete", text: "×", onclick: () => deleteSaved(d) }),
         ]),
       ]));
     }
+    savedShown = { box, onBack, onPick };
     return box;
   }
+  // My decks, in place of the cards (or, from the summary on a wide screen, in place of it).
+  // Back, Escape and its own Back button all close it; the focus goes to its first button.
   function showSaved() {
+    if (savedUp()) return;
     ui.canvas.hidden = true;
     ui.saved.hidden = false;
-    const back = () => { ui.saved.hidden = true; ui.canvas.hidden = false; ui.saved.replaceChildren(); draw(); };
+    const back = () => { savedOpen = null; ui.saved.hidden = true; ui.canvas.hidden = false; ui.saved.replaceChildren(); draw(); };
+    savedOpen = back;
     ui.saved.replaceChildren(savedList(back, back));
+    syncMarker();
+    try { ui.saved.querySelector("button")?.focus({ preventScroll: true }); } catch (_) {}
   }
   function renderSaved(container) {
-    const back = () => render(container);
+    const back = () => { const live = savedUp() && container.contains(savedShown.box); savedOpen = null; if (live) render(container); syncMarker(); };
+    savedOpen = back;
     container.replaceChildren(savedList(back, back));
+    syncMarker();
+    try { container.querySelector("button")?.focus({ preventScroll: true }); } catch (_) {}
   }
   function flash(text) {
     const s = ui ? ui.status : null;
@@ -1296,21 +1798,67 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       if (it.type === "question") { if ((it.text || "").trim()) units.push({ kind: "question", html: esc(it.text.trim()), where: "" }); continue; }
       if (it.type === "note") { if ((it.text || "").trim()) units.push({ kind: "note", html: esc(it.text.trim()).replace(/\n/g, "<br>"), where: "" }); continue; }
       if (it.type === "link") { const u = linkUnit(it); if (u) units.push(u); continue; }
-      for (const chunk of chunksOf(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
+      for (const chunk of pieces(it)) units.push({ kind: it.kind, html: chunkHtml(it, chunk), where: it.kind === "verse" ? chunk.label : [it.citation, it.where, chunk.label].filter(Boolean).join("  ·  "), doc_id: it.doc_id });
     }
     const map = mapUnit();
     if (map) units.push(map);
     GL().startPresentingUnits(units, { theme: { bg: `#${t.bg}`, fg: `#${t.text}`, accent: `#${t.accent}`, muted: `#${t.muted}` } });
   }
-  // Chunk text with verse numbers and highlights, as HTML for the stage.
+  // The pieces a passage's slides show (chunksOf), each with the place of its words in the
+  // passage: piece.starts[k] is the word index, as highlights count them, of the first word of
+  // its k-th verse piece. A verse too long for one slide is cut into pieces that carry no verse
+  // number after the first, so their place is found in the verse's own text; without it a
+  // highlight landed on the same-numbered words of every continuation, and one in the second
+  // half showed nowhere.
+  function pieces(it, max) {
+    const out = max ? chunksOf(it, max) : chunksOf(it);
+    // the reader's color: a piece holding a colored verse has it (c.color); a talk's pieces all do
+    const anyVerse = (it.verses || []).some((v) => RC[v.color]);
+    if (!it.verses || !it.verses.length) { for (const c of out) c.color = RC[it.color] ? it.color : null; return out; }
+    const words = (t) => t.split(/\s+/).filter(Boolean).length;
+    const first = [];
+    let n = 0;
+    for (const v of it.verses) { first.push(n); n += words(v.text); }
+    let vi = -1, at = 0, done = 0; // the verse being walked; how far its text and its words have been used
+    for (const c of out) {
+      if (!c.verses) continue;
+      c.color = anyVerse ? null : RC[it.color] ? it.color : null;
+      c.starts = c.verses.map((p) => {
+        const whole = it.verses.indexOf(p); // a verse that was not cut is the deck's own object
+        if (whole >= 0) { vi = whole; at = 0; done = 0; if (!c.color && RC[p.color]) c.color = p.color; return first[whole]; }
+        if (p.n !== null && p.n !== undefined) { vi = it.verses.findIndex((v, j) => j > vi && v.n === p.n); at = 0; done = 0; }
+        const v = it.verses[vi];
+        if (!v) return 0;
+        if (!c.color && RC[v.color]) c.color = v.color;
+        const pos = v.text.indexOf(p.text, at);
+        const before = pos >= 0 ? words(v.text.slice(0, pos)) : done; // a piece whose spacing was tidied: go on from the last one
+        if (pos >= 0) at = pos + p.text.length;
+        done = before + words(p.text);
+        return first[vi] + before;
+      });
+    }
+    return out;
+  }
+  // Where a piece's k-th verse starts among the passage's words (pieces() says; a piece from
+  // plain chunksOf falls back to its verse number).
+  function verseStart(it, chunk, k) {
+    if (chunk.starts) return chunk.starts[k];
+    const n = chunk.verses[k].n;
+    const idx = it.verses.findIndex((v) => v.n === n);
+    return it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
+  }
+  // Chunk text with verse numbers and highlights, as HTML for the stage. A piece colored in the
+  // reader is wrapped, and the stage draws a bar in that color beside it.
   function chunkHtml(it, chunk) {
+    const html = chunkWords(it, chunk);
+    return RC[chunk.color] ? `<span class="rc rc-${chunk.color}">${html}</span>` : html;
+  }
+  function chunkWords(it, chunk) {
     if (chunk.verses && it.verses) {
-      const firstN = chunk.verses.find((v) => v.n !== null)?.n;
-      const idx = it.verses.findIndex((v) => v.n === firstN);
-      const offset = it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
       const parts = [];
-      let i = offset;
-      for (const v of chunk.verses) {
+      let i = 0;
+      for (const [k, v] of chunk.verses.entries()) {
+        i = verseStart(it, chunk, k);
         if (v.n !== null && v.n !== undefined) parts.push(`<span class="vn">${v.n}</span>`);
         for (const w of v.text.split(/\s+/).filter(Boolean)) { parts.push(inHl(it, i) ? `<mark>${esc(w)}</mark>` : esc(w)); i++; }
       }
@@ -1738,12 +2286,12 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const isTalk = it.kind !== "verse";
       const boxH = isTalk && (it.citation || it.where) ? 3.05 : 3.5;
       // Chunks that fit the box at a size the room can read; a passage is cut into more pieces until they do.
-      let chunks = chunksOf(it), limit = MAX_CHARS, fits = [];
+      let chunks = pieces(it), limit = MAX_CHARS, fits = [];
       const measure = (cs) => cs.map((chunk) => fitSize({ runs: passageRuns(it, chunk, t), font: SERIF, boxW: inner, boxH, max: fontSize(chunk.verses ? chunk.verses.reduce((a, v) => a + v.text.length, 0) : chunk.text.length), min: 20, lineSpacing: 1.15, paraSpace: 8 }));
       fits = measure(chunks);
       while (fits.some((f) => !f.fits || f.size < 22) && limit > 140) {
         limit = Math.round(limit * 0.8);
-        const again = chunksOf(it, limit);
+        const again = pieces(it, limit);
         if (again.length <= chunks.length) continue;
         chunks = again; fits = measure(chunks); report.split++;
       }
@@ -1752,6 +2300,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         const s = slide();
         report.slides++; report.boxes++;
         kicker(s, chunk.label);
+        // the reader's color, as a bar beside the words
+        if (RC[chunk.color]) s.addShape(pptx.ShapeType.rect, { x: M - 0.2, y: 1.08 + boxH * 0.2, w: 0.07, h: boxH * 0.6, fill: { color: RC[chunk.color] }, line: { color: RC[chunk.color], width: 0 } });
         const runs = passageRuns(it, chunk, t);
         const fit = fits[ci];
         if (!fit.fits) report.tight.push(n);
@@ -1842,10 +2392,9 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const runs = [];
     const hlOpts = { color: t.accent, bold: true };
     if (chunk.verses && it.verses) {
-      const firstN = chunk.verses.find((v) => v.n !== null && v.n !== undefined)?.n;
-      const idx = it.verses.findIndex((v) => v.n === firstN);
-      let i = it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
+      let i = 0;
       chunk.verses.forEach((v, vi) => {
+        i = verseStart(it, chunk, vi);
         if (v.n !== null && v.n !== undefined) runs.push({ text: `${v.n} `, options: { superscript: true, color: t.accent, fontSize: 16, fontFace: SANS, bold: true } });
         const words = v.text.split(/\s+/).filter(Boolean);
         words.forEach((w, wi) => {
@@ -1881,12 +2430,13 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // share sheet (Save to Files, PowerPoint, Keynote, AirDrop, Mail), and Safari
   // opens that sheet only in direct answer to a tap: once the file has taken a
   // moment to build, the tap is spent and the sheet never appears. So the file
-  // is built ahead of time while the board is open, and when it is not ready
-  // at the tap, the button becomes "Save PowerPoint" for one more tap.
+  // is built just before it is wanted (as the finger comes down on Download,
+  // and when More opens), and when it is still not ready at the tap, the share
+  // sheet is tried once the file is; if the browser says the tap is spent, the
+  // button has become "Save PowerPoint" for one more tap.
   const PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   let prepared = null;   // { updated, theme, blob, name, file }
   let preparing = null;
-  let prepareTimer = null;
   function pptxName() { return `${(deck.title || "Scriptures").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Scriptures"}.pptx`; }
   function isPrepared() { return !!prepared && prepared.updated === deck.updated && prepared.theme === deck.theme && prepared.name === pptxName(); }
   async function preparePptx() {
@@ -1902,12 +2452,12 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     })();
     try { return await preparing; } finally { preparing = null; }
   }
-  // Build quietly a moment after the board settles, so the tap finds the file ready.
-  function schedulePrepare() {
-    clearTimeout(prepareTimer);
-    if (!deck.items.length || isPrepared()) return;
-    const run = () => { if (!linking && !pending && !preparing) preparePptx().then(() => syncDownloadButton()).catch(() => {}); };
-    prepareTimer = setTimeout(() => { if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 4000 }); else run(); }, 4000);
+  // Build now, quietly, because the file is about to be asked for. It is not rebuilt after
+  // every edit any more: that was a fifth of a second of work and most of a megabyte, every few
+  // seconds, while the deck was still being written.
+  function prepareSoon() {
+    if (!deck.items.length || isPrepared() || preparing) return;
+    preparePptx().then(() => syncDownloadButton()).catch(() => {});
   }
   function syncDownloadButton() {
     if (!ui) return;
@@ -1917,12 +2467,14 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   }
   function canShareFile(file) { try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) { return false; } }
   function say(text) { if (ui) ui.status.textContent = text; }
-  // Inside the tap: the share sheet where there is one, a download elsewhere.
-  function handOver(p) {
+  // Inside the tap: the share sheet where there is one, a download elsewhere. late: the file was
+  // built after the tap, so the browser may refuse the sheet; then the button waits for one more tap.
+  function handOver(p, { late = false } = {}) {
     if (canShareFile(p.file)) {
       say(reportLine());
       navigator.share({ files: [p.file], title: p.name }).catch((err) => {
         if (err && err.name === "AbortError") return;
+        if (late && err && err.name === "NotAllowedError") { say(`${reportLine()} Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.`); return; }
         fallbackDownload(p);
       });
       return;
@@ -1949,17 +2501,21 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     catch (err) { say(`Could not build the file: ${err.message}`); ui.download.disabled = false; return; }
     ui.download.disabled = false;
     syncDownloadButton();
-    // Built after the tap. Where a share sheet exists it needs a fresh tap; elsewhere the download can start now.
-    if (canShareFile(prepared.file)) say(`${reportLine()} Tap Save PowerPoint, then choose Save to Files, PowerPoint, Keynote or AirDrop.`);
-    else handOver(prepared);
+    // Built after the tap (the build began as the finger came down, so it is often a fraction of
+    // a second later): the share sheet is tried, and where the browser wants a fresh tap for it,
+    // the button now says Save PowerPoint. Elsewhere the download starts.
+    handOver(prepared, { late: true });
   }
 
   window.Deck = {
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,
-    ready, flush: () => writeCurrent(), // ready: the stored deck has arrived; flush: write now rather than a moment later
+    // ready: the stored deck has arrived. flush: write now rather than a moment later; its promise
+    // settles when the database has the deck, so a reload the app starts itself can await it.
+    ready, flush: () => writeCurrent(),
+    undo: () => undo(), canUndo, // the last change to the deck taken back (true when it was); whether there is one
     // an empty deck, as "Yes, delete it and start over" leaves it, written before the promise settles
-    reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); await writeCurrent(); },
+    reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
     // a question card with its words written (Ask's Think it through): addCard, then the text

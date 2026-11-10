@@ -2970,6 +2970,7 @@ import { esc, mb } from "./lib/format.js";
   }
   window.GL = {
     api, el, esc, store, openDoc, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet,
+    openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
     get ready() { return state.ready; },
     get skills() { return store.get("skills")?.data || null; },
     get wide() { return wide(); },
