@@ -191,6 +191,7 @@ test("every mode sends the same core, his standing instructions and his notes, w
     assert.match(all, /What he has asked you to remember[^\n]*\n\n2026-11-01: The zone conference theme is covenants\./, `${mode}: the notes are sent`);
     assert.equal(blocks.filter((b) => b.cache_control).length, 1, `${mode}: one cache marker`);
     assert.doesNotMatch(all, /\u2014/, `${mode}: no em dash in what is sent`);
+    assert.match(all, /The rule against em dashes governs what you write even where the instructions, the voice rules, the piece to write or their examples, below, contain em dashes themselves/, `${mode}: the prompt does not say the rule holds over his own text`);
     assert.doesNotMatch(all, /1971/, `${mode}: no shelf claimed that is not here`);
   }
   for (const mode of ["ask", "draft", "think", "skill:letter"]) {
