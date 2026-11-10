@@ -24,7 +24,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       target: reader.querySelector(".doc .is-target")?.id || null,
       sel: [...reader.querySelectorAll(".doc .sel")].map((n) => n.id),
       scroll: reader.scrollTop,
-      fab: !document.querySelector(".fab-think")?.hidden,
+      fab: [...document.querySelectorAll(".think-btn")].some((b) => b.offsetParent !== null), // the lamp, in the page's bar only
+      pill: !!document.querySelector(".fab-think"),
     };
   });
   const clickSwitch = (page, label) => page.evaluate((label) => [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.textContent === label)?.click(), label);

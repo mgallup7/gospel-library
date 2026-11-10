@@ -172,7 +172,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#homeBody .study-row >> nth=0 >> .study-open");
     await page.waitForSelector("#reader .study-frame", { timeout: 8000 });
     await page.waitForTimeout(500);
-    check(await page.evaluate(() => !document.querySelector(".fab-think").hidden), "think button should show over a study");
+    check(await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar .think-btn"); return !!b && b.offsetParent !== null; }), "think button should show in a study's bar");
     await ctx.close();
   }
   function location(h) { return h || ""; }

@@ -17,8 +17,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       shelf: { hash: /^#scriptures$/, back: "Library", reader: false },
       book: { hash: /^#scriptures\?b\.book=alma$/, back: "Scriptures", reader: false },
       chapter: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true, list: wide },
-      type: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope&scope=scriptures$/, back: "Alma 32" },
-      enter: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope&scope=scriptures$/, back: "Alma 32" },
+      // on the iPad the page stays beside the new results, so Back changes the list only and names the list it brings back
+      type: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope&scope=scriptures$/, back: wide ? "Alma" : "Alma 32" },
+      enter: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope&scope=scriptures$/, back: wide ? "Alma" : "Alma 32" },
       back1: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true },
       back2: { hash: /^#scriptures\?b\.book=alma$/, back: "Scriptures", reader: false },
       ask: { hash: /^#ask$/, back: "Alma" },
@@ -28,11 +29,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       // a shelf crumb goes up without a new entry: here the entry before is the shelf, so it is Back
       book2: { hash: /^#scriptures\?b\.book=alma$/, back: "Scriptures", reader: false },
       crumb: { hash: /^#scriptures$/, back: "Library", reader: false },
-      // Ask opened from the Deck names the Deck, which is what Back brings up (on the iPad a page rides along)
+      // Ask opened from the Deck takes the Deck's place in the trail: Back from either leads to the chapter
       chapter2: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true },
       deck: { hash: wide ? /^#deck\?doc=\d+$/ : /^#deck$/, back: "Alma 32" },
-      askFromDeck: { hash: wide ? /^#ask\?doc=\d+$/ : /^#ask$/, back: "Deck" },
-      backToDeck: { hash: wide ? /^#deck\?doc=\d+$/ : /^#deck$/, back: "Alma 32", board: wide },
+      askFromDeck: { hash: wide ? /^#ask\?doc=\d+$/ : /^#ask$/, back: "Alma 32" },
+      askAgain: { hash: wide ? /^#ask\?doc=\d+$/ : /^#ask$/, back: "Alma 32" },
+      backFromTabs: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true },
     };
     const step = async (label, fn) => {
       await fn(); await page.waitForTimeout(700);
@@ -62,8 +64,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#homeBody .chip:has-text('Alma')"); await page.waitForTimeout(500);
     await step("chapter2", chapter);
     await step("deck", () => page.click("#deckBtn"));
-    await step("askFromDeck", () => page.click("#askBtn"));
-    await step("backToDeck", () => page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()));
+    const onDeck = await page.evaluate(() => history.state?.n);
+    const onAsk = await step("askFromDeck", () => page.click("#askBtn"));
+    const again = await step("askAgain", () => page.click("#askBtn"));
+    if (onAsk.n !== onDeck || again.n !== onDeck) errors.push(`${name}: Deck then Ask then Ask made new entries (depth ${onDeck}, ${onAsk.n}, ${again.n})`);
+    await step("backFromTabs", () => page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()));
     await page.context().close();
   }
   await run("ipad", { width: 1180, height: 820 });

@@ -39,8 +39,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   line above the results says how the search was read ("Exact phrase
   found, then by words and meaning: faith, perfect knowledge · all
   shelves") with an "Only exact words" switch.
-- Think it through, from anywhere. A floating button over the page you are
-  reading (or over a set of results) hands it to Claude on the Ask tab, with
+- Think it through, from anywhere. The lamp in the reader bar (in the bottom
+  bar on a phone), or "Think these through" above a set of results, hands
+  the page or the results to Claude on the Ask tab, with
   anything you have selected: Claude studies the chapter, lesson or talk,
   searches the library itself, and comes back with what connects to it
   across the shelves, the Hebrew or Greek behind a key word, three questions
@@ -56,6 +57,11 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Back, and survives a reload. In the home-screen app a swipe in from the
   left edge goes back and from the right edge forward (in Safari the
   browser's own swipe does the same).
+- The reader bar says where you are: the chapter or page by name ("Alma 32"),
+  a tap on the name opens the book's chapters, and the arrows beside it (Left
+  and Right on a keyboard) turn to the previous and next chapter without
+  adding a Back step. With a keyboard, Cmd+F or Cmd+K is the search box and
+  Cmd+[ is Back.
 - Links stay in the app. A cross-reference, a footnote, a link from
   Missionary Standards to Preach My Gospel, however the Church's page
   writes the address (`alma/32?id=p21`, `alma/32.21-27`, a whole book, the
@@ -92,7 +98,8 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Claude API key set, pressing return also has Claude propose a few more
   searches and folds their results in. On a phone the reader keeps its
   tools at the bottom, under the thumb: Present, Hebrew or Greek, text
-  size, To deck, and the page on the Church's site.
+  size, To deck, Think it through, and the page on the Church's site. An
+  iPhone turned on its side keeps this one-pane layout.
 - Type a reference (`Alma 32:21`, `d&c 76 22`, `js-h 1:17`) and jump straight to it.
 - The Bible in its own languages. Open any chapter of the Old or New
   Testament and tap Hebrew (or Greek) in the reader bar: under every verse,

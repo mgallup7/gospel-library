@@ -2,6 +2,13 @@ import fs from "node:fs";
 // papers-cite: on a Joseph Smith Papers page, Copy puts the same citation under the words that
 // Cite copies (the paper's title, the manuscript page from the page markers, the Papers' address),
 // never the shelf. Run by tests/js/browser/run.mjs, which hands over the browser, the address and the passphrase.
+// Copy and Clear sit in the selection bar where it has room, and behind its "more" button where it has not (a phone)
+const barDo = async (page, sel, item) => {
+  const b = page.locator(`#reader .select-bar ${sel}`).first();
+  if (await b.isVisible()) return b.click();
+  await page.click("#reader .select-bar .sel-more-btn");
+  await page.click(`#reader .select-bar .size-menu >> text=${item}`);
+};
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "papers/";
@@ -33,7 +40,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       const markers = await page.$$eval("#reader .doc .jsp-page", (ms) => ms.map((m) => m.textContent));
       check(markers.join(" ") === "[p. 56] [p. 57]", `letter markers: ${markers}`);
       await select([pids[0]]);
-      await page.click("#reader .select-bar button:has-text('Copy')");
+      await barDo(page, ".fold:has-text('Copy')", "Copy with the citation");
       await page.waitForTimeout(300);
       let text = await clip();
       check(/^On the banks of the Mississippi/.test(text) && /\n\n“Letter to Emma Smith, 4 June 1834,” p\. 56, The Joseph Smith Papers, accessed [A-Z][a-z]+ \d+, \d{4}, https:\/\/www\.josephsmithpapers\.org\/paper-summary\/letter-to-emma-smith-4-june-1834$/.test(text), `Copy on the letter: ${text}`);
@@ -47,20 +54,20 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       check(text.endsWith(cited), `Cite and Copy differ: ${cited}`);
       // a paragraph on the second page, and both pages at once
       const last = pids[pids.length - 1];
-      await page.click("#reader .select-bar .clear-sel");
+      await barDo(page, ".clear-sel", "Clear selection");
       await select([last]);
       await cite.click(); await page.waitForTimeout(300);
       check(/” p\. 57,/.test(await clip()), `Cite on the second page: ${await clip()}`);
       await select([pids[0]]);
-      await page.click("#reader .select-bar button:has-text('Copy')"); await page.waitForTimeout(300);
+      await barDo(page, ".fold:has-text('Copy')", "Copy with the citation"); await page.waitForTimeout(300);
       check(/” pp\. 56–57,/.test(await clip()), `Copy over both pages: ${await clip()}`);
-      await page.click("#reader .select-bar .clear-sel");
+      await barDo(page, ".clear-sel", "Clear selection");
 
       // the December 1841 journal as this test library files it: no page markers, so no page
       await open("/paper-summary/journal-1832-1834");
       check(await page.locator("#reader .doc .jsp-page").count() === 0, "doc 1583 has page markers after all");
       await select(["p2"]);
-      await page.click("#reader .select-bar button:has-text('Copy')"); await page.waitForTimeout(300);
+      await barDo(page, ".fold:has-text('Copy')", "Copy with the citation"); await page.waitForTimeout(300);
       text = await clip();
       check(/\n\n“Journal, December 1841–December 1842,” The Joseph Smith Papers, accessed /.test(text), `Copy on the journal: ${text}`);
       await page.screenshot({ path: `${OUT}${name}-02-journal.png` });

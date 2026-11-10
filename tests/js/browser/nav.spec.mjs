@@ -3,6 +3,9 @@
 // results and only one Back shows; the reader bar folds its text sizes into Aa when it has no room;
 // a half-typed range keeps its card; nothing found says so once; a one-letter query leaves the
 // address; the marks on My studies can be found by words and color, under a heading per book.
+// A verse that is not there gets no jump card of its own; a book: filter that names no book says
+// so; a study is found by the words as typed; the header's and the reader bar's targets are 44pt to
+// touch; the site icon says so offline; an iPhone on its side keeps the phone's layout.
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   async function start(name, viewport) {
@@ -92,6 +95,75 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     c = await count();
     if (c.rows !== 4) errors.push(`${name} marks: faith in green found ${c.rows}, not 4`);
     await page.screenshot({ path: `${SHOTS}nav-marks.png` });
+    await page.context().close();
+  }
+
+  // iPad: the smaller things
+  {
+    const name = "ipad small", page = await start(name, { width: 1180, height: 820 });
+    // what is under a point 21px from a control's centre is still that control: 44pt to touch
+    const reach = (sel) => page.evaluate((s) => {
+      const x = [...document.querySelectorAll(s)].find((n) => n.offsetParent !== null);
+      if (!x) return `${s}: not shown`;
+      const r = x.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const miss = [[0, -21], [0, 21], [-21, 0], [21, 0]].filter(([dx, dy]) => { const at = document.elementFromPoint(cx + dx, cy + dy); return !(at && (at === x || x.contains(at))); });
+      return miss.length ? `${s}: ${Math.round(r.width)}x${Math.round(r.height)}, missed at ${JSON.stringify(miss)}` : null;
+    }, sel);
+    const hits = async (sels) => { for (const s of sels) { const bad = await reach(s); if (bad) errors.push(`${name}: under 44pt to touch, ${bad}`); } };
+    await page.evaluate(async () => { await window.Studies.add(new File(["# Zone conference plan\n\nThe zone conference begins with a hymn, then the training.\n"], "zone.md", { type: "text/markdown" })); });
+    await page.fill("#q", "zone conference"); await page.press("#q", "Enter");
+    await page.waitForSelector("#list .studies-hits .study-hit", { timeout: 5000 }).catch(() => {});
+    const st = await page.evaluate(() => ({ n: document.querySelectorAll("#list .studies-hits .study-hit").length, t: document.querySelector("#list .studies-hits .cite span")?.textContent, b: [...document.querySelectorAll("#list .studies-hits .snip b")].map((x) => x.textContent.toLowerCase()) }));
+    if (st.n !== 1 || st.t !== "Zone conference plan" || !st.b.includes("zone")) errors.push(`${name}: "zone conference" did not find the study by the words as typed: ${JSON.stringify(st)}`);
+    await page.fill("#q", "book:xyzzy faith"); await page.press("#q", "Enter"); await page.waitForSelector("#list .hit-row");
+    const nb = await page.evaluate(() => document.querySelector("#list .no-book")?.textContent || null);
+    if (!nb || !nb.includes("xyzzy")) errors.push(`${name}: book:xyzzy said ${nb}`);
+    await page.fill("#q", "book:alma faith"); await page.press("#q", "Enter"); await page.waitForTimeout(900);
+    if (await page.$("#list .no-book")) errors.push(`${name}: book:alma was called unknown`);
+    await hits(["#homeBtn", "#filterBtn", ".search .clear", ".scopes button.on", ".scopes button[data-scope=pmg]", "#list .smart-line .text-btn.small"]);
+    await page.click("#list .hit >> nth=0"); await page.waitForSelector("#reader .matchnav");
+    await page.waitForTimeout(400);
+    await hits(["#reader .matchnav button[aria-label='Previous match']", "#reader .matchnav button[aria-label='Next match']", "#reader .size-btns .icon-btn[aria-label='Larger text']", "#reader .reader-bar .icon-btn[aria-label='Present']",
+      "#reader .reader-bar a.icon-btn", "#reader .reader-bar .think-btn", "#reader .reader-bar .crumb", "#reader .reader-bar .chap[data-dir=next]", "#reader .reader-bar .trail-back"]);
+    await page.click("#reader .doc p.verse >> nth=1");
+    await hits(["#reader .select-bar .hl-dot.hl-y", "#reader .select-bar .hl-dot.hl-p", "#reader .select-bar .text-btn:not(.fold)", "#reader .select-bar .fold:not(.clear-sel):not(.only-wide)", "#reader .select-bar .clear-sel"]);
+    // offline, the site icon says so and opens nothing
+    await page.context().setOffline(true);
+    let popped = false; page.context().once("page", () => { popped = true; });
+    await page.click("#reader .reader-bar a.icon-btn"); await page.waitForTimeout(400);
+    const said = await page.evaluate(() => document.querySelector(".toast.show")?.textContent || "");
+    if (popped || !/offline/.test(said)) errors.push(`${name}: the site icon offline: tab ${popped}, toast “${said}”`);
+    await page.context().setOffline(false);
+    await page.context().close();
+  }
+
+  // iPhone: a verse that is not there; the dots; the phone on its side
+  {
+    const name = "iphone small", page = await start(name, { width: 393, height: 852 });
+    await page.fill("#q", "Alma 32:999"); await page.waitForTimeout(900);
+    let j = await page.evaluate(() => document.querySelector("#list .jump")?.textContent || null);
+    if (!j || !/^Alma 32 /.test(j) || !/no verse 999/.test(j)) errors.push(`${name}: Alma 32:999 offers “${j}”`);
+    await page.press("#q", "Enter"); await page.waitForSelector("#reader:not([hidden]) .doc h1"); await page.waitForTimeout(500);
+    const at = await page.evaluate(() => ({ t: document.querySelector("#reader .doc h1").textContent.trim(), hash: location.hash, target: !!document.querySelector("#reader .doc .is-target") }));
+    if (at.t !== "Alma 32" || /p=p999/.test(at.hash) || at.target) errors.push(`${name}: Enter on Alma 32:999 gave ${JSON.stringify(at)}`);
+    await page.fill("#q", "Alma 32:43"); await page.waitForTimeout(900);
+    j = await page.evaluate(() => document.querySelector("#list .jump")?.textContent || null);
+    if (!j || !/^Alma 32:43 /.test(j) || /no verse/.test(j)) errors.push(`${name}: Alma 32:43 offers “${j}”`);
+    await page.press("#q", "Enter"); await page.waitForSelector("#reader:not([hidden]) .doc #p43.is-target");
+    await page.click("#reader .doc #p43"); await page.waitForTimeout(200);
+    const dots = await page.evaluate(() => {
+      const ds = [...document.querySelectorAll("#reader .select-bar .hl-dot")];
+      return ds.map((d) => { const r = d.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2; return [[-21, 0], [21, 0], [0, -21], [0, 21]].every(([dx, dy]) => document.elementFromPoint(cx + dx, cy + dy) === d); });
+    });
+    if (dots.length !== 4 || dots.includes(false)) errors.push(`${name}: the highlight dots are under 44pt to touch (${dots})`);
+    const row = await page.evaluate(() => { const b = document.querySelector("#reader .select-bar"); return { over: b.scrollWidth - b.clientWidth, more: b.querySelector(".sel-more-btn").offsetParent !== null }; });
+    if (row.over > 1 || !row.more) errors.push(`${name}: the selection bar at 393: ${JSON.stringify(row)}`);
+    await page.screenshot({ path: `${SHOTS}nav-iphone-selected.png` });
+    // on its side the phone is 852 wide and 393 high: one pane still, the tools still at the bottom
+    await page.setViewportSize({ width: 852, height: 393 }); await page.waitForTimeout(500);
+    const side = await page.evaluate(() => ({ list: !document.querySelector("#list").hidden, reader: !document.querySelector("#reader").hidden, foot: getComputedStyle(document.querySelector("#reader .reader-foot")).display, wide: window.GL.wide }));
+    if (side.list || !side.reader || side.foot === "none" || side.wide) errors.push(`${name}: on its side the phone got the iPad's layout: ${JSON.stringify(side)}`);
+    await page.screenshot({ path: `${SHOTS}nav-iphone-landscape.png` });
     await page.context().close();
   }
   return errors;

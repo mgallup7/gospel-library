@@ -98,8 +98,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.evaluate(() => window.Deck.reset());
   await page.evaluate(async () => { const s = await GL.api("search", { q: "Alma 32" }); GL.openDoc(s.jump.doc_id, "p21"); });
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
-  await page.waitForSelector(".fab-think:not([hidden])", { timeout: 5000 });
-  await page.click(".fab-think");
+  await page.waitForSelector("#reader .reader-bar .think-btn", { timeout: 5000 });
+  await page.click("#reader .reader-bar .think-btn");
   await page.waitForSelector(".think-questions .tq", { timeout: 30000 }).catch(() => null);
   const tq = await page.$$eval(".think-questions .tq", (rs) => rs.map((r) => [r.dataset.kind, r.querySelector(".tq-kind").textContent, r.querySelector(".tq-text").textContent]));
   check(tq.length === 3, `three questions offered (got ${tq.length})`);
