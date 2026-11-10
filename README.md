@@ -62,7 +62,10 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   old lds.org form): if the library holds it, the local copy opens. A verse
   shows first in a sheet where you are, with Open and Add to deck; a page or
   a book opens in place. Only a page the library does not hold goes to the
-  web, and only online.
+  web, and only online: a note at the bottom says it is not in your library
+  and names the site, and its link opens it (a second tap, which the iPad
+  home-screen app needs before it will open anything). Joseph Smith Papers
+  links open the local page when the library holds it.
 - Highlights and notes. Tap a verse or paragraph, then a color (yellow,
   green, blue, pink) or Note; the mark comes back whenever the page opens,
   outlasts library updates (it is kept by page address and paragraph, on
