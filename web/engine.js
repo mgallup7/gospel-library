@@ -160,10 +160,58 @@ function closeDb() {
 }
 // Everything computed from the library's contents, dropped when those contents change
 function forgetDerived() {
-  speakerIndex = null; vocab = null; vocabBuild = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
-  lastRanked = null; originalsKnown = null; translitMap = null; lexiconAscii = null;
-  bitIndex = null; bitIndexTried = false; docOfIndex = null; scopeMasks = new Map(); building = null; libraryGen++;
+  speakerIndex = null; vocab = null; vocabBuild = null; vocabMade = null; stemReady = false; typoCache = new Map(); markCache = { key: "", re: null };
+  lastRanked = null; originalsKnown = null; translitMap = null; lexiconAscii = null; concCache = new Map(); concDocsCache = new Map();
+  bitIndex = null; bitIndexTried = false; docOfIndex = null; docOfRow = null; indexMade = null; scopeMasks = new Map(); building = null; libraryGen++;
   try { db && db.exec("DROP TABLE IF EXISTS temp.vocab"); } catch (_) {}
+}
+
+// Files of things worked out from the library (the meaning index, the vocabulary), kept in the browser's private
+// storage beside it so the next launch reads them instead of working them out again. Each is
+// named for the library's version; none is ever needed: a missing or unreadable one is rebuilt.
+const KEPT = "gl-kept-";
+const keptName = (kind) => (mode === "opfs" && current && current.version ? `${KEPT}${kind}-${String(current.version).replace(/[^\w.-]/g, "_")}.bin` : null);
+async function readKept(name) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    return await (await (await root.getFileHandle(name)).getFile()).arrayBuffer();
+  } catch (_) { return null; }
+}
+// parts[0] is the file's head and goes in last, so a write that is cut off leaves a file that
+// does not read as one. Written a few megabytes at a time with a breath between, and given up
+// (the file removed) when alive() says the library has changed meanwhile.
+async function writeKept(name, parts, alive) {
+  const root = await navigator.storage.getDirectory();
+  const handle = await (await root.getFileHandle(name, { create: true })).createSyncAccessHandle();
+  let ok = false;
+  try {
+    await handle.truncate(0);
+    let at = parts[0].byteLength;
+    for (const part of parts.slice(1)) {
+      for (let o = 0; o < part.byteLength; o += 4 << 20) {
+        const piece = part.subarray(o, o + (4 << 20));
+        if ((await handle.write(piece, { at: at + o })) !== piece.byteLength) throw new Error("the storage is full");
+        await new Promise((r) => setTimeout(r, 0));
+        if (!alive()) throw new Error("the library changed");
+      }
+      at += part.byteLength;
+    }
+    await handle.write(parts[0], { at: 0 });
+    await handle.flush();
+    ok = true;
+  } finally {
+    try { await handle.close(); } catch (_) {}
+    if (!ok) await root.removeEntry(name).catch(() => {});
+  }
+}
+// Removes the kept files of one kind (or of every kind) except `keep`: those of older libraries
+async function sweepKept(kind, keep) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const stale = [];
+    for await (const name of root.keys()) if (name.startsWith(KEPT + (kind ? kind + "-" : "")) && name !== keep) stale.push(name);
+    for (const name of stale) await root.removeEntry(name).catch(() => {});
+  } catch (_) {}
 }
 
 const methods = {
@@ -342,6 +390,7 @@ const methods = {
     if (!slot || (current && current.slot === slot)) {
       closeDb();
       current = null;
+      await sweepKept(null, null); // what was worked out from it goes with it
     }
     if (mode === "opfs" && slot && pool.getFileNames().includes(slot)) pool.unlink(slot);
     return { ok: true };
@@ -381,6 +430,10 @@ const methods = {
   async semanticStatus() { return semanticStatus(); },
   async loadSemantic({ base }, progress) { need(); return loadSemantic(base, progress); },
   async semanticEmbed({ text }) { return Array.from(await embedQuery(String(text || ""))); },
+  // How this session came by what it works out from the library (built, or read from its kept file), for the tests
+  async keptStatus() { return { meaning: indexMade ? { ...indexMade } : null, vocabulary: vocabMade ? { ...vocabMade } : null }; },
+  // The paragraphs nearest a text by meaning alone, with their scores: the index's own ranking, for the tests
+  async semanticNearest({ text, k = 50 }) { need(); const idx = semanticIndex(); return idx ? idx.topK(await embedQuery(String(text || "")), k) : null; },
   async doc({ id, uri }) { need(); return document(id, uri); },
   async resolve({ href }) { need(); return resolve(href); },
   async speakers({ q }) { need(); return speakers(q); },
@@ -883,12 +936,44 @@ function loadVocab() {
 }
 // The same list, built in slices between other work once the library is open, so the first
 // word typed never waits for a walk of the whole term index (seconds on the full library).
+// Like the meaning index it is kept in a file named for the library's version, and a later
+// launch reads that instead of walking the index again.
+let vocabMade = null; // { from: "file" | "library", ms, saved, terms }
+const VOCAB_HEAD = 128;
+function packVocab(key, list) {
+  const body = new TextEncoder().encode(list.map(([term, cnt]) => `${term}\t${cnt}\n`).join(""));
+  const head = new TextEncoder().encode(JSON.stringify({ kind: "vocab", key, terms: list.length, bytes: body.byteLength }).padEnd(VOCAB_HEAD));
+  if (head.byteLength !== VOCAB_HEAD) throw new Error("the vocabulary's head does not fit");
+  return [head, body];
+}
+function unpackVocab(buffer, key) {
+  try {
+    if (!buffer || buffer.byteLength < VOCAB_HEAD) return null;
+    const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 0, VOCAB_HEAD)));
+    if (h.kind !== "vocab" || h.key !== key || h.bytes !== buffer.byteLength - VOCAB_HEAD) return null;
+    const out = [];
+    for (const line of new TextDecoder().decode(new Uint8Array(buffer, VOCAB_HEAD)).split("\n")) {
+      const tab = line.indexOf("\t");
+      if (tab > 0) out.push([line.slice(0, tab), Number(line.slice(tab + 1))]);
+    }
+    return out.length === h.terms ? out : null;
+  } catch (_) { return null; }
+}
 function buildVocabulary() {
   if (vocab || vocabBuild || !db) return vocabBuild;
   const gen = libraryGen;
   vocabBuild = (async () => {
     const out = [];
     try {
+      const t0 = performance.now();
+      const name = keptName("vocab"), key = String(current && current.version);
+      const kept = name ? unpackVocab(await readKept(name), key) : null;
+      if (!db || gen !== libraryGen) return;
+      if (kept) {
+        if (!vocab) vocab = kept;
+        vocabMade = { from: "file", ms: Math.round(performance.now() - t0), saved: true, terms: kept.length };
+        return;
+      }
       db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab USING fts5vocab(main, 'paragraphs', 'row')");
       let after = "";
       for (;;) {
@@ -900,6 +985,10 @@ function buildVocabulary() {
         await new Promise((r) => setTimeout(r, 0));
       }
       if (db && gen === libraryGen && !vocab) vocab = out;
+      if (db && gen === libraryGen && name) {
+        const made = vocabMade = { from: "library", ms: Math.round(performance.now() - t0), saved: false, terms: out.length };
+        writeKept(name, packVocab(key, out), () => gen === libraryGen).then(() => { made.saved = true; return sweepKept("vocab", name); }).catch((err) => console.warn("vocabulary not kept:", err?.message));
+      }
     } catch (_) { /* the next search builds it the old way */ }
     finally { if (gen === libraryGen) vocabBuild = null; }
   })();
@@ -1099,27 +1188,45 @@ function allMatches({ words, phrase, mode = "any", scope = "all", limit = 400, e
 // `exact` keeps the words as typed: the index stems (faith and faithful are one entry), so the
 // words are checked again in the text, by gl_exact, for the matches the index found.
 const CONC_BOOK = "COALESCE(d.book_slug, 'b' || d.book_id, c.slug)";
-function concordance({ match, filters = {}, limit = 600, book = null, exact = false }) {
+// The grouping is kept per (match, filters, mode), a few of them, so a book chip, a second look
+// or the way back from a chapter is answered from memory: on the whole library a common word
+// matches hundreds of thousands of rows, and counting them again on every tap took seconds.
+// Dropped with everything else derived from the library (forgetDerived).
+const CONC_KEEP = 8, CONC_KEEP_IDS = 3000000;
+let concCache = new Map(), concDocsCache = new Map();
+// `via` is for the tests and for measuring: "fresh" counts again without the kept grouping, "join"
+// counts again the plain SQL way; both must give what the kept one gives.
+function concordance({ match, filters = {}, limit = 600, book = null, exact = false, via = null }) {
   if (!match) return { total: 0, passages: [], by_document: [], by_book: [], query: "" };
   const cq = { collections: filters.collections || [], speaker: filters.speaker || null, yearFrom: filters.yearFrom || null, yearTo: filters.yearTo || null,
     bookSlug: filters.bookSlug || null, volume: filters.volume || null, edition: filters.edition || null, excludeEdition: filters.excludeEdition || null };
-  const { where, params } = whereParts(cq);
   const words = exactWords(match);
   const exactOn = !!exact && !!exactTest(match);
-  if (exactOn) { ensureExactFn(); where.push("gl_exact(p.text, ?)"); params.push(match); }
-  const cond = ["paragraphs MATCH ?", ...where].join(" AND ");
-  let groups;
-  try {
-    groups = rows(`SELECT d.id AS doc_id, ${CONC_BOOK} AS bk, COALESCE(d.book_name, b.title, c.title) AS bname, COUNT(*) AS n, group_concat(p.rowid) AS ids${PASSAGE_FROM}
-                    WHERE ${cond} GROUP BY d.id ORDER BY d.sort_key, d.id`, [match, ...params]);
-  } catch (err) {
-    return { total: 0, passages: [], by_document: [], by_book: [], query: match, error: err.message };
+  const key = JSON.stringify([match, exactOn, cq.collections, cq.speaker, cq.yearFrom, cq.yearTo, cq.bookSlug, cq.volume, cq.edition, cq.excludeEdition]);
+  let kept = via ? null : concCache.get(key);
+  if (kept) { concCache.delete(key); concCache.set(key, kept); } // the newest last
+  else {
+    try {
+      kept = (via === "join" ? null : concGroupsFast(match, cq, exactOn)) || concGroupsSql(match, cq, exactOn);
+    } catch (err) {
+      return { total: 0, passages: [], by_document: [], by_book: [], query: match, error: err.message };
+    }
+    const books = new Map();
+    for (const g of kept.groups) {
+      const b = books.get(g.bk);
+      if (b) b.n += g.n; else books.set(g.bk, { key: g.bk, name: g.bname, n: g.n });
+    }
+    kept.books = books;
+    if (!via) concCache.set(key, kept);
+    // the oldest go first: past eight groupings, or past three million rowids held between them
+    let held = 0;
+    for (const v of concCache.values()) held += v.size;
+    for (const [k, v] of concCache) {
+      if (concCache.size === 1 || (concCache.size <= CONC_KEEP && held <= CONC_KEEP_IDS)) break;
+      concCache.delete(k); held -= v.size;
+    }
   }
-  const books = new Map();
-  for (const g of groups) {
-    const b = books.get(g.bk);
-    if (b) b.n += g.n; else books.set(g.bk, { key: g.bk, name: g.bname, n: g.n });
-  }
+  const { groups, books } = kept;
   const shown = book && books.has(book) ? groups.filter((g) => g.bk === book) : groups;
   const total = shown.reduce((a, g) => a + g.n, 0);
   const cap = Math.min(limit, 1000);
@@ -1128,11 +1235,11 @@ function concordance({ match, filters = {}, limit = 600, book = null, exact = fa
   const ids = [];
   for (const g of shown) {
     if (ids.length >= cap) break;
-    const mine = String(g.ids).split(",").map(Number).sort((a, b) => a - b);
-    ids.push(...mine.slice(0, cap - ids.length));
+    const take = Math.min(g.n, cap - ids.length);
+    for (let k = 0; k < take; k++) ids.push(g.ids[k]);
   }
   const by_document = shown.map((g) => ({ doc_id: g.doc_id, n: g.n }));
-  const out = { total, query: match, by_document, by_book: [...books.values()], book: book && books.has(book) ? book : null, exact: exactOn, words };
+  const out = { total, query: match, by_document, by_book: [...books.values()].map((b) => ({ ...b })), book: book && books.has(book) ? book : null, exact: exactOn, words };
   if (!ids.length) return { ...out, passages: [] };
   const order = new Map(ids.map((id, i) => [id, i]));
   const details = rows(`SELECT ${PASSAGE_COLS}${PASSAGE_FROM} WHERE p.rowid IN (${ids.map(() => "?").join(",")})`, ids)
@@ -1140,12 +1247,84 @@ function concordance({ match, filters = {}, limit = 600, book = null, exact = fa
   out.passages = details.map((r) => ({ ...summary(r), paragraph_id: r.paragraph_id, doc_id: r.document_id, pid: r.pid, kind: r.kind, verse: r.verse, text: r.text, citation: citation(r, r.verse) }));
   return out;
 }
+// The groups as one statement: every match joined to its document and grouped there. It needs
+// nothing but the library, but it reads every matching row to learn its document, and in exact
+// mode calls gl_exact on each.
+function concGroupsSql(match, cq, exactOn) {
+  const { where, params } = whereParts(cq);
+  if (exactOn) { ensureExactFn(); where.push("gl_exact(p.text, ?)"); params.push(match); }
+  const cond = ["paragraphs MATCH ?", ...where].join(" AND ");
+  const groups = rows(`SELECT d.id AS doc_id, ${CONC_BOOK} AS bk, COALESCE(d.book_name, b.title, c.title) AS bname, COUNT(*) AS n, group_concat(p.rowid) AS ids${PASSAGE_FROM}
+                    WHERE ${cond} GROUP BY d.id ORDER BY d.sort_key, d.id`, [match, ...params]);
+  let size = 0;
+  for (const g of groups) { g.ids = Int32Array.from(String(g.ids).split(",").map(Number)).sort(); size += g.n; }
+  return { groups, size };
+}
+// The same groups without a join per match, once the meaning index has left its table of which
+// document each paragraph belongs to (docOfRow). The matching rowids come from the full-text
+// index in one value, which reads no paragraph at all. Exact mode has to read the text: only of
+// the matches in documents the filters let through, once, after which the grouping is kept. The
+// documents, their books and their order come from one read of the documents under the same
+// filters, kept per filter. Null when the table is not there yet.
+let concKeep = null; // what gl_kept tests against while a statement runs
+function concGroupsFast(match, cq, exactOn) {
+  const byRow = docOfRow;
+  if (!byRow) return null;
+  const docs = concDocs(cq);
+  let list;
+  if (exactOn) {
+    ensureExactFn();
+    concKeep = { at: docs.at, byRow };
+    try { list = value("SELECT group_concat(rowid) FROM paragraphs WHERE paragraphs MATCH ? AND gl_kept(rowid) AND gl_exact(text, ?)", [match, match]); }
+    finally { concKeep = null; }
+  } else list = value("SELECT group_concat(rowid) FROM paragraphs WHERE paragraphs MATCH ?", [match]);
+  const all = list === null || list === undefined || list === "" ? [] : String(list).split(",");
+  // count per document, then lay the rowids out document by document in the documents' order,
+  // each document's run in reading order
+  const found = new Int32Array(all.length), count = new Int32Array(docs.ids.length);
+  let n = 0;
+  for (let k = 0; k < all.length; k++) {
+    const id = Number(all[k]), d = docs.at[byRow[id]];
+    if (!(d >= 0)) continue; // a document the filters leave out, or a row with none
+    found[n++] = id; count[d]++;
+  }
+  const rowids = found.subarray(0, n).sort();
+  const start = new Int32Array(docs.ids.length), laid = new Int32Array(n);
+  const groups = [];
+  let at = 0;
+  for (let d = 0; d < count.length; d++) {
+    start[d] = at;
+    if (count[d]) groups.push({ doc_id: docs.ids[d], bk: docs.bk[d], bname: docs.bname[d], n: count[d], ids: laid.subarray(at, at + count[d]) });
+    at += count[d];
+  }
+  for (let k = 0; k < n; k++) laid[start[docs.at[byRow[rowids[k]]]]++] = rowids[k];
+  return { groups, size: n };
+}
+// The documents a set of filters lets through, in the concordance's order, each with its book
+function concDocs(cq) {
+  const key = JSON.stringify([cq.collections, cq.speaker, cq.yearFrom, cq.yearTo, cq.bookSlug, cq.volume, cq.edition, cq.excludeEdition]);
+  let docs = concDocsCache.get(key);
+  if (docs) return docs;
+  const { where, params } = whereParts(cq);
+  const rs = rows(`SELECT d.id AS doc_id, ${CONC_BOOK} AS bk, COALESCE(d.book_name, b.title, c.title) AS bname
+                   FROM documents d JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id
+                   ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY d.sort_key, d.id`, params);
+  const at = new Int32Array((value("SELECT MAX(id) FROM documents") || 0) + 1).fill(-1); // a document's place in the order; -1 when the filters leave it out
+  docs = { ids: new Int32Array(rs.length), bk: new Array(rs.length), bname: new Array(rs.length), at };
+  rs.forEach((r, i) => { docs.ids[i] = r.doc_id; docs.bk[i] = r.bk; docs.bname[i] = r.bname; at[r.doc_id] = i; });
+  if (concDocsCache.size >= 4) concDocsCache.delete(concDocsCache.keys().next().value);
+  concDocsCache.set(key, docs);
+  return docs;
+}
 // The words of an FTS match as a test on plain text, the words whole: `"faith"` finds faith and
 // not faithful, `"plan of salvation"` those words in that order, `"redeem"*` (a prefix asked for)
 // any word that starts so. AND, OR, NOT and brackets keep their sense; what a NOT excludes the
 // index has excluded already. A match this cannot read (NEAR, a column) gives null: no exact mode.
 const exactCache = new Map();
-const foldText = (s) => String(s || "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+// Text with nothing in it that an accent could hide in (ASCII, the Latin-1 signs, the dashes and
+// curly quotes) folds by case alone: the same result without two more passes over every paragraph.
+const FOLD_PLAIN = /^[\x00-\xbf\u2010-\u203f]*$/;
+const foldText = (s) => { const t = String(s || ""); return FOLD_PLAIN.test(t) ? t.toLowerCase() : t.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase(); };
 function parseExact(match) {
   const toks = [];
   const re = /\s*(?:"((?:[^"]|"")*)"(\*?)|(\()|(\))|([\p{L}\p{N}'’]+)(\*?))/uy;
@@ -1201,6 +1380,8 @@ let exactFnDb = null;
 function ensureExactFn() {
   if (exactFnDb === db) return;
   db.createFunction("gl_exact", (_ctx, text, match) => { const t = exactTest(String(match)); return !t || t(foldText(text)) ? 1 : 0; }, { arity: 2, deterministic: true });
+  // gl_kept(rowid): is this paragraph in a document the concordance's filters let through
+  db.createFunction("gl_kept", (_ctx, id) => (concKeep && concKeep.at[concKeep.byRow[id]] >= 0 ? 1 : 0), { arity: 1 });
   exactFnDb = db;
 }
 
@@ -1756,6 +1937,7 @@ function transliterationHint(q) {
 // --------------------------------------------------------------- semantic ----
 // The paragraphs' vectors (their sign bits) and the model that embeds a query.
 let bitIndex = null, bitIndexTried = false, docOfIndex = null, scopeMasks = new Map();
+let docOfRow = null; // paragraph rowid -> document id for every paragraph, left by the index build; the concordance groups by it
 const queryVectors = new Map();
 function embeddingsInfo() { try { return metaValue("embeddings"); } catch (_) { return null; } }
 function haveVectors() {
@@ -1765,7 +1947,7 @@ function semanticStatus() {
   const info = db ? embeddingsInfo() : null;
   if (!Sem) return { available: false, ready: false, loaded: false, count: 0, model: null, failed: "the search module did not load" };
   const failed = semFailed();
-  return { available: !!db && haveVectors() && !!info && info.model === Sem.MODEL.name, ready: semReady(), loaded: !!bitIndex, count: info ? info.count : 0, model: info ? info.model : null, failed: failed ? String(failed.message || failed) : null, worker: !!modelPort };
+  return { available: !!db && haveVectors() && !!info && info.model === Sem.MODEL.name, ready: semReady(), loaded: !!bitIndex, count: info ? info.count : 0, model: info ? info.model : null, failed: failed ? String(failed.message || failed) : null, worker: !!modelPort, index: indexMade ? { ...indexMade } : null };
 }
 async function loadSemantic(base, progress) {
   if (!Sem || !haveVectors()) return semanticStatus();
@@ -1773,10 +1955,14 @@ async function loadSemantic(base, progress) {
   await Promise.all([loadModel(base, (p) => progress && progress({ phase: "model", ...p })), buildSemanticIndex(progress)]);
   return semanticStatus();
 }
-// The index: every paragraph's sign bits, read once per session. It is built in slices with a
-// breath between them, so a search typed while it builds is answered between slices instead
-// of waiting seconds for the whole table.
+// The index: every paragraph's sign bits. It is made once per library: built from the vectors
+// table in slices with a breath between them (so a search typed while it builds is answered
+// between slices instead of waiting seconds for the whole table), then written to a file
+// beside the library. Every later launch reads that file whole, which takes a fraction of the
+// time and none of the stepping; a library that has changed (an update, a new download) has
+// another version, so its file is not found and the index is built and written again.
 let building = null, libraryGen = 0; // libraryGen moves on whenever the library's contents change
+let indexMade = null; // { from: "file" | "library", ms, saved }: how this session came by the index
 function buildSemanticIndex(progress) {
   if (bitIndex) return Promise.resolve(bitIndex);
   if (building) return building;
@@ -1786,8 +1972,19 @@ function buildSemanticIndex(progress) {
   building = (async () => {
     const breathe = async () => { await new Promise((r) => setTimeout(r, 0)); if (gen !== libraryGen) throw new Error("the library changed while the index was being built"); };
     try {
+      const t0 = performance.now();
       const info = embeddingsInfo();
       const dims = info.dims || Sem.MODEL.dims, bytes = dims >> 3;
+      // the kept file, when it was made from this library and this model and still fits them
+      const name = keptName("meaning"), key = `${current && current.version}|${info.model}|${dims}`;
+      const kept = name ? Sem.unpackIndex(await readKept(name), key) : null;
+      if (gen !== libraryGen || !db) return null;
+      if (kept && kept.ids[kept.ids.length - 1] === value("SELECT MAX(paragraph_id) FROM vecbits") && kept.rowDocs.length === (value("SELECT MAX(rowid) FROM paragraphs") || 0) + 1) {
+        docOfIndex = kept.docs; docOfRow = kept.rowDocs;
+        bitIndex = new Sem.BitIndex(kept.ids, kept.bits, kept.dims);
+        indexMade = { from: "file", ms: Math.round(performance.now() - t0), saved: true };
+        return bitIndex;
+      }
       const n = value("SELECT COUNT(*) FROM vecbits") || 0;
       if (!n) return null;
       const ids = new Int32Array(n), bits = new Uint8Array(n * bytes);
@@ -1827,7 +2024,14 @@ function buildSemanticIndex(progress) {
       for (let k = 0; k < i; k++) docs[k] = ids[k] <= maxId ? docByRow[ids[k]] : 0;
       if (!db || gen !== libraryGen) return null;
       docOfIndex = docs;
+      docOfRow = docByRow;
       bitIndex = new Sem.BitIndex(ids.subarray(0, i), bits.subarray(0, i * bytes), dims);
+      const made = indexMade = { from: "library", ms: Math.round(performance.now() - t0), saved: false };
+      // kept for the next launch, without holding this one up; the files of older libraries go
+      if (name) {
+        const { parts } = Sem.packIndex({ key, dims, ids: bitIndex.ids, docs, rowDocs: docByRow, bits: bitIndex.bits });
+        writeKept(name, parts, () => gen === libraryGen).then(() => { made.saved = true; return sweepKept("meaning", name); }).catch((err) => console.warn("meaning index not kept:", err?.message));
+      }
       return bitIndex;
     } catch (err) {
       console.warn("meaning index not built:", err?.message);
