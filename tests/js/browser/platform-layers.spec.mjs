@@ -33,6 +33,30 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       check(/^rgb\(/.test(bar.bg) && bar.blur === "none" && bar.line === "1px" && bar.style === "solid", `the tab bar should be opaque with a hairline on top: ${JSON.stringify(bar)}`);
     }
 
+    // ---- small things: Clear in the search box and the tabs' words can be read (4.5:1 in both
+    // schemes), and a tab reached by the keyboard shows a ring that fits inside the bar or rail
+    for (const scheme of ["light", "dark"]) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.fill("#q", "fa"); await wait(250);
+      const c = await page.evaluate(() => {
+        const lum = (c) => { const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+        const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return +((x + 0.05) / (y + 0.05)).toFixed(2); };
+        const css = (s) => getComputedStyle(document.querySelector(s));
+        const typed = ratio(css(".search .clear").color, css("#q").backgroundColor);
+        document.querySelector("#q").blur();
+        return { typed, idle: ratio(css(".search .clear").color, css("#q").backgroundColor), shown: css(".search .clear").display !== "none", tab: ratio(css("#tabs .tab:not(.on)").color, css("#tabs").backgroundColor), tabOn: ratio(css("#tabs .tab.on").color, css("#tabs").backgroundColor) };
+      });
+      check(c.shown && c.typed >= 4.5 && c.idle >= 4.5, `${scheme}: Clear in the search box should reach 4.5:1: ${JSON.stringify(c)}`);
+      check(c.tab >= 4.5 && c.tabOn >= 4.5, `${scheme}: the tabs' words should reach 4.5:1: ${JSON.stringify(c)}`);
+      await page.fill("#q", ""); await wait(250);
+    }
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.focus("#homeBtn"); await page.keyboard.press("Tab"); await wait(150);
+    const ring = await page.evaluate(() => { const a = document.activeElement, c = getComputedStyle(a), r = a.getBoundingClientRect(), bar = document.querySelector("#tabs").getBoundingClientRect(); const off = parseFloat(c.outlineOffset), w = parseFloat(c.outlineWidth); return { on: a.id, style: c.outlineStyle, w, off, inside: r.left - off - w >= bar.left && r.right + off + w <= bar.right && r.top - off - w >= bar.top && r.bottom + off + w <= bar.bottom }; });
+    check(ring.on === "searchTab" && ring.style === "solid" && ring.w >= 2 && ring.inside, `a tab reached by Tab should show a ring inside the ${phone ? "bar" : "rail"}: ${JSON.stringify(ring)}`);
+    await page.screenshot({ path: `${SHOTS}platform-${name}-tab-focus.png` });
+    await page.evaluate(() => document.activeElement?.blur());
+
     // ---- a toast sits above whatever holds the bottom of the screen
     const over = (sel) => page.evaluate((s) => {
       const t = document.querySelector("#toast").getBoundingClientRect();
