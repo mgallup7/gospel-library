@@ -2,6 +2,13 @@ import fs from "node:fs";
 // reader: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase.
 // Focus and keyboard in the reader: one Tab stop for the verses, the selection bar next in order,
 // focus back on the page after the bar goes, and on the list row after Back on the phone.
+// Clear sits in the selection bar where it has room, and behind its "more" button where it has not (a phone)
+const barDo = async (page, sel, item) => {
+  const b = page.locator(`#reader .select-bar ${sel}`).first();
+  if (await b.isVisible()) return b.click();
+  await page.click("#reader .select-bar .sel-more-btn");
+  await page.click(`#reader .select-bar .size-menu >> text=${item}`);
+};
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "reader/";
@@ -76,7 +83,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(300);
     check(await page.evaluate(() => document.querySelector("#sheet").hidden), "Cancel closes it");
     check(await page.evaluate(() => !document.querySelector("main").inert && !document.querySelector("header.bar").inert), "the page is live again when the sheet closes");
-    await page.click("#reader .select-bar .clear-sel");
+    await barDo(page, ".clear-sel", "Clear selection");
     // Back on the phone lands on the row of the page just left
     if (viewport.width < 760) {
       await page.click("#reader .reader-bar .trail-back");

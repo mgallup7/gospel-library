@@ -98,7 +98,8 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   Claude API key set, pressing return also has Claude propose a few more
   searches and folds their results in. On a phone the reader keeps its
   tools at the bottom, under the thumb: Present, Hebrew or Greek, text
-  size, To deck, and the page on the Church's site.
+  size, To deck, Think it through, and the page on the Church's site. An
+  iPhone turned on its side keeps this one-pane layout.
 - Type a reference (`Alma 32:21`, `d&c 76 22`, `js-h 1:17`) and jump straight to it.
 - The Bible in its own languages. Open any chapter of the Old or New
   Testament and tap Hebrew (or Greek) in the reader bar: under every verse,

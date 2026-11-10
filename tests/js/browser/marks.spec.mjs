@@ -1,5 +1,12 @@
 import fs from "node:fs";
 // marks: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase
+// Copy and Clear sit in the selection bar where it has room, and behind its "more" button where it has not (a phone)
+const barDo = async (page, sel, item) => {
+  const b = page.locator(`#reader .select-bar ${sel}`).first();
+  if (await b.isVisible()) return b.click();
+  await page.click("#reader .select-bar .sel-more-btn");
+  await page.click(`#reader .select-bar .size-menu >> text=${item}`);
+};
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "marks/";
@@ -64,7 +71,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(500);
     check(!!(await page.$("#reader .doc #p23 .note-mark")), "verse 23 should carry a note marker");
     check(await page.evaluate(() => document.querySelector("#sheet").hidden), "sheet closes after saving");
-    await page.click("#reader .select-bar .clear-sel");
+    await barDo(page, ".clear-sel", "Clear selection");
     // the same color again removes the highlight on verse 22
     await page.click("#reader .doc #p22");
     await page.click("#reader .select-bar .hl-dot.hl-y");

@@ -21,7 +21,8 @@ import { esc, mb } from "./lib/format.js";
     for (const c of [].concat(children)) if (c !== null && c !== undefined) node.append(c);
     return node;
   };
-  const wide = () => window.matchMedia("(min-width: 760px)").matches; // two panes from an iPad in portrait up (app.css agrees)
+  // two panes from an iPad in portrait up; a phone on its side is wide enough but far too short, so it keeps the phone's layout (app.css agrees)
+  const wide = () => window.matchMedia("(min-width: 760px) and (min-height: 500px)").matches;
   const monthName = (m) => (m === 4 ? "April" : m === 10 ? "October" : "");
   const BASE = new URL(".", document.baseURI);
   const MANIFEST_URL = new URL("data/manifest.json", BASE).href;
@@ -683,6 +684,13 @@ import { esc, mb } from "./lib/format.js";
         speaker: state.speaker, from: state.from, to: state.to, book: state.book, group: state.group,
       });
       if (mySeq !== searchSeq) return;
+      // "Alma 32:999": the chapter is there and the verse is not, so the card offers the chapter and says so
+      if (data.jump?.doc_id && /^p\d+$/.test(data.jump.pid || "")) {
+        let there = true;
+        try { there = !!(await api("context", { doc_id: data.jump.doc_id, pid: data.jump.pid, before: 0, after: 0 })); } catch (_) { there = true; }
+        if (mySeq !== searchSeq) return;
+        if (!there) data.jump = { ...data.jump, label: data.jump.title || data.jump.label, missing: data.jump.pid.slice(1), pid: null, verse_end: null };
+      }
       // a reference typed and entered opens the chapter at the verse, on the phone as on the iPad; the
       // list keeps the card, so Back comes to it; a re-render (Back, a reload) never navigates
       if (!typeahead && !more && !silent && data.jump?.doc_id && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
@@ -758,10 +766,13 @@ import { esc, mb } from "./lib/format.js";
     if (data.jump) {
       const j = data.jump;
       frag.append(el("button", { class: "jump", onclick: () => j.doc_id ? openDoc(j.doc_id, j.pid) : null }, [
-        el("div", {}, [el("b", { text: j.label }), " ", el("span", { text: j.doc_id ? "Open" : "Not in the library yet" })]),
+        el("div", {}, [el("b", { text: j.label }), " ", el("span", { text: !j.doc_id ? "Not in the library yet" : j.missing ? `Open · it has no verse ${j.missing}` : "Open" })]),
         el("span", { text: j.doc_id ? "›" : "" }),
       ]));
     }
+    // a book: filter (typed, or in Filters) that names no book is said, since the search went on without it
+    const askedBook = (/\bbook:("[^"]*"|\S+)/i.exec(data.query || "") || [])[1]?.replace(/"/g, "") || state.book;
+    if (askedBook && data.filters && !data.filters.bookSlug && !data.filters.volume) frag.append(el("div", { class: "status no-book", role: "status", text: `No book of scripture is called “${askedBook}”, so this search is not kept to one book.` }));
     // how the search was read is said only over something found; over nothing, the empty line speaks alone
     const found = !!(data.jump || data.hits.length || data.documents.length || (data.titles || []).length);
     if (data.smart && found) {
@@ -1255,7 +1266,7 @@ import { esc, mb } from "./lib/format.js";
       el("button", { class: "icon-btn bar-extra", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
       thinkBtn(),
       doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
-      el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
+      el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => outside(e, doc.source_url), title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
       el("span", { class: "pane-switch-slot" }),
     ].filter(Boolean));
     const body = sanitize(el("article", { class: "doc", html: doc.body_html || "" }));
@@ -1292,7 +1303,7 @@ import { esc, mb } from "./lib/format.js";
         deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
       }),
       footBtn("Think", ICON_THINK, () => thinkHere(), "Think it through with Claude"),
-      el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
+      el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => outside(e, doc.source_url), "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
     ]);
     readerPane.replaceChildren(bar, body, nav, foot, sizeRow, rfoot);
     readerPane.classList.remove("has-study");
@@ -1332,14 +1343,17 @@ import { esc, mb } from "./lib/format.js";
     showInStudies(doc, body);
   }
 
+  // The reader's "open on the site" controls leave the way every other link does (openOutside): one
+  // new tab online, and offline a line that says so instead of a dead tab.
+  function outside(e, url) { e.preventDefault(); openOutside(url); }
   // The reader bar says where you are: the chapter or the page by name ("Alma 32"), and a tap on
   // the name leads up to what holds it, the book's chapters or the manual's contents.
   function titleCrumb(doc) {
     const name = doc.collection === "scriptures" && doc.citation ? chapterOf(doc.citation) : doc.title;
     const up = doc.collection === "scriptures" ? doc.book_name : doc.book?.title;
     const can = doc.collection === "scriptures" ? !!doc.book_slug : !!doc.book?.uri;
-    return el("button", { type: "button", class: "crumb", disabled: !can, text: name, title: can ? `${up || "Contents"}: all of it` : crumbFor(doc),
-      "aria-label": can ? `${name}. Open ${up || "the contents"}` : name, onclick: () => openContents(doc) });
+    return el("button", { type: "button", class: "crumb", disabled: !can, title: can ? `${up || "Contents"}: all of it` : crumbFor(doc),
+      "aria-label": can ? `${name}. Open ${up || "the contents"}` : name, onclick: () => openContents(doc) }, [el("span", { text: name })]);
   }
   function openContents(doc) {
     const c = doc.collection || "";
@@ -1611,7 +1625,7 @@ import { esc, mb } from "./lib/format.js";
     studyScroll = scroll || 0;
     const bar = el("div", { class: "reader-bar" }, [
       trailButton(),
-      el("button", { type: "button", class: "crumb", text: rec.title, title: "My studies: all of them", "aria-label": `${rec.title}. Open My studies`, onclick: () => openList({ tab: "studies" }) }),
+      el("button", { type: "button", class: "crumb", title: "My studies: all of them", "aria-label": `${rec.title}. Open My studies`, onclick: () => openList({ tab: "studies" }) }, [el("span", { text: rec.title })]),
       el("div", { class: "spacer" }),
       thinkBtn(" on-phone"), // a study has no bottom bar on a phone, so the lamp stays up here
       el("span", { class: "pane-switch-slot" }),
@@ -1709,31 +1723,37 @@ import { esc, mb } from "./lib/format.js";
   // match, opening at the heading nearest it.
   async function studiesInResults(data) {
     if (!window.Studies || data.typeahead && state.q.trim().length < 3) return;
-    const terms = [...new Set((state.terms.length ? state.terms : termsFrom(data.query || "")).map((t) => t.toLowerCase().replace(/^["'(]+|["')]+$/g, "")).filter((t) => t.length >= 2))];
-    if (!terms.length) return;
+    // the words as typed come first: a study may have a word the library lacks ("zone conference" is
+    // read as zion, conference for the library, and is still what the study says); then the words
+    // the search settled on (a question's key words, a corrected spelling)
+    const clean = (list) => [...new Set(list.map((t) => t.toLowerCase().replace(/^["'(]+|["')]+$/g, "")).filter((t) => t.length >= 2))];
+    const typed = clean(termsFrom(data.query || state.q || "")), read = clean(state.terms);
+    const sets = [typed, read].filter((ts, i, a) => ts.length && (i === 0 || ts.join(" ") !== a[0].join(" ")));
+    if (!sets.length) return;
     let idx;
     try { idx = await studiesIndex(); } catch (_) { return; }
     if (!idx.length || state.lastSearch !== data || state.view === "all") return;
     const wordAt = (lower, t, from = 0) => { const re = new RegExp(`(^|[^\\p{L}\\p{N}])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "giu"); re.lastIndex = from; const m = re.exec(lower); return m ? m.index + m[1].length : -1; };
     const found = [];
     for (const s of idx) {
+      const terms = sets.find((ts) => ts.every((t) => wordAt(s.lower, t) >= 0));
+      if (!terms) continue;
       const first = terms.map((t) => wordAt(s.lower, t));
-      if (first.some((i) => i < 0)) continue;
       let n = 0;
       for (const t of terms) { let i = -1, k = 0; while (k < 50 && (i = wordAt(s.lower, t, i + 1)) >= 0) { n++; k++; } }
-      found.push({ s, at: Math.min(...first), n });
+      found.push({ s, at: Math.min(...first), n, terms });
     }
     if (!found.length) return;
     found.sort((a, b) => b.n - a.n);
-    const mark = (text) => { let h = esc(text); for (const t of terms) h = h.replace(new RegExp(`(^|[^\\p{L}\\p{N}])(${esc(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\p{L}\\p{N}]*)`, "giu"), "$1<b>$2</b>"); return h; };
+    const mark = (text, terms) => { let h = esc(text); for (const t of terms) h = h.replace(new RegExp(`(^|[^\\p{L}\\p{N}])(${esc(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\p{L}\\p{N}]*)`, "giu"), "$1<b>$2</b>"); return h; };
     const group = el("div", { class: "studies-hits" }, [el("div", { class: "group-title", text: "In your studies" })]);
-    for (const { s, at } of found.slice(0, 3)) {
+    for (const { s, at, terms } of found.slice(0, 3)) {
       const a = nearestAnchor(s, at);
       const from = Math.max(0, s.text.lastIndexOf(" ", Math.max(0, at - 70)) + 1), to = Math.min(s.text.length, at + 130);
       const snip = (from > 0 ? "…" : "") + s.text.slice(from, to).replace(/\s+\S*$/, "") + (to < s.text.length ? "…" : "");
       group.append(el("button", { type: "button", class: "hit study-hit", onclick: () => openStudy(s.id, { anchor: a ? a.id : null }) }, [
         el("div", { class: "cite" }, [el("span", { text: s.title }), el("span", { class: "where", text: a ? `My studies · ${a.label}` : "My studies" })]),
-        el("div", { class: "snip", html: mark(snip) }),
+        el("div", { class: "snip", html: mark(snip, terms) }),
       ]));
     }
     if (state.lastSearch !== data || !listPane.isConnected) return;
@@ -2197,7 +2217,7 @@ import { esc, mb } from "./lib/format.js";
       el("button", { type: "button", role: "menuitem", onclick: () => resize(-1) }, [el("span", { class: "g", html: glyph(14) }), "Smaller text"]),
       el("button", { type: "button", role: "menuitem", onclick: () => resize(1) }, [el("span", { class: "g", html: glyph(20) }), "Larger text"]),
       el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]),
-      el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: () => shut() }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
+      el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: (e) => { shut(); outside(e, doc.source_url); } }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
       el("button", { type: "button", role: "menuitem", class: "menu-think", onclick: () => { shut(); thinkHere(); } }, [el("span", { class: "g", html: ICON_THINK }), "Think it through"]),
     ]);
     const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size", title: "Text size", "aria-haspopup": "menu", "aria-expanded": "false", text: "Aa", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } });
