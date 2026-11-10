@@ -1834,6 +1834,7 @@ import { esc, mb } from "./lib/format.js";
       el("button", { type: "button", class: "crumb", title: "My studies: all of them", "aria-label": `${rec.title}. Open My studies`, onclick: () => openList({ tab: "studies" }) }, [el("span", { text: rec.title })]),
       el("div", { class: "spacer" }),
       thinkBtn(" on-phone"), // a study has no bottom bar on a phone, so the lamp stays up here
+      el("button", { type: "button", class: "icon-btn gear-btn phone-only", "aria-label": "Settings", title: "Settings", html: ICON_GEAR, onclick: () => openSettings() }),
       el("span", { class: "pane-switch-slot" }),
     ]);
     const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts" }); // no forms: a study page is read, and has nothing to submit to
@@ -2834,7 +2835,7 @@ import { esc, mb } from "./lib/format.js";
       if (!strip) { strip = el("div", { class: "match-strip" }); bar.after(strip); }
       if (nav.parentElement !== strip) strip.append(nav);
       if (fresh) nudge(strip.offsetHeight);
-      strip.style.top = bar.offsetHeight + "px"; // it holds its place under the bar as the page scrolls
+      strip.style.top = (parseFloat(getComputedStyle(bar).top) || 0) + bar.offsetHeight + "px"; // it holds its place under the bar as the page scrolls
     };
     if (wide()) {
       if (nav.parentElement !== bar) $(".spacer", bar)?.before(nav);
@@ -2868,6 +2869,8 @@ import { esc, mb } from "./lib/format.js";
       // the Hebrew or Greek switch (original.js puts it in the bar) when the bar has no room for it
       el("button", { type: "button", role: "menuitem", class: "menu-orig", onclick: (e) => { const ob = e.currentTarget.closest(".reader-bar")?.querySelector(".orig-btn"); shut(); ob?.click(); } }, [el("span", { class: "g", html: "<b></b>" }), el("span", { class: "orig-name", text: "" })]),
       jsp ? el("button", { type: "button", role: "menuitem", class: "menu-cite", onclick: () => { shut(); citePapers(doc); } }, [el("span", { class: "g", html: "<b>“”</b>" }), "Cite this page"]) : null,
+      // a phone has no rail and, over a page, no head: Settings is here, two taps from any page
+      el("button", { type: "button", role: "menuitem", class: "menu-settings", onclick: () => { shut(); openSettings(); } }, [el("span", { class: "g", html: ICON_GEAR }), "Settings"]),
     ].filter(Boolean));
     // "Aa" always, since the sizes are always in it; three dots beside it once Present and the rest have folded in
     const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size and more", title: "Text size and more", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } }, [el("span", { class: "aa", text: "Aa" }), el("span", { class: "dots", html: ICON_MORE })]);
@@ -2916,7 +2919,12 @@ import { esc, mb } from "./lib/format.js";
     for (const c of bar.children) { const r = c.getBoundingClientRect(); if (r.width > 0) right = Math.max(right, r.right); }
     return right > edge + 0.5;
   }
-  function fitReaderBars() { for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar); }
+  function fitReaderBars() {
+    // a phone in Search keeps the box above a page: the reader's bar sticks under it, by its height
+    const head = $("header.bar");
+    document.documentElement.style.setProperty("--head-h", (head && head.offsetParent !== null && document.body.classList.contains("reading") ? head.offsetHeight : 0) + "px");
+    for (const bar of document.querySelectorAll(".reader-bar")) fitReaderBar(bar);
+  }
   window.addEventListener("resize", fitReaderBars);
   // what joins the bar after it is drawn (the match count, the Hebrew button, the switch) refits it
   // (and a page drawn over a selection takes its bar with it: the pane's classes follow)

@@ -211,8 +211,8 @@ body:not([data-tab="search"]) #filters { display: none; }
 /* deeper in a shelf the shelf's own heading says where you are, with Back beside it; the place's
    name stays for a screen reader */
 @media (max-width: 759px), (max-height: 499px) {
-  body.deep #placeTitle, body.deep .bar-acts { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  body.deep .bar { top: 0; }
+  body.deep #placeTitle { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  body.deep .bar { top: 0; grid-template-areas: "search acts" "scopes scopes"; } /* Settings keeps its place, at the end of the box's row */
   body[data-tab="search"] .bar { border-bottom: 1px solid var(--rule); padding-bottom: 6px; }
   .filter-btn span { display: none; }
   .filter-btn { width: 40px; padding: 0; justify-content: center; }
@@ -270,6 +270,11 @@ main {
 /* On a phone, reading takes the whole screen: the reader bar carries the way back and the bottom bar the tools. */
 @media (max-width: 759px), (max-height: 499px) {
   body.reading .bar, body.reading #filters { display: none; } /* the reader's own bar says where you are */
+  /* in Search the box stays, above the page it kept, so the next search is always in reach; the
+     reader's bar holds its place under it (app.js fitReaderBars measures the box's row) */
+  body.reading[data-tab="search"] .bar { display: grid; position: sticky; top: 0; grid-template-areas: "search acts"; padding-bottom: 6px; border-bottom: 0; }
+  body.reading[data-tab="search"] #placeTitle, body.reading[data-tab="search"] .scope-row { display: none; }
+  body.reading[data-tab="search"] .reader-bar { padding-top: 6px; top: var(--head-h, 56px); }
   body.reading .reader-bar { padding-top: calc(6px + var(--safe-top)); }
 }
 @media (min-width: 760px) and (min-height: 500px) {
@@ -436,6 +441,9 @@ main {
 .reader-bar .size-btns { display: inline-flex; gap: 4px; flex: none; }
 .reader-bar .size-pop { display: none; position: relative; flex: none; }
 .reader-bar .size-pop-btn { font: 600 var(--ui-16) var(--sans); color: var(--ink-2); }
+.size-menu .menu-settings { display: none; } /* Settings is in the rail on an iPad; on a phone it rides in the reader's menu and a study's bar */
+@media (max-width: 759px), (max-height: 499px) { .size-menu .menu-settings { display: flex; } }
+@media (min-width: 760px) and (min-height: 500px) { .phone-only { display: none; } }
 .reader-bar .size-pop-btn[aria-expanded="true"] { background: var(--chrome-2); }
 .size-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 200px; padding: 6px; display: grid; gap: 2px; background: var(--paper); border: 1px solid var(--rule); border-radius: var(--r-card); box-shadow: 0 8px 28px rgba(0, 0, 0, .16); font-family: var(--sans); }
 .size-menu[hidden] { display: none; }
