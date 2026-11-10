@@ -384,7 +384,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       if (q.role !== "user" || a.role !== "assistant") continue;
       log.append(el("article", { class: "ask-card kept" }, [
         el("div", { class: "ask-q", text: q.content.replace(/^\(I thought this page through with you: (.*)\.\)$/, "Thinking it through: $1") }),
-        el("div", { class: "ask-a", html: renderMarkdown(a.content, {}) }),
+        el("div", { class: "ask-a", html: renderMarkdown(a.content, { links: true }) }),
         el("div", { class: "ask-kept", text: "Kept from earlier. Its passage cards are not kept; ask again to bring them back." }),
       ]));
     }
@@ -1376,8 +1376,17 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
       const p = passages.find((x) => x.n === Number(n));
       return p ? `<button type="button" class="cite" data-doc="${p.doc_id}" data-pid="${esc(p.pid || "")}" title="${esc(p.label)}">${esc(shortCitation(p))}</button>` : `[${n}]`;
     };
-    return renderMarkdown(src, { passages: own.length ? [...passages, ...own] : passages, cite, web });
+    return renderMarkdown(src, { passages: own.length ? [...passages, ...own] : passages, cite, web, links: true });
   }
+  // A link in an answer (one Claude wrote, a web address, a passage named in plain words) goes
+  // the way every link in the app goes: the library's own copy when it holds the page, and
+  // otherwise the offer to open it on the web. Never straight out.
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest?.(".ask-a a[href]");
+    if (!a) return;
+    e.preventDefault();
+    GL().followLink?.(a.getAttribute("href"));
+  });
 
   document.addEventListener("click", (e) => {
     const c = e.target.closest("button.cite");

@@ -101,3 +101,18 @@ test("answer: a quotation from a web search is marked as such, and is not counte
   // a quotation the library holds is the library's, even when a web stretch repeats it
   assert.deepEqual(webQuotes('"faith is not to have a perfect knowledge of things"', passages(), [{ plain: "faith is not to have a perfect knowledge of things" }]), []);
 });
+
+test("an answer's links: Markdown links, web addresses and plain references become links, all of it escaped", () => {
+  const html = markdown('See [the chapter](https://www.churchofjesuschrist.org/study/scriptures/bofm/alma/32?lang=eng&id=p21#p21), https://example.com/a?x=1&y=2. Also Alma 32:21 and Heb. 11:1; D&C 76:22-24 [1] <img src=x onerror=alert(1)> [bad](javascript:alert(1))', { links: true, cite: (n) => `<button class="cite">Alma 32:21 ${n}</button>` });
+  assert.match(html, /<a class="out" href="https:\/\/www\.churchofjesuschrist\.org\/study\/scriptures\/bofm\/alma\/32\?lang=eng&amp;id=p21#p21">the chapter<\/a>/);
+  assert.match(html, /<a class="out" href="https:\/\/example\.com\/a\?x=1&amp;y=2">https:\/\/example\.com\/a\?x=1&amp;y=2<\/a>\./);
+  assert.match(html, /<a class="ref" href="https:\/\/www\.churchofjesuschrist\.org\/study\/scriptures\/bofm\/alma\/32\?lang=eng&amp;id=p21#p21">Alma 32:21<\/a>/);
+  assert.match(html, /<a class="ref" href="[^"]*\/nt\/heb\/11\?[^"]*">Heb\. 11:1<\/a>/);
+  assert.match(html, /<a class="ref" href="[^"]*\/dc-testament\/dc\/76\.22-24\?lang=eng">D&amp;C 76:22-24<\/a>/);
+  assert.match(html, /<button class="cite">Alma 32:21 1<\/button>/); // a citation is left as it is
+  assert.ok(!/<img/.test(html) && /&lt;img src=x onerror=alert\(1\)&gt;/.test(html));
+  assert.ok(!/javascript:/.test(html.replace(/\(javascript:alert\(1\)\)/, "")) || !/href="javascript/.test(html));
+  assert.ok(!/href="javascript/.test(html));
+  // without the option an answer is as before
+  assert.ok(!/<a /.test(markdown("See Alma 32:21 and https://example.com/a", {})));
+});

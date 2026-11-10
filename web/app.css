@@ -878,6 +878,7 @@ body.ask-up #list > .home > .ask-host { flex: 1; display: flex; flex-direction: 
 .ask-status.error { color: var(--danger); }
 .ask-a { font: var(--reading-size)/1.55 var(--serif); }
 .ask-a p { margin: 0 0 .8em; }
+.ask-a a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 3px; }
 .ask-a h2, .ask-a h3, .ask-a h4 { font-weight: 600; margin: 1.2em 0 .4em; line-height: 1.25; }
 .ask-a h2 { font-size: 1.15em; } .ask-a h3 { font-size: 1.05em; } .ask-a h4 { font-size: 1em; }
 .ask-a ul, .ask-a ol { padding-left: 1.4em; margin: 0 0 .8em; }

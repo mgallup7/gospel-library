@@ -5,6 +5,30 @@
 // source, in the app, and in node.
 
 import { esc } from "./format.js";
+import { findReferences } from "./refs.js";
+
+// --------------------------------------------------------------- links --
+// In an answer, a web address written out and a passage named in plain words ("Alma 32:21",
+// "Heb. 11:1") become links, as they do in a study page; the app follows them to its own copy
+// first. Worked on the finished HTML, between its tags: the words are read unescaped, and every
+// piece goes back escaped. Nothing inside a link, a button (a citation) or code is touched.
+const URL_RE = /\bhttps?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)\]]/g;
+const unesc = (t) => t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, "&");
+export function linkWords(html) {
+  let inside = 0;
+  return html.replace(/<(\/?)([a-z][a-z0-9]*)\b[^>]*>|[^<]+/gi, (m, close, tag) => {
+    if (tag) { if (/^(a|button|code|pre)$/i.test(tag)) inside = Math.max(0, inside + (close ? -1 : 1)); return m; }
+    if (inside) return m;
+    const text = unesc(m), spans = [];
+    for (const u of text.matchAll(URL_RE)) spans.push({ start: u.index, end: u.index + u[0].length, href: u[0], cls: "out" });
+    for (const r of findReferences(text)) if (!spans.some((x) => r.start < x.end && x.start < r.end)) spans.push({ start: r.start, end: r.end, href: r.href, cls: "ref" });
+    if (!spans.length) return m;
+    spans.sort((a, b) => a.start - b.start);
+    let out = "", last = 0;
+    for (const x of spans) { out += esc(text.slice(last, x.start)) + `<a class="${x.cls}" href="${esc(x.href)}">${esc(text.slice(x.start, x.end))}</a>`; last = x.end; }
+    return out + esc(text.slice(last));
+  });
+}
 
 // ---------------------------------------------------------- quotations --
 // Every quotation in an answer is checked, word for word, against the
@@ -42,12 +66,14 @@ export function webQuotes(src, passages, web = []) {
  *   web: the stretches of the answer that came from a web search ([{plain}]); a quotation in
  *        one, and in no passage, is marked "web" instead of underlined;
  *   cite(n): the HTML for a citation [n] (none: [n] stays as written);
+ *   links: an answer whose Markdown links, web addresses and plain references are to be links
+ *          (ask.js follows them through the app, its own copy first);
  *   page: a page of notes rather than an answer: "#" is h1 (in an answer it is h2, since the
  *         answer sits under the app's own heading), and block quotes, rules, `code`, fenced
  *         code blocks, and links to the web, to the site or to a heading of the page are read
  *         too; each heading gets an id from its words, so [x](#its-words) finds it.
  */
-export function markdown(src, { passages = null, cite = null, page = false, web = null } = {}) {
+export function markdown(src, { passages = null, cite = null, page = false, web = null, links = false } = {}) {
   const quoted = (t) => {
     let html = "", last = 0;
     for (const m of t.matchAll(QUOTE_RE)) {
@@ -68,7 +94,10 @@ export function markdown(src, { passages = null, cite = null, page = false, web 
       .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
       .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>");
     if (page) html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => /^(https?:\/\/|\/|#)/i.test(url) ? `<a href="${url.replace(/"/g, "%22")}">${text}</a>` : text);
+    // an answer's own links: to the web or to the site only (the text and the address are already escaped)
+    else if (links) html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => /^(https?:\/\/|\/)/i.test(url) ? `<a class="out" href="${url.replace(/"/g, "%22")}">${text}</a>` : text);
     if (cite) html = html.replace(/\[(\d+)\]/g, (_, n) => cite(n));
+    if (links) html = linkWords(html);
     return html;
   };
   const HEADING = page ? /^(#{1,3})\s+(.*)$/ : /^(#{1,4})\s+(.*)$/;
