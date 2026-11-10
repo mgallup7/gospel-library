@@ -1,13 +1,14 @@
 import fs from "node:fs";
 // stage: the speaker's timer and the "Next:" line in the Present controls, and the plain
 // message an iPhone older than iOS 16.4 gets in setup. Run by tests/js/browser/run.mjs.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "stage/";
   fs.mkdirSync(OUT, { recursive: true });
   for (const [name, vp, opener] of [
     ["ipad", { width: 1180, height: 820 }, "#reader button.icon-btn[aria-label='Present']"],
-    ["iphone", { width: 393, height: 852 }, "#reader .reader-foot .foot-btn[aria-label='Present']"],
+    ["iphone", { width: 393, height: 852 }, "#reader .reader-bar button.icon-btn[aria-label='Present']"],
   ]) {
     const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: 1 });
     const page = await ctx.newPage();
@@ -18,12 +19,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.fill("div.setup input", PASS);
     await page.press("div.setup input", "Enter");
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
-    await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
+    await box(page, "Alma 32:21"); await page.press("#q", "Enter");
     await page.waitForTimeout(800);
     if (!(await page.isVisible("#reader .doc #p21"))) await page.click("#list .jump"); // on a phone the reference waits as a jump at the top of the list
     await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
     await page.waitForTimeout(400);
-    await page.click(opener);
+    await readerTool(page, "Present", opener); // in the reader bar's menu on a phone
     await page.waitForSelector(".stage:not([hidden])");
     await page.mouse.move(vp.width / 2, vp.height / 2); // wake the controls for the screenshot
     const timer = () => page.textContent(".stage .stage-timer");

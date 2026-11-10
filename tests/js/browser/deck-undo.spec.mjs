@@ -2,6 +2,7 @@ import fs from "node:fs";
 // deck-undo: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase.
 // An add from the selection bar can be undone from its toast; the header shows the count; an empty
 // deck shows only how to add a passage, and the themes and actions come with the first one.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "deck-undo/";
@@ -32,7 +33,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await shot("01-empty");
 
     async function openAndSelect() {
-      await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
+      await box(page, "Alma 32:21"); await page.press("#q", "Enter");
       await page.waitForTimeout(800);
       const jump = await page.$("#list .jump");
       if (jump && viewport.width < 760 && await jump.isVisible()) await jump.click(); // Enter opens the page on the phone too
@@ -80,7 +81,10 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#deckBtn");
     await page.waitForSelector(".board .bcard", { timeout: 10000 });
     await page.waitForTimeout(300);
-    check(await visible(".board .themes"), "the theme chooser should show once a passage is on");
+    check(!(await visible(".board .themes")), "the themes should wait under More");
+    await page.click(".board .board-row button:text-is('More')");
+    check(await visible(".board .themes"), "the theme chooser should show under More once a passage is on");
+    await page.click(".board .board-row button:text-is('More')");
     check(await page.evaluate(() => [...document.querySelectorAll(".board .board-row button")].some((b) => /PowerPoint/.test(b.textContent) && b.offsetParent !== null)), "Download PowerPoint should show once a passage is on");
     check(await page.evaluate(() => !!document.querySelector(".bcard .bc-tools button[aria-label='Move up'] svg")), "the card tools should be drawn as icons");
     await shot("04-board");

@@ -1,6 +1,7 @@
 // basics: what QA asked to see pinned down. Typeahead never says "nothing matches" where
 // Return decides; a footnote opens in the sheet and Back closes it; a second tab is told the
 // library is open elsewhere; an empty deck says so and the first passage changes that.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const check = (c, m) => { if (!c) errors.push(m); };
@@ -13,7 +14,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
 
   // typeahead vs return
-  await page.fill("#q", "zzqx nothing");
+  await box(page, "zzqx nothing");
   await page.waitForTimeout(900);
   const typed = await page.textContent("#list");
   check(!/Nothing matches/.test(typed), "typeahead should not say nothing matches");
@@ -69,7 +70,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForSelector(".board", { timeout: 10000 });
   await page.waitForTimeout(300);
   check(!!(await page.$(".board .board-empty")) && /add a passage/i.test(await page.textContent(".board")), "an empty deck says how to add a passage");
-  await page.fill("#q", "Alma 32:21"); await page.press("#q", "Enter");
+  await box(page, "Alma 32:21"); await page.press("#q", "Enter");
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
   await page.click("#reader .doc #p21");
   await page.click("#reader .select-bar .add-deck");

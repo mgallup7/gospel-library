@@ -1,6 +1,7 @@
 import fs from "node:fs";
 // words: the Hebrew tiles' legend, a word's grammar line, its counts, and the word as a deck note.
 // Run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "words/";
@@ -17,14 +18,14 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       await page.press("div.setup input", "Enter");
       await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
       const chapter = async (ref) => {
-        await page.fill("#q", ref); await page.press("#q", "Enter");
+        await box(page, ref); await page.press("#q", "Enter");
         await page.waitForTimeout(700);
         const jump = await page.$("#list .jump"); if (jump && await jump.isVisible()) await jump.click();
         await page.waitForFunction((t) => document.querySelector("#reader .doc h1")?.textContent.includes(t), ref, { timeout: 15000 });
         // the tiles come back by themselves once shown (the choice is remembered); give them a moment first
         if (!(await page.waitForSelector("#reader .orig .ow", { timeout: 3000 }).catch(() => null))) {
           const top = await page.$("#reader .reader-bar .orig-btn");
-          if (top && await top.isVisible()) await top.click(); else await page.click("#reader .reader-foot .foot-btn[aria-label='Hebrew']");
+          if (top && await top.isVisible()) await top.click(); else { await page.click("#reader .reader-bar .size-pop-btn"); await page.click("#reader .reader-bar .size-menu .menu-orig"); } // Hebrew or Greek, in the bar's menu on a phone
         }
         await page.waitForSelector("#reader .orig .ow", { timeout: 15000 });
       };

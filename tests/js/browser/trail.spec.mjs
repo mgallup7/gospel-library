@@ -1,4 +1,5 @@
 // trail: run by tests/js/browser/run.mjs, which hands over the browser, the app's address and the passphrase
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   async function run(name, viewport) {
@@ -17,12 +18,15 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       shelf: { hash: /^#scriptures$/, back: "Library", reader: false },
       book: { hash: /^#scriptures\?b\.book=alma$/, back: "Scriptures", reader: false },
       chapter: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true, list: wide },
-      // on the iPad the page stays beside the new results, so Back changes the list only and names the list it brings back
-      type: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope&scope=scriptures$/, back: wide ? "Alma" : "Alma 32" },
-      enter: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope&scope=scriptures$/, back: wide ? "Alma" : "Alma 32" },
+      // on the iPad the Library's field is beside the page: typing in it is a step into Search, the page
+      // stays, and Back changes the list only and names the list it brings back. On a phone the box
+      // is not on the screen while reading: Search is its tab, a place of its own with no Back.
+      type: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope$/, back: wide ? "Alma" : null },
+      enter: { hash: wide ? /^#search\?q=faith\+hope&scope=scriptures&doc=\d+$/ : /^#search\?q=faith\+hope$/, back: wide ? "Alma" : null },
       back1: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true },
       back2: { hash: /^#scriptures\?b\.book=alma$/, back: "Scriptures", reader: false },
-      ask: { hash: /^#ask$/, back: "Alma" },
+      // Ask and the Deck are tabs: no step is made and no Back leads out; the Library's tab brings it back as it was
+      ask: { hash: /^#ask$/, back: null },
       back3: { hash: /^#scriptures\?b\.book=alma$/, back: "Scriptures" },
       reload: { hash: /^#scriptures\?b\.book=alma$/, back: "Scriptures" },
       back4: { hash: /^#scriptures$/, back: "Library", reader: false },
@@ -31,9 +35,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       crumb: { hash: /^#scriptures$/, back: "Library", reader: false },
       // Ask opened from the Deck takes the Deck's place in the trail: Back from either leads to the chapter
       chapter2: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true },
-      deck: { hash: wide ? /^#deck\?doc=\d+$/ : /^#deck$/, back: "Alma 32" },
-      askFromDeck: { hash: wide ? /^#ask\?doc=\d+$/ : /^#ask$/, back: "Alma 32" },
-      askAgain: { hash: wide ? /^#ask\?doc=\d+$/ : /^#ask$/, back: "Alma 32" },
+      deck: { hash: /^#deck$/, back: null },
+      askFromDeck: { hash: /^#ask$/, back: null },
+      askAgain: { hash: /^#ask$/, back: null },
       backFromTabs: { hash: /^#scriptures\?b\.book=alma&doc=\d+$/, back: "Alma", reader: true },
     };
     const step = async (label, fn) => {
@@ -50,12 +54,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await step("book", () => page.click("#homeBody .chip:has-text('Alma')"));
     const chapter = async () => { await page.click("#homeBody .chapters button:text-is('32')"); await page.waitForSelector("#reader .reader-bar .trail-back", { timeout: 15000 }); };
     await step("chapter", chapter);
-    await step("type", async () => { await page.fill("#q", "faith"); await page.waitForTimeout(500); await page.fill("#q", "faith hope"); await page.waitForFunction(() => location.hash.includes("faith+hope"), null, { timeout: 5000 }).catch(() => {}); });
+    await step("type", async () => { await box(page, "faith"); await page.waitForTimeout(500); await box(page, "faith hope"); await page.waitForFunction(() => location.hash.includes("faith+hope"), null, { timeout: 5000 }).catch(() => {}); });
     await step("enter", () => page.press("#q", "Enter"));
-    await step("back1", () => page.evaluate(() => document.querySelector(".trail-back") ? [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click() : history.back()));
+    await step("back1", () => wide ? page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()) : page.click("#homeBtn"));
     await step("back2", () => page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()));
     await step("ask", () => page.click("#askBtn"));
-    await step("back3", () => page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()));
+    await step("back3", () => page.click("#homeBtn"));
     await step("reload", () => page.reload({ waitUntil: "load" }).then(() => page.waitForTimeout(2500)));
     const top = await step("back4", () => page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()));
     await step("book2", () => page.click("#homeBody .chip:has-text('Alma')"));
@@ -68,7 +72,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const onAsk = await step("askFromDeck", () => page.click("#askBtn"));
     const again = await step("askAgain", () => page.click("#askBtn"));
     if (onAsk.n !== onDeck || again.n !== onDeck) errors.push(`${name}: Deck then Ask then Ask made new entries (depth ${onDeck}, ${onAsk.n}, ${again.n})`);
-    await step("backFromTabs", () => page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()));
+    await step("backFromTabs", () => page.click("#homeBtn"));
     await page.context().close();
   }
   await run("ipad", { width: 1180, height: 820 });

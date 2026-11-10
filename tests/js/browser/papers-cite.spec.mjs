@@ -9,6 +9,7 @@ const barDo = async (page, sel, item) => {
   await page.click("#reader .select-bar .sel-more-btn");
   await page.click(`#reader .select-bar .size-menu >> text=${item}`);
 };
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "papers/";
@@ -47,7 +48,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       check(!/Joseph Smith Papers: Journals/.test(text), "Copy still cites the shelf");
       await page.screenshot({ path: `${OUT}${name}-01-letter-selected.png` });
       // Cite with the same paragraph selected gives the same citation
-      const cite = page.locator(viewport.width > 900 ? "#reader .reader-bar button:has-text('Cite')" : "#reader .reader-foot .foot-btn[aria-label='Cite']");
+      const cite = { click: () => readerTool(page, "Cite", "#reader .reader-bar .cite-btn") }; // a button in the bar on an iPad, in its menu on a phone
       await cite.click();
       await page.waitForTimeout(300);
       const cited = await clip();

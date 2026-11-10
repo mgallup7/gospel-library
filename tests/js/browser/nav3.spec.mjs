@@ -6,6 +6,7 @@
 //   2. Back says "Results" beside an open page; the tabs do not pile up Back steps;
 //   3. the reader bar names the chapter, leads up to the book, and has the chapter arrows; keys;
 //   4. the selection bar fits portrait; a highlight or a note taken off can be undone; Cmd+Z is the app's.
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   async function start(name, viewport, { key = false } = {}) {
@@ -33,13 +34,14 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const title = (page) => page.evaluate(() => document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim() || null);
   const titled = (page, t) => page.waitForFunction((x) => document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim() === x, t, { timeout: 15000 }).catch(() => {});
   const depth = (page) => page.evaluate(() => history.state.n);
-  const open = async (page, ref) => { await page.fill("#q", ref); await page.press("#q", "Enter"); await titled(page, ref); await page.waitForTimeout(400); };
+  const open = async (page, ref) => { await box(page, ref); await page.press("#q", "Enter"); await titled(page, ref); await page.waitForTimeout(400); };
 
   // ---- iPad in landscape, with an API key saved (the owner's everyday state) ----
   {
     const name = "ipad", page = await start(name, { width: 1180, height: 820 }, { key: true });
+    await page.click("#searchTab"); await page.waitForTimeout(400); // Search's own trail from its top, so its depths stay as counted
     // 1a. the concordance shows, and stays once Claude's extra searches have come back
-    await page.fill("#q", "faith hope charity"); await page.press("#q", "Enter");
+    await box(page, "faith hope charity"); await page.press("#q", "Enter");
     await page.waitForSelector("#list .group-title .text-btn.inline", { timeout: 10000 });
     await page.click("#list .group-title .text-btn.inline");
     await page.waitForSelector("#list .conc-row", { timeout: 10000 }).catch(() => {});
@@ -49,29 +51,31 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
     // 2. beside an open page a new search changes the list only, and Back says so
     await open(page, "Alma 33");
-    await page.fill("#q", "faith hope"); await page.press("#q", "Enter"); await page.waitForTimeout(1000);
+    await box(page, "faith hope"); await page.press("#q", "Enter"); await page.waitForTimeout(1000);
     check(name, (await backLabel(page)) === "Results", `beside Alma 33, after a new search, Back says ${await backLabel(page)}`);
     await tapBack(page);
     const b = await page.evaluate(() => ({ q: document.querySelector("#q").value, t: document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim() }));
     check(name, b.q === "Alma 33" && b.t === "Alma 33", `Back from the new results gave ${JSON.stringify(b)}`);
-    // the Deck covers the page, so it is a step; Ask after it takes its place; Back is the page again
+    // the Deck and Ask are places of their own: no step is made, no Back leads out of them, and the
+    // page is where it was when its own tab is tapped again
     const n0 = await depth(page);
+    const pageTab = await page.evaluate(() => "#" + document.querySelector("#tabs .tab.on").id);
     await page.click("#deckBtn"); await page.waitForTimeout(500);
-    const show = await page.evaluate(() => { const x = [...document.querySelectorAll(".deck-summary button")].find((y) => y.textContent === "Show the deck"); return { board: !document.querySelector("#panel").hidden, shown: !!x && x.offsetParent !== null }; });
-    check(name, show.board && !show.shown, `"Show the deck" beside the deck: ${JSON.stringify(show)}`);
+    const show = await page.evaluate(() => ({ board: !document.querySelector("#panel").hidden, list: document.querySelector("#list").offsetParent !== null, summary: !!document.querySelector(".deck-summary") }));
+    check(name, show.board && !show.list && !show.summary, `the Deck tab should be the board alone: ${JSON.stringify(show)}`);
     for (const sel of ["#askBtn", "#askBtn", "#deckBtn"]) { await page.click(sel); await page.waitForTimeout(350); }
-    check(name, (await depth(page)) === n0 + 1, `Deck, Ask, Ask, Deck made ${(await depth(page)) - n0} entries, not 1`);
-    check(name, (await backLabel(page)) === "Alma 33", `Back from the tabs says ${await backLabel(page)}`);
+    check(name, (await depth(page)) === 0 && (await backLabel(page)) === null, `Deck, Ask, Ask, Deck: depth ${await depth(page)}, Back ${await backLabel(page)}`);
     check(name, !(await page.$(".fab-think")) && !(await page.evaluate(() => [...document.querySelectorAll(".think-btn")].some((x) => x.offsetParent !== null))), "the lamp or the old pill shows over the board");
-    await tapBack(page);
-    check(name, (await title(page)) === "Alma 33" && (await depth(page)) === n0, "Back from the tabs did not return to the page");
+    await page.click(pageTab); await page.waitForTimeout(700);
+    check(name, (await title(page)) === "Alma 33" && (await depth(page)) === n0, `the page's own tab did not return to the page (${await title(page)}, depth ${await depth(page)} of ${n0})`);
     check(name, await page.evaluate(() => { const x = document.querySelector("#reader .reader-bar .think-btn"); return !!x && x.offsetParent !== null && /Think it through/.test(x.getAttribute("aria-label")); }), "the lamp is missing from the reader bar");
 
     // 3. the bar: the chapter by name, previous and next in place, the keys, up to the book
-    const scopes = () => page.evaluate(() => getComputedStyle(document.querySelector(".scopes")).display);
+    // the shelves to search belong to Search: there beside an open page, nowhere in the Library
+    const scopes = () => page.evaluate(() => getComputedStyle(document.querySelector(".scope-row")).display);
     const crumb = await page.evaluate(() => { const x = document.querySelector("#reader .reader-bar .crumb"), cs = getComputedStyle(x); return { text: x.textContent, tag: x.tagName, size: cs.fontSize, weight: cs.fontWeight }; });
     check(name, crumb.text === "Alma 33" && crumb.tag === "BUTTON" && crumb.size === "15px" && Number(crumb.weight) >= 600, `the crumb is ${JSON.stringify(crumb)}`);
-    check(name, (await scopes()) === "none", "the scope strip stays up beside an open page");
+    check(name, ((await scopes()) === "none") === (pageTab !== "#searchTab"), `the scope row should show in Search alone (${pageTab}: ${await scopes()})`);
     const back0 = await backLabel(page);
     await page.click("#reader .reader-bar .chap[data-dir=next]"); await titled(page, "Alma 34"); await page.waitForTimeout(200);
     let at = await page.evaluate(() => ({ t: document.querySelector("#reader .doc h1")?.textContent.trim(), n: history.state.n, crumb: document.querySelector("#reader .reader-bar .crumb").textContent, focus: document.activeElement?.dataset?.dir || null }));
@@ -174,7 +178,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#reader .reader-bar .chap[data-dir=prev]"); await titled(page, "Genesis 1"); await page.waitForTimeout(300);
     const bar = await page.evaluate(() => { const x = document.querySelector("#reader .reader-bar"); return { over: x.scrollWidth - x.clientWidth, crumb: x.querySelector(".crumb").textContent, n: history.state.n, y: Math.round(scrollY) }; });
     check(name, bar.crumb === "Genesis 1" && bar.n === n0 && bar.over <= 1 && bar.y === 0, `after the previous arrow: ${JSON.stringify(bar)}`);
-    check(name, await page.evaluate(() => { const x = document.querySelector("#reader .reader-foot .foot-btn[aria-label^='Think it through']"); return !!x && x.offsetParent !== null; }) && !(await page.$(".fab-think")), "the phone's bottom bar has no Think button, or the pill is back");
+    check(name, await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar"), lamp = b.querySelector(".think-btn"); return (!!lamp && lamp.offsetParent !== null) || (b.classList.contains("tightest") && !!b.querySelector(".size-menu .menu-think")); }) && !(await page.$(".fab-think")), "the phone's reader bar has no Think (as a lamp or in its menu), or the pill is back");
     await page.screenshot({ path: `${SHOTS}nav3-iphone-bar.png` });
     await page.click("#reader .reader-bar .crumb"); await page.waitForTimeout(700);
     const up = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), n: history.state.n, grid: !!document.querySelector("#homeBody .chapters"), reader: !document.querySelector("#reader").hidden }));
@@ -182,7 +186,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
     // 1b. a Hebrew word, All verses with this word, then one Back is the chapter again
     await page.click("#homeBody .chapters button:text-is('1')"); await titled(page, "Genesis 1");
-    if (!(await page.waitForSelector("#reader .orig .ow", { timeout: 3000 }).catch(() => null))) await page.click("#reader .reader-foot .foot-btn[aria-label='Hebrew']");
+    if (!(await page.waitForSelector("#reader .orig .ow", { timeout: 3000 }).catch(() => null))) await readerTool(page, "Hebrew", "#reader .reader-bar .orig-btn");
     await page.waitForSelector("#reader .orig .ow", { timeout: 15000 });
     const t = page.locator("#reader .orig .ow").nth(2);
     await t.scrollIntoViewIfNeeded(); await t.click();
@@ -217,17 +221,16 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const after = await page.evaluate(() => ({ hash: location.hash, reader: !document.querySelector("#reader").hidden }));
     check(name, after.hash !== before && !after.reader, `after a reload under a sheet the first Back did nothing (${before} then ${after.hash})`);
 
-    // 1c and 2. the tabs take one another's place, and Back from them lands where the chapter was scrolled
+    // 1c and 2. the tabs are places, not steps, and the chapter's own tab lands where it was scrolled
     await open(page, "Alma 32");
-    n0 = await depth(page);
-    for (const [tab, taps] of [["Deck", ["#deckBtn"]], ["Ask", ["#askBtn", "#askBtn"]], ["Home", ["#homeBtn", "#homeBtn"]], ["the tabs", ["#deckBtn", "#askBtn", "#homeBtn", "#deckBtn"]]]) {
+    const readTab = await page.evaluate(() => "#" + document.querySelector("#tabs .tab.on").id);
+    for (const [tab, taps] of [["Deck", ["#deckBtn"]], ["Ask", ["#askBtn", "#askBtn"]], ["the tabs", ["#deckBtn", "#askBtn", "#deckBtn"]]]) {
       await page.evaluate(() => window.scrollTo(0, 700)); await page.waitForTimeout(150);
       for (const sel of taps) { await page.click(sel); await page.waitForTimeout(350); }
-      check(name, (await depth(page)) === n0 + 1, `${tab}: ${taps.length} taps made ${(await depth(page)) - n0} entries, not 1`);
-      if (tab === "the tabs") check(name, (await backLabel(page)) === "Alma 32", `Back from the tabs says ${await backLabel(page)}`);
-      await page.evaluate(() => history.back()); await page.waitForTimeout(800); // the home screen has no Back of its own: the swipe
+      check(name, (await depth(page)) === 0 && (await backLabel(page)) === null, `${tab}: ${taps.length} taps left depth ${await depth(page)} and Back ${await backLabel(page)}`);
+      await page.click(readTab); await page.waitForTimeout(800);
       const y = await page.evaluate(() => Math.round(window.scrollY));
-      check(name, Math.abs(y - 700) < 5 && (await title(page)) === "Alma 32", `Back from ${tab} landed at ${y}, not 700 (${await title(page)})`);
+      check(name, Math.abs(y - 700) < 5 && (await title(page)) === "Alma 32", `back from ${tab} by the chapter's tab landed at ${y}, not 700 (${await title(page)})`);
     }
     await page.context().close();
   }

@@ -9,6 +9,7 @@ const barDo = async (page, sel, item) => {
   await page.click("#reader .select-bar .sel-more-btn");
   await page.click(`#reader .select-bar .size-menu >> text=${item}`);
 };
+import { box, readerTool } from "./helpers.mjs";
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "reader/";
@@ -25,7 +26,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.press("div.setup input", "Enter");
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
     await page.waitForTimeout(400);
-    await page.fill("#q", "faith knowledge"); await page.press("#q", "Enter");
+    await box(page, "faith knowledge"); await page.press("#q", "Enter");
     await page.waitForSelector("#list button.hit[data-pid]", { timeout: 15000 });
     const row = await page.$("#list button.hit[data-pid]");
     const rowDoc = await row.getAttribute("data-doc"), rowPid = await row.getAttribute("data-pid");
@@ -49,7 +50,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     if (viewport.width < 760) {
       const shown = await page.evaluate(() => [...document.querySelectorAll("#reader .select-bar .add-deck, #reader .reader-foot .foot-btn")].filter((b) => b.offsetParent && /deck/i.test(b.getAttribute("aria-label") || b.textContent)).length);
       check(shown === 1, `one Add to deck control with a selection on the phone (${shown})`);
-      check(await page.isVisible("#reader .reader-foot .foot-btn[aria-label='Present']"), "Present stays in the bottom bar");
+      check(await page.isVisible("#tabs .tab.on") && await page.evaluate(() => !!document.querySelector("#reader .reader-bar .size-menu .menu-extra")), "the tab bar stays under the selection bar, and Present is in the reader bar's menu");
     }
     await shot("01-selected");
     // after a color the focus stays on the dot; after Add to deck it returns to the verse
