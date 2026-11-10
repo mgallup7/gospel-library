@@ -425,7 +425,7 @@ import { esc } from "./lib/format.js";
       const text = verses ? verses.map((v) => v.text).join(" ") : r.units.map((u) => u.text).join("\n\n");
       if (has(doc.id, r.units[0].pid)) continue;
       const id = uid();
-      deck.items.push({
+      placePassage({
         id, type: "passage", kind: r.kind === "verse" ? "verse" : "para",
         text, verses, doc_id: doc.id, pid: r.units[0].pid, hl: [],
         ...citationFor(doc, verses),
@@ -472,12 +472,84 @@ import { esc } from "./lib/format.js";
     }).catch(() => {});
   }
 
-  /** A section heading at the end of the deck (what "Think it through" builds under). */
+  // ---- where a new card goes
+  // A passage goes to the end of the deck, as it always has. A section heading or a question
+  // from Think it through goes where the owner is working, after the selected card, and what
+  // that flow adds next follows it: the passages for the section under its heading and above
+  // the questions written about them, the next question after the last. That lasts until he
+  // touches another card on the board, or a quarter of an hour. Whenever a passage lands
+  // somewhere he might not expect (anywhere but the end; or at the end when that puts it
+  // under a section he is not working in) the toast says where, in place of the caller's
+  // plain "On the deck", with an Undo of its own.
+  let cursor = null;         // { id, at }: the card that flow put on last
+  const written = new Set(); // the question cards Ask wrote this session
+  const CURSOR_MS = 15 * 60 * 1000;
+  let placed = null;         // what this turn's passages will say, in one toast
+  const cardLabel = (it) => (it.type === "section" && (it.title || "").trim() ? `the section “${it.title.trim()}”` : cardName(it));
+  const follow = (id) => { cursor = { id, at: Date.now() }; };
+  const cursorAt = () => (cursor && Date.now() - cursor.at < CURSOR_MS ? deck.items.findIndex((i) => i.id === cursor.id) : -1);
+  function sayWhere(id, where) {
+    if (!placed) {
+      placed = { ids: [], where };
+      setTimeout(() => {
+        const { ids, where: w } = placed;
+        placed = null;
+        const on = ids.filter((x) => byId(x));
+        if (!on.length || !GL()) return;
+        GL().toast(on.length === 1 ? `Added ${w}.` : `${on.length} passages added ${w}.`, { action: "Undo", onAction: () => { removeIds(on); GL().toast(on.length === 1 ? "Taken off the deck." : `${on.length} passages taken off the deck.`); } });
+      }, 0);
+    }
+    placed.ids.push(id);
+  }
+  // A card that went in somewhere other than the end is brought into view, when the board is showing.
+  function reveal(id) {
+    if (!ui || !board.isConnected) return;
+    raf(() => { if (board.offsetParent !== null) ui.cards.querySelector(`.bcard[data-id="${id}"]`)?.scrollIntoView?.({ block: "nearest" }); });
+  }
+  function placePassage(item) {
+    let at = cursorAt();
+    if (at < 0) {
+      cursor = null;
+      // the end; under a section's heading it reads as part of that section, so unless he is working there, say so
+      let sec = -1;
+      deck.items.forEach((i, k) => { if (i.type === "section") sec = k; });
+      const working = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+      deck.items.push(item);
+      if (sec >= 0 && working < sec) sayWhere(item.id, `at the end, under ${cardLabel(deck.items[sec])}`);
+      return;
+    }
+    while (at >= 0 && written.has(deck.items[at].id)) at--; // above the questions written about it
+    const prev = deck.items[at];
+    deck.items.splice(at + 1, 0, item);
+    follow(item.id);
+    sayWhere(item.id, !prev ? "at the top" : prev.type === "section" ? `under ${cardLabel(prev)}` : `after ${cardLabel(prev)}`);
+    if (at + 2 < deck.items.length) reveal(item.id);
+  }
+  /** A section heading, after the selected card (what "Think it through" builds under), or at the end when none is. */
   function addSection(title) {
     const item = { id: uid(), type: "section", title: String(title || "").trim() };
-    deck.items.push(item);
+    const at = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+    if (at >= 0) deck.items.splice(at + 1, 0, item); else deck.items.push(item);
     selectedId = item.id; // a question added next (addCard goes after the selected card) lands under it
+    follow(item.id);      // and so do the passages
     save();
+    if (deck.items[deck.items.length - 1] !== item) reveal(item.id);
+    return item;
+  }
+  /** A question from Ask, its words written: after what that flow added last, and after the questions already there. */
+  function addQuestion(text) {
+    const item = { id: uid(), type: "question", text: String(text || "").trim(), notes: "" };
+    let at = cursorAt();
+    if (at < 0) at = selectedId ? deck.items.findIndex((i) => i.id === selectedId) : -1;
+    if (at < 0) at = deck.items.length - 1;
+    while (deck.items[at + 1] && written.has(deck.items[at + 1].id)) at++;
+    deck.items.splice(at + 1, 0, item);
+    written.add(item.id);
+    selectedId = item.id;
+    follow(item.id);
+    lastAddedIds = [item.id];
+    save();
+    if (deck.items[deck.items.length - 1] !== item) reveal(item.id);
     return item;
   }
 
@@ -506,7 +578,7 @@ import { esc } from "./lib/format.js";
         item.label = (m[2] || "").replace(/^(Apr|Oct) (\d{4})$/, (_, mo, y) => `${mo === "Apr" ? "April" : "October"} ${y} General Conference`);
       }
     }
-    deck.items.push(item);
+    placePassage(item);
     lastAddedIds = [item.id];
     save();
     if (show) showBoard();
@@ -766,7 +838,7 @@ import { esc } from "./lib/format.js";
     for (const ev of ["pointerdown", "pointerenter", "focus"]) download.addEventListener(ev, () => prepareSoon());
     const moreRow = el("div", { class: "deck-actions secondary", hidden: true }, [
       think, md,
-      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { deck.items.push({ id: uid(), type: "section", title: "" }); save(); did("Section added, at the end."); } }),
+      el("button", { type: "button", class: "text-btn", text: "Add section", onclick: () => { const it = addSection(""), at = deck.items.indexOf(it); did(at === deck.items.length - 1 ? "Section added, at the end." : `Section added after ${cardLabel(deck.items[at - 1])}.`); } }),
       el("button", { type: "button", class: "text-btn", text: "Save to my decks", onclick: () => saveNamed() }),
       el("button", { type: "button", class: "text-btn", text: "My decks", onclick: () => showSaved() }),
       el("button", { type: "button", class: "text-btn danger", text: "Start a new deck", onclick: () => replaceDeck(blank(), { what: "Start a new deck", done: "A new, empty deck." }) }),
@@ -888,6 +960,7 @@ import { esc } from "./lib/format.js";
 
   // The selected card wears a quiet outline, so it is plain where the next question will land.
   function select(id) {
+    if (cursor && cursor.id !== id) cursor = null; // he has moved on: what is added next goes to the end again
     if (selectedId === id || !ui) return;
     selectedId = id;
     for (const c of ui.cards.querySelectorAll(".bcard")) c.classList.toggle("selected", c.dataset.id === id);
@@ -2848,8 +2921,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
-    // a question card with its words written (Ask's Think it through): addCard, then the text
-    addQuestion: (text) => { const it = addCard("question", { focus: false }); it.text = String(text || "").trim(); lastAddedIds = [it.id]; save(); return it; },
+    // a question card with its words written (Ask's Think it through)
+    addQuestion,
     // a note card with its words already written (a Hebrew or Greek word from its sheet); Undo takes it off by its id
     addNote: (text, notes = "") => { const it = addCard("note", { focus: false }); it.text = String(text || ""); it.notes = String(notes || ""); lastAddedIds = [it.id]; save(); return it; },
   };
