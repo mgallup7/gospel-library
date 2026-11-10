@@ -163,12 +163,15 @@ import { esc, mb } from "./lib/format.js";
   // The label is the place Back returns to, so it names what that entry shows: Ask or the Deck when
   // one of them was up (on a wide screen the page beside it is not what Back brings back first), the
   // page when one covers the list, and inside a shelf the book or year you were at ("Alma", "2024").
-  function labelNow() {
+  // labelNow(true) names the list alone, whatever page is open beside it: on a wide screen a move
+  // that leaves the page where it is (a new search) is undone by Back in the list only, so Back
+  // says "Results" or "Alma" then, not the page still in view (push chooses between the two).
+  function labelNow(list = false) {
     const tab = state.browse?.tab;
-    const paged = !!(state.docId || state.studyId);
+    const paged = !list && !!(state.docId || state.studyId);
     if ((tab === "ask" || tab === "deck") && !state.q.trim() && (wide() || !paged)) return tab === "ask" ? "Ask" : "Deck";
-    if (state.docId) return currentDoc && currentDoc.id === state.docId ? shortTitleOf(currentDoc) : "Back";
-    if (state.studyId) return currentStudy && currentStudy.id === state.studyId ? shortTitleOf(currentStudy) : "Back";
+    if (paged && state.docId) return currentDoc && currentDoc.id === state.docId ? shortTitleOf(currentDoc) : "Back";
+    if (paged && state.studyId) return currentStudy && currentStudy.id === state.studyId ? shortTitleOf(currentStudy) : "Back";
     if (state.q.trim().length >= 2) return state.view === "all" ? "Every match" : "Results";
     if (tab === "ask") return "Ask";
     if (tab === "deck") return "Deck";
@@ -184,10 +187,10 @@ import { esc, mb } from "./lib/format.js";
   function setEntry(patch) {
     const cur = history.state || {};
     // a marker entry (a sheet or the stage over a place) stays one: push() reads the flag to know it is leaving from an overlay
-    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, ...patch }, "", location.href);
+    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, ...patch }, "", location.href);
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
-  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label }); }
+  function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); }
   // Where the view was scrolled, kept on the entry being left. A path that redraws before it pushes
   // calls this first; push() then keeps that reading instead of measuring the new view.
   let leavingScroll = null;
@@ -198,12 +201,16 @@ import { esc, mb } from "./lib/format.js";
     const url = urlFor();
     if (location.hash === url || (url === "#" && !location.hash)) { settleOverlay(); return; }
     // a move from inside a sheet is never a refinement of the entry under it: the marker becomes the new place
-    if (replace && !history.state?.overlay) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
+    if (replace && !history.state?.overlay) { leavingScroll = null; history.replaceState({ ...(history.state || {}), n: here(), label: labelNow(), list: labelNow(true), place: history.state?.place || null }, "", url); refreshTrailButtons(); return; }
     const fromOverlay = !!history.state?.overlay;
     if (!fromOverlay && (!leavingScroll || Date.now() - leavingScroll.at > 2000)) rememberScroll(); // a reading older than the move it was taken for is stale
     leavingScroll = null;
-    const prev = history.state?.label || "Library";
-    const prevUrl = location.hash || "#"; // so a step up can tell when Back would get there (a marker has its place's address)
+    const prevUrl = location.hash || "#";
+    // the same page before and after, beside a list that changes: Back names the list it brings back
+    // (the Deck's board covers the page, so Back from there names the page)
+    const pageIn = (u) => (/[?&](doc|s)=[^&]+/.exec(u) || [null])[0]?.slice(1) || null;
+    const listOnly = wide() && !!pageIn(prevUrl) && pageIn(prevUrl) === pageIn(url) && !(state.browse?.tab === "deck" && !state.q.trim());
+    const prev = (listOnly && history.state?.list) || history.state?.label || "Library"; // so a step up can tell when Back would get there (a marker has its place's address)
     // leaving from inside a sheet or the stage: its marker entry becomes the new place, so Back
     // from there returns to the page under it, not to a sheet that is no longer open
     if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, prevUrl, scroll: null, place: null }, "", url); }
@@ -238,11 +245,24 @@ import { esc, mb } from "./lib/format.js";
     if (here() > 0) history.back();
     else goHome();
   }
+  // Home, Ask and the Deck are destinations, not steps: going from one to another takes its place
+  // in the trail, so Back from any of them still leads to where you were before the first. A page
+  // the move closes or covers is a step all the same: Back must bring it back.
+  const atTab = () => !state.q.trim() && (!state.browse?.tab || state.browse.tab === "ask" || state.browse.tab === "deck");
+  const pageNow = () => (state.docId ? `d${state.docId}` : state.studyId ? `s${state.studyId}` : null);
+  const tabLeft = () => ({ top: atTab(), page: pageNow(), shown: !readerPane.hidden });
+  function tabStep(from) {
+    const covers = wide() && state.browse?.tab === "deck" && !!from.page && from.shown;
+    if (from.top && from.page === pageNow() && !covers && !history.state?.overlay) { push(true); setEntry({ scroll: null }); }
+    else push();
+  }
   function goHome() {
+    if (atTab() && !state.browse?.tab && !pageNow() && $("#homeBody.overview")) return; // already there
+    const from = tabLeft();
     rememberScroll();
     leaveSearch();
     state.q = ""; state.docId = null; state.pid = null; state.studyId = null; state.browse = null; state.scope = "all";
-    syncControls(); renderHome(); showList(); push();
+    syncControls(); renderHome(); showList(); tabStep(from);
   }
   // A step within the shelves (a book, a year, a volume): a place of its own, so Back retraces it
   function go(browse) { rememberScroll(); state.browse = browse; renderHome(); push(); }
@@ -636,7 +656,7 @@ import { esc, mb } from "./lib/format.js";
       leaveSearch(); state.q = ""; state.view = null;
       // the search was a step from that place: step back to it rather than leave it in history twice
       if (!silent && here() > 0 && history.state?.place === "search" && history.state?.prevUrl === urlFor()) { typedLeft = input.value; history.back(); return; }
-      renderHome(); if (!silent) { push(true); setEntry({ place: placeNow(), label: labelNow() }); }
+      renderHome(); if (!silent) { push(true); setEntry({ place: placeNow(), label: labelNow(), list: labelNow(true) }); }
       return;
     }
     // a reference half typed ("Alma 32:21-", "Alma 32:21,", "Alma 32:") keeps its card: the separator
@@ -674,7 +694,10 @@ import { esc, mb } from "./lib/format.js";
       if (state.view === "all" && !typeahead) await renderConcordance(data, { restore }); else renderResults(data);
       // an empty board has nothing to offer fresh results: the right pane goes back to the page (or rests empty)
       if (wide() && paneView === "board" && !window.Deck?.count?.()) panel.page();
-      if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow() }); } // a new search from elsewhere is a move; refining one is not
+      if (!silent) { push(history.state?.place === placeNow()); setEntry({ place: placeNow(), label: labelNow(), list: labelNow(true) }); // a new search from elsewhere is a move; refining one is not
+        // results drawn at the start of the trail had no Back to show; now that the search is a step, they do
+        const lt = !$(".list-trail", listPane) && listTrail(); if (lt) listPane.prepend(lt);
+      }
       // the concordance is every match already: Claude's extra searches belong to the ranked list, and would redraw it over this one
       if (!typeahead && !more && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
@@ -1046,7 +1069,7 @@ import { esc, mb } from "./lib/format.js";
       const sec = el("section", { class: "home-sec sec-continue" }, [el("h2", { text: "Continue" })]);
       if (last) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openDoc(last.id, last.pid || null) }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: last.title }), el("span", { class: "hc-s", text: [last.where, last.verse ? `at verse ${last.verse}` : null].filter(Boolean).join(" · ") })]), el("span", { class: "hc-go", text: "›" })]));
-      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => go({ tab: "deck" }) }, [
+      if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openTab("deck") }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
       body.append(sec);
     }
@@ -2495,12 +2518,15 @@ import { esc, mb } from "./lib/format.js";
   $("#filterBtn").addEventListener("click", () => { filters.hidden = !filters.hidden; mainEl.classList.toggle("filters-open", !filters.hidden); });
   function openTab(tab) {
     if (!state.ready) return;
+    // a tap on the tab you are in does nothing (on a wide screen it brings the board back in front of the page)
+    if (state.browse?.tab === tab && !state.q.trim() && (wide() || !pageNow())) { if (tab === "deck" && wide() && panelPane.hidden) panel.restore(); return; }
+    const from = tabLeft();
     rememberScroll();
     leaveSearch();
     state.q = "";
     if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
     state.browse = { tab };
-    syncControls(); renderHome(); showList(); push();
+    syncControls(); renderHome(); showList(); tabStep(from);
   }
   $("#askBtn").addEventListener("click", () => openTab("ask"));
   $("#deckBtn").addEventListener("click", () => openTab("deck"));

@@ -790,6 +790,7 @@ main:has(#reader:not([hidden]) .select-bar) ~ .toast { bottom: calc(84px + var(-
 .deck-summary h2 { font: 600 20px var(--serif); margin: 0 0 6px; }
 .deck-summary p { margin: 0 0 8px; font-size: 14px; color: var(--ink-2); }
 .deck-summary .deck-actions { margin: 6px 0 4px; }
+body:has(#panel:not([hidden])) .deck-summary .deck-actions > .primary { display: none; } /* "Show the deck" beside the deck already showing */
 .chip.small { padding: 4px 10px; font-size: 13px; }
 .stage-text .vn { font-family: var(--sans); font-size: .5em; vertical-align: super; opacity: .6; margin-right: .1em; }
 .stage-text mark { background: transparent; color: #c99a2e; font-weight: 600; }

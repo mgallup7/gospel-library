@@ -101,5 +101,42 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     }
     await page.context().close();
   }
+
+  // 2. Back names what it brings back, and the tabs do not pile up
+  {
+    const name = "ipad labels", page = await start(name, { width: 1180, height: 820 });
+    await open(page, "Alma 33");
+    await page.fill("#q", "faith hope"); await page.press("#q", "Enter"); await page.waitForTimeout(1200);
+    check(name, (await backLabel(page)) === "Results", `beside Alma 33, after a new search, Back says ${await backLabel(page)}`);
+    await tapBack(page); await page.waitForTimeout(900);
+    const b = await page.evaluate(() => ({ q: document.querySelector("#q").value, t: document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim() }));
+    check(name, b.q === "Alma 33" && b.t === "Alma 33", `Back from the new results gave ${JSON.stringify(b)}`);
+    // the Deck covers the page, so it is a step; Ask after it takes its place; Back is the page again
+    const n0 = await page.evaluate(() => history.state.n);
+    await page.click("#deckBtn"); await page.waitForTimeout(600);
+    const show = await page.evaluate(() => { const b = [...document.querySelectorAll(".deck-summary button")].find((x) => x.textContent === "Show the deck"); return { board: !document.querySelector("#panel").hidden, shown: !!b && b.offsetParent !== null }; });
+    check(name, show.board && !show.shown, `"Show the deck" beside the deck: ${JSON.stringify(show)}`);
+    await page.click("#askBtn"); await page.waitForTimeout(500);
+    await page.click("#askBtn"); await page.waitForTimeout(300);
+    await page.click("#deckBtn"); await page.waitForTimeout(500);
+    const n1 = await page.evaluate(() => history.state.n);
+    check(name, n1 === n0 + 1, `Deck, Ask, Ask, Deck made ${n1 - n0} entries, not 1`);
+    check(name, (await backLabel(page)) === "Alma 33", `Back from the tabs says ${await backLabel(page)}`);
+    await tapBack(page); await page.waitForTimeout(900);
+    check(name, (await title(page)) === "Alma 33" && (await page.evaluate(() => history.state.n)) === n0, "Back from the tabs did not return to the page");
+    await page.context().close();
+  }
+  {
+    const name = "iphone tabs", page = await start(name, { width: 393, height: 852 });
+    await open(page, "Alma 32");
+    const n0 = await page.evaluate(() => history.state.n);
+    for (const sel of ["#deckBtn", "#askBtn", "#askBtn", "#homeBtn", "#homeBtn", "#deckBtn"]) { await page.click(sel); await page.waitForTimeout(450); }
+    const n1 = await page.evaluate(() => history.state.n);
+    check(name, n1 === n0 + 1, `six taps on the tabs made ${n1 - n0} entries, not 1`);
+    check(name, (await backLabel(page)) === "Alma 32", `Back from the tabs says ${await backLabel(page)}`);
+    await tapBack(page); await page.waitForTimeout(900);
+    check(name, (await title(page)) === "Alma 32", `Back from the tabs shows ${await title(page)}`);
+    await page.context().close();
+  }
   return errors;
 }
