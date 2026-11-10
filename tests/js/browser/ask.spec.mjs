@@ -7,7 +7,8 @@
 // page open, what is selected, the deck); his own notes are reachable with a tool; the thread
 // survives a reload, and New thread can be undone. Stop ends an answer and keeps its passages;
 // a busy server is tried twice more and the question goes back in the box; an answer cut off
-// by max_tokens says so and continues.
+// by max_tokens says so and continues. Ask has the full width with one centred column, the box
+// docked at the foot, the hint only while the thread is empty, and the question printed once.
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const check = (c, m) => { if (!c) errors.push(m); };
@@ -79,6 +80,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   // the tool loop runs out, and the answer still comes
   await page.click("#askBtn");
   await page.waitForSelector(".ask-input", { timeout: 10000 });
+  // the layout: the whole width, a 680px column in the middle, the box at the foot, a hint while empty
+  const layout = () => page.evaluate(() => { const r = (s) => document.querySelector(s).getBoundingClientRect(); const c = r(".ask-page"), d = r(".ask-dock"); return { list: Math.round(r("#list").width), w: Math.round(c.width), left: Math.round(c.left), foot: Math.round(d.bottom), hint: getComputedStyle(document.querySelector(".ask-hint")).display !== "none", gear: !!document.querySelector(".ask-gear svg"), scroll: document.documentElement.scrollWidth }; });
+  const empty = await layout();
+  check(empty.list === 1180 && empty.w === 680 && empty.left === 250, `Ask has the full width and a centred 680px column: ${JSON.stringify(empty)}`);
+  check(empty.foot === 820, `the box is docked at the foot (bottom at ${empty.foot})`);
+  check(empty.hint && empty.gear, "an empty thread shows the hint, and the gear is an icon");
+  await page.screenshot({ path: SHOTS + "ask-empty.png" });
   await page.fill(".ask-input", "What is faith?");
   await page.click(".ask-go");
   const answered = await page.waitForFunction(() => /hope in things not seen/.test(document.querySelector(".ask-card .ask-a")?.textContent || ""), null, { timeout: 60000 }).catch(() => null);
@@ -98,6 +106,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check(marked.length === 1 && marked[0] === lastResults.at(-1), `one cache marker in the messages, on the newest tool result (got ${marked.length})`);
   check((final.system || []).filter((b) => b.cache_control).length === 1, "and one on the system prompt");
   await page.screenshot({ path: SHOTS + "ask-capped.png" });
+  const after = await layout();
+  check(!after.hint && after.foot === 820 && after.scroll === 1180, `with an answer the hint is gone and the box stays at the foot: ${JSON.stringify(after)}`);
+  check((await page.textContent(".ask-card")).split("What is faith?").length === 2, "the question is printed once");
 
   // every request carries his standing instructions (the neutral starter until he edits them),
   // an inventory of this library, which has no talks, and today's date at the top of the turn

@@ -666,9 +666,32 @@ body.presenting { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .stage-controls { transition: none; } }
 
 /* ---- ask ------------------------------------------------------------ */
+/* Ask takes the whole width when nothing is open beside it. Its thread is one centred column
+   that reads downward, and the modes, the box and its button sit docked at the foot. */
+@media (min-width: 760px) {
+  main:has(#list .ask-page):has(#reader[hidden]):not(:has(#panel:not([hidden]))) { grid-template-columns: 1fr; }
+  main:has(#list .ask-page):has(#reader[hidden]):not(:has(#panel:not([hidden]))) #list { border-right: 0; }
+  #list:has(.ask-page) > .home { min-height: 100%; }
+}
+@media (max-width: 759px) { #list:has(.ask-page) > .home { min-height: calc(100dvh - var(--bar-real, calc(var(--bar-h) + var(--safe-top)))); } }
+#list:has(.ask-page) { padding-bottom: 0; }
+#list:has(.ask-page) > .home { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: 0; }
+#list:has(.ask-page) > .home > div:has(> .ask-page) { flex: 1; display: flex; flex-direction: column; }
 .ask { padding: 10px 16px 30px; }
-.ask-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.ask .seg { display: flex; gap: 2px; background: var(--chrome-2); border-radius: 9px; padding: 2px; }
+.ask-page { flex: 1; display: flex; flex-direction: column; width: 100%; max-width: 680px; margin: 0 auto; box-sizing: border-box; }
+.ask-page:has(.ask-dock) { padding-bottom: 0; }
+.ask-page .ask-log { flex: 1; }
+.ask-page .ask-log:empty { display: none; }
+.ask-page:has(.ask-log > *) .ask-hint { display: none; }
+.ask-dock { position: sticky; bottom: 0; z-index: 4; margin-top: 10px; padding: 8px 0 calc(12px + var(--safe-bottom)); background: var(--paper); }
+.ask-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.ask-top-tools { display: flex; align-items: center; gap: 2px; flex: none; }
+.ask-gear svg { width: 20px; height: 20px; }
+.ask-box { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--rule); border-radius: 14px; background: var(--paper); box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
+.ask-box:focus-within { border-color: var(--accent); }
+.ask-box .ask-input { flex: 1; min-width: 0; padding: 9px 0; border: 0; border-radius: 0; resize: none; max-height: 220px; background: none; }
+.ask-box .ask-input:focus-visible { outline: none; } /* the box around it shows the focus */
+.ask .seg { display: flex; gap: 2px; background: var(--chrome-2); border-radius: 9px; padding: 2px; min-width: 0; overflow-x: auto; }
 .ask .seg button { padding: 0 14px; height: 32px; border-radius: 7px; font-size: 14px; color: var(--ink-2); }
 .ask .seg button.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
 .ask-input { width: 100%; padding: 10px 12px; font: 17px/1.4 var(--serif); color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; resize: vertical; -webkit-appearance: none; }
@@ -676,8 +699,11 @@ body.presenting { overflow: hidden; }
 .ask .primary { height: 44px; padding: 0 18px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .ask .primary:disabled { opacity: .5; }
 .ask .primary.stop { background: var(--chrome-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--rule); }
-.ask-hint { font-size: 13px; color: var(--ink-3); line-height: 1.45; margin: 4px 0 14px; }
-.ask-card { padding: 14px 0 6px; border-top: 1px solid var(--rule); }
+.ask-hint { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px 8px; color: var(--ink-3); }
+.ask-hint h2 { font: 600 22px var(--serif); color: var(--ink); margin: 0 0 8px; }
+.ask-hint p { max-width: 520px; margin: 0; font-size: 14px; line-height: 1.5; }
+.ask-card { padding: 14px 0 6px; border-top: 1px solid var(--rule); scroll-margin-top: 8px; }
+.ask-card:first-child { border-top: 0; }
 .ask-q { font: 600 15px/1.4 var(--sans); color: var(--ink-2); margin-bottom: 8px; }
 .ask-status { font-size: 13px; color: var(--ink-3); margin-bottom: 8px; }
 .ask-status.error { color: var(--danger); }
