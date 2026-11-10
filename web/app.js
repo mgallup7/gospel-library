@@ -1941,28 +1941,59 @@ import { esc, mb } from "./lib/format.js";
   }
   // Every link goes through here: the library's own copy when it holds the page (a verse shows
   // in a sheet first, a page or a book opens), the web otherwise.
-  const CHURCH = /^https?:\/\/([a-z0-9-]+\.)*(churchofjesuschrist\.org|lds\.org)(\/|$)/i;
-  async function followLink(href) {
-    const url = href.startsWith("/") ? "https://www.churchofjesuschrist.org" + href : href;
+  // The sites the library copies: the Church's, its old addresses, and the Joseph Smith Papers.
+  const CHURCH = /^https?:\/\/([a-z0-9-]+\.)*(churchofjesuschrist\.org|lds\.org|josephsmithpapers\.org)(\/|$)/i;
+  const CHURCH_SITE = "https://www.churchofjesuschrist.org/";
+  // Every shape of address becomes a whole one the same way (/study/..., //www..., http:...): a
+  // path with no site is the Church's, which is where the library's pages and most notes point.
+  function linkUrl(href, base) {
+    try { return new URL(String(href || "").trim(), base || CHURCH_SITE); } catch (_) { return null; }
+  }
+  async function followLink(href, base) {
+    const u = linkUrl(href, base);
+    if (!u || !/^https?:$/.test(u.protocol)) return;
+    const url = u.href;
+    if (toastEl?.querySelector("a.toast-action")) { outsideAsk++; toastClose(); } // the offer for the link before this one
     if (!CHURCH.test(url)) { openOutside(url); return; }
     let res = null;
     try { res = await api("resolve", { href: url }); } catch (_) { res = null; }
-    if (!res || !res.found) { openOutside(url, true); return; }
-    if (res.kind === "book") { openBook(res); return; }
+    if (!res || !res.found) { openOutside(url, true, res && res.near); return; }
+    if (res.kind === "book" || res.kind === "shelf") { openBook(res); return; }
     if (res.pid && /^p\d+$/.test(res.pid) && res.collection === "scriptures" && !(currentDoc && currentDoc.id === res.doc_id && state.docId === res.doc_id)) { peekPassage(res); return; }
     hideNote();
-    openDoc(res.doc_id, res.pid);
+    await openDoc(res.doc_id, res.pid);
+    markListed(res);
+  }
+  // A link that lists verses (32.21,23-25) opens at the first with every one of them marked
+  function markListed(res) {
+    if (!res.pids || !currentDoc || currentDoc.id !== res.doc_id || state.docId !== res.doc_id) return;
+    const body = $(".doc", readerPane);
+    for (const pid of res.pids) {
+      const v = body && (body.querySelector(`#${CSS.escape(pid)}`) || body.querySelector(`.verse:nth-of-type(${pid.slice(1)})`));
+      if (v) v.classList.add("is-target");
+    }
   }
   const TAB_OF = { "general-conference": "conference", scriptures: "scriptures", "preach-my-gospel": "preach-my-gospel", "missionary-standards": "missionary-standards", handbook: "handbook", "come-follow-me": "come-follow-me", manuals: "manuals", "study-helps": "study-helps" };
   function openBook(res) {
     hideNote();
     rememberScroll();
     const tab = TAB_OF[res.collection] || (res.collection.startsWith("jsp-") ? "jsp" : "manuals");
-    const browse = res.book_slug ? { tab, book: res.book_slug } : { tab, bookUri: res.book_uri };
+    const browse = res.kind === "shelf" ? { tab } : res.book_slug ? { tab, book: res.book_slug } : { tab, bookUri: res.book_uri };
     if (tab === "jsp") browse.series = res.collection.replace(/^jsp-/, "");
     leaveSearch(); state.q = ""; if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
     if (TAB_SCOPE[tab]) state.scope = TAB_SCOPE[tab];
     syncControls(); state.browse = browse; renderHome(); showList(); push();
+  }
+  // ["p21","p23","p24","p25"] as it is written in a reference: 21, 23–25
+  function verseList(pids) {
+    const ns = pids.map((p) => Number(p.slice(1))), out = [];
+    for (let i = 0; i < ns.length; i++) {
+      let j = i;
+      while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
+      out.push(j > i ? `${ns[i]}–${ns[j]}` : String(ns[i]));
+      i = j;
+    }
+    return out.join(", ");
   }
   // A verse someone linked to, read where you are; Open goes to the chapter.
   async function peekPassage(res) {
@@ -1970,14 +2001,17 @@ import { esc, mb } from "./lib/format.js";
     bodyEl.replaceChildren(el("div", { class: "status", text: "Opening…" }));
     openSheet("Passage");
     let ctx = null;
-    const start = Number(res.pid.slice(1)), end = res.pid_end && /^p\d+$/.test(res.pid_end) ? Number(res.pid_end.slice(1)) : start;
-    try { ctx = await api("context", { doc_id: res.doc_id, pid: res.pid, before: 0, after: Math.max(0, Math.min(12, end - start)) }); } catch (_) { ctx = null; }
+    // a list of verses (21, 23-25) shows those and no others; a range shows the run
+    const listed = res.pids && res.pids.length ? res.pids : null;
+    const from = listed ? listed[0] : res.pid;
+    const start = Number(from.slice(1)), end = listed ? Number(listed[listed.length - 1].slice(1)) : res.pid_end && /^p\d+$/.test(res.pid_end) ? Number(res.pid_end.slice(1)) : start;
+    try { ctx = await api("context", { doc_id: res.doc_id, pid: from, before: 0, after: Math.max(0, Math.min(listed ? 40 : 12, end - start)) }); } catch (_) { ctx = null; }
     if (sheet.hidden) return;
-    if (!ctx) { hideNote(); openDoc(res.doc_id, res.pid); return; }
-    const open = () => { hideNote(); openDoc(res.doc_id, res.pid); };
-    const verses = ctx.paragraphs.filter((x) => x.kind !== "heading");
+    const open = async () => { hideNote(); await openDoc(res.doc_id, res.pid); markListed(res); };
+    if (!ctx) { open(); return; }
+    const verses = ctx.paragraphs.filter((x) => x.kind !== "heading" && (!listed || listed.includes(x.pid)));
     bodyEl.replaceChildren(
-      el("div", { class: "nm", text: ctx.citation || res.title }),
+      el("div", { class: "nm", text: listed ? `${res.title}:${verseList(listed)}` : ctx.citation || res.title }),
       el("div", { class: "peek" }, verses.map((x) => el("p", { class: x.kind === "verse" ? "verse" : "para" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean)))),
       el("div", { class: "peek-row" }, [
         el("button", { type: "button", class: "primary", text: `Open ${res.title}`, onclick: open }),
@@ -1999,21 +2033,24 @@ import { esc, mb } from "./lib/format.js";
   // church: the address is on one of the sites the library copies, so it could have been held.
   const OFFLINE = "That page is not in the library, and you are offline.";
   let outsideAsk = 0;
-  function openOutside(url, church = false) {
+  // near: the book or conference the library does hold around a page it lacks; its contents are
+  // offered beside the way out, and are all there is to offer offline.
+  function openOutside(url, church = false, near = null) {
     let u = null;
     try { u = new URL(String(url || "")); } catch (_) { return; }
     if (!/^https?:$/.test(u.protocol)) return; // only a web address leaves the app (a study page could hand over anything)
-    if (!navigator.onLine) { toast(OFFLINE); return; }
+    const contents = near && near.title ? { action: `Open ${near.title} contents`, onAction: () => openBook(near) } : null;
+    if (!navigator.onLine) { toast(OFFLINE, contents || {}); return; }
     const host = u.hostname.replace(/^www\./, "");
-    const say = (text, action) => toast(text, { action, href: u.href });
+    const say = (text, action) => toast(text, { action: contents ? "Open on the web" : action, href: u.href, more: contents ? [contents] : null });
     say(church ? "Not in your library." : "That link leaves the library.", `Open on ${host}`);
     // navigator.onLine says yes on Wi-Fi with no internet behind it; one small request to the
     // site tells. If it fails while this toast is still up, the toast says so. The link stays,
     // since a content blocker can refuse the request while the site itself is fine.
     const ask = ++outsideAsk;
     const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 4000);
-    fetch(u.origin + "/favicon.ico", { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit", signal: stop.signal })
-      .catch(() => { if (ask === outsideAsk && toastEl?.classList.contains("show") && toastEl.querySelector("a.toast-action")?.href === u.href) say(`Not in your library, and ${host} is not answering.`, "Try anyway"); })
+    fetch(u.href, { method: "HEAD", mode: "no-cors", cache: "no-store", credentials: "omit", signal: stop.signal })
+      .catch(() => { if (ask === outsideAsk && toastEl?.classList.contains("show") && toastEl.querySelector("a.toast-action")?.href === u.href) say(church ? `Not in your library, and ${host} is not answering.` : `${host} is not answering.`, "Try anyway"); })
       .finally(() => clearTimeout(timer));
   }
   // The reader's own links to the source site are real links, which a tap opens with no help.
