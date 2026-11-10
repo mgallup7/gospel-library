@@ -193,14 +193,20 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.click("#toast button.toast-action");
   await page.waitForSelector("#homeBody .chapters", { timeout: 8000 }).catch(() => check(false, "Open Alma contents did not open the book"));
   await backToStudy();
-  // a relative link no longer blanks the frame; mail and phone are handed to the device
+  // a relative link no longer blanks the frame
   await frame().locator("#relative").click();
   await page.waitForFunction(() => /beside this page/.test(document.querySelector("#toast.show")?.textContent || ""), null, { timeout: 5000 }).catch(() => check(false, "study relative link: no message"));
   check((await frame().locator("h1").textContent().catch(() => "")) === "Every link", "study relative link blanked the frame");
+  // mail and phone from a study page are offered, not started: the page could have sent the link with no tap
   await frame().locator("#mail").click();
+  await page.waitForFunction(() => /start an email to someone@example\.com/.test(document.querySelector("#toast.show")?.textContent || ""), null, { timeout: 5000 }).catch(() => check(false, "study mail link: no offer"));
+  check((await page.evaluate(() => window.__mail.length)) === 0, "a study page's mail link acted with no tap in the app");
+  check((await page.getAttribute("#toast a.toast-action", "href").catch(() => "")) === "mailto:someone@example.com?subject=Hello", "the offer does not carry the mail link");
   await frame().locator("#tel").click();
-  await page.waitForFunction(() => window.__mail.length >= 2, null, { timeout: 5000 }).catch(() => {});
-  check((await page.evaluate(() => window.__mail.join(" | "))) === "mailto:someone@example.com?subject=Hello acts | tel:+13035551212 acts", `study mail and phone: ${await page.evaluate(() => window.__mail.join(" | "))}`);
+  await page.waitForFunction(() => /call \+13035551212/.test(document.querySelector("#toast.show")?.textContent || ""), null, { timeout: 5000 }).catch(() => check(false, "study phone link: no offer"));
+  await page.click("#toast a.toast-action");
+  await page.waitForFunction(() => window.__mail.length >= 1, null, { timeout: 5000 }).catch(() => {});
+  check((await page.evaluate(() => window.__mail.join(" | "))) === "tel:+13035551212 acts", `study phone link, tapped in the offer: ${await page.evaluate(() => window.__mail.join(" | "))}`);
   check((await frame().locator("h1").textContent().catch(() => "")) === "Every link", "study mail link blanked the frame");
   await frame().locator("#inpage").click();
   check((await page.frames().find((f) => /study-frame\.html/.test(f.url())).evaluate(() => scrollY)) > 300, "study #anchor did not scroll within the page");

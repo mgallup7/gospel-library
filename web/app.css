@@ -728,6 +728,7 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 /* ---- my studies: a page of your own in a frame -------------------------- */
 .study-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: light dark; }
 #reader.has-study { overflow: hidden; }
+.study-own { padding: 4px calc(12px + var(--safe-right)) 4px calc(12px + var(--safe-left)); font-size: var(--ui-12); line-height: 1.35; color: var(--ink-3); background: var(--chrome); border-bottom: 1px solid var(--rule); }
 .studies-lede { font-size: var(--ui-15); line-height: 1.5; color: var(--ink-2); margin: 0 0 12px; padding: 0 16px; }
 .studies-add { margin: 0 16px 16px; }
 .study-list { border-top: 1px solid var(--rule); }

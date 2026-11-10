@@ -1821,7 +1821,7 @@ import { esc, mb } from "./lib/format.js";
       thinkBtn(" on-phone"), // a study has no bottom bar on a phone, so the lamp stays up here
       el("span", { class: "pane-switch-slot" }),
     ]);
-    const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts allow-forms" });
+    const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts" }); // no forms: a study page is read, and has nothing to submit to
     // the frame goes to study-frame.html, which asks for the page and writes it into itself: the
     // app's own page is pinned by a policy that a blob or srcdoc page would inherit
     window.Studies.mount(frame, rec);
@@ -1829,7 +1829,9 @@ import { esc, mb } from "./lib/format.js";
       if (studyAnchor) { frame.contentWindow?.postMessage({ type: "gospel:anchor", id: studyAnchor }, "*"); studyAnchor = null; }
       else if (studyScroll) frame.contentWindow?.postMessage({ type: "gospel:scrollTo", y: studyScroll }, "*");
     });
-    readerPane.replaceChildren(bar, frame);
+    // a study can draw anything, a sign-in screen included; this line is the app's, outside the frame, and always there
+    const own = el("div", { class: "study-own", role: "note", text: "Your own page. It is not part of the app; never type a passphrase or key into it." });
+    readerPane.replaceChildren(bar, own, frame);
     readerPane.classList.add("has-study");
     refreshSwitches();
     fitStudyFrame();
@@ -1851,6 +1853,14 @@ import { esc, mb } from "./lib/format.js";
       // where it was written; nothing here knows where that was
       const h = e.data.href.trim();
       if (h && !/^[a-z][a-z0-9+.-]*:/i.test(h) && !h.startsWith("/")) toast("That link leads to a file beside this page, which is not on this device.");
+      // mail, phone and message links start something on the device. A page's script can send
+      // this message with no tap at all, so the link is offered and the tap on the offer starts it.
+      else if (/^(mailto|tel|sms):/i.test(h)) {
+        const kind = h.split(":")[0].toLowerCase(), rest = h.slice(kind.length + 1).split("?")[0];
+        let to = rest; try { to = decodeURIComponent(rest); } catch (_) {}
+        to = to.slice(0, 60);
+        toast(kind === "mailto" ? `This page wants to start an email to ${to}.` : kind === "tel" ? `This page wants to call ${to}.` : `This page wants to start a message to ${to}.`, { action: kind === "mailto" ? "Write it" : kind === "tel" ? "Call" : "Message", href: h });
+      }
       else if (h) followLink(h);
     }
     else if (e.data.type === "gospel:scroll") studyScroll = Number(e.data.y) || 0;
