@@ -12,7 +12,7 @@
    - the search model and ONNX Runtime (model/, vendor/ort/): cache first, in a
      cache of their own that a shell update leaves alone, so 50 MB is fetched once;
    - the data files (the library bundle and its manifest): network only. */
-const SHELL = "gospel-shell-v34";
+const SHELL = "gospel-shell-v35";
 const ASSETS = "gospel-assets-v1";
 const FILES = ["./", "./index.html", "./study-frame.html", "./app.css", "./app.js", "./ask.js", "./original.js", "./deck.js", "./studies.js", "./marks.js", "./engine.js", "./model-worker.js", "./semantic.js", "./lib/wordpiece.js", "./vendor/pptxgen.bundle.js", "./lib/query.js", "./lib/scriptures.js",
   "./lib/scriptures-data.js", "./lib/cite.js", "./lib/markdown.js", "./lib/chunk.js", "./lib/checks.js", "./lib/step.js", "./lib/refs.js", "./lib/format.js", "./lib/log.js", "./lib/idb.js", "./vendor/sqlite3.mjs", "./vendor/sqlite3.wasm", "./manifest.webmanifest", "./icons/icon.svg"];

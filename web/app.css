@@ -427,8 +427,7 @@ main {
 .reader-bar {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: 4px;
-  padding: 6px calc(8px + var(--safe-right)) 6px calc(8px + var(--safe-left)); background: color-mix(in srgb, var(--paper) 92%, transparent);
-  backdrop-filter: saturate(180%) blur(12px); -webkit-backdrop-filter: saturate(180%) blur(12px);
+  padding: 6px calc(8px + var(--safe-right)) 6px calc(8px + var(--safe-left)); background: var(--paper); /* opaque, like the tab bar: the page's words do not show through it while reading */
   border-bottom: 1px solid var(--rule);
 }
 .reader-bar .spacer { flex: 1 1 0; min-width: 0; }
@@ -1124,7 +1123,7 @@ a.toast-action { display: inline-flex; align-items: center; }
 .bcard .bc-tools { display: flex; gap: 2px; }
 .bcard .bc-grip, .bcard .bc-more { position: relative; flex: none; width: 28px; height: 28px; border-radius: 8px; color: var(--ink-3); background: transparent; display: inline-flex; align-items: center; justify-content: center; }
 .bcard .bc-grip::before, .bcard .bc-more::before { content: ""; position: absolute; inset: -8px; }
-.bcard .bc-grip { margin: -2px -4px 0 -6px; cursor: grab; touch-action: none; }
+.bcard .bc-grip { margin: -2px 2px 0 -6px; cursor: grab; touch-action: none; }
 .bcard .bc-more { margin-top: -2px; }
 .bcard .bc-more[aria-expanded="true"] { background: var(--chrome-2); color: var(--ink); }
 @media (hover: hover) { .bcard .bc-grip:hover, .bcard .bc-more:hover { background: var(--chrome-2); color: var(--ink-2); } }
