@@ -187,7 +187,7 @@ import { esc, mb } from "./lib/format.js";
   function setEntry(patch) {
     const cur = history.state || {};
     // a marker entry (a sheet or the stage over a place) stays one: push() reads the flag to know it is leaving from an overlay
-    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, ...patch }, "", location.href);
+    history.replaceState({ n: here(), label: cur.label || null, prev: cur.prev || null, prevUrl: cur.prevUrl || null, scroll: cur.scroll || null, place: cur.place || null, overlay: cur.overlay || null, list: cur.list || null, prevList: cur.prevList || null, ...patch }, "", location.href);
   }
   // Each view names its entry once it has settled, so the next push knows what it is leaving.
   function nameEntry(label = labelNow()) { if (label !== "Back") setEntry({ label, list: labelNow(true) }); }
@@ -213,8 +213,9 @@ import { esc, mb } from "./lib/format.js";
     const prev = (listOnly && history.state?.list) || history.state?.label || "Library"; // so a step up can tell when Back would get there (a marker has its place's address)
     // leaving from inside a sheet or the stage: its marker entry becomes the new place, so Back
     // from there returns to the page under it, not to a sheet that is no longer open
-    if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, prevUrl, scroll: null, place: null }, "", url); }
-    else history.pushState({ n: here() + 1, label: null, prev, prevUrl, scroll: null, place: null }, "", url);
+    const prevList = history.state?.list || null; // for the Deck's entry once its pane is switched back to the page (backLabel)
+    if (fromOverlay) { overlay = null; history.replaceState({ n: here() + 1, label: null, prev, prevUrl, prevList, scroll: null, place: null }, "", url); }
+    else history.pushState({ n: here() + 1, label: null, prev, prevUrl, prevList, scroll: null, place: null }, "", url);
     nameEntry();
     refreshTrailButtons();
   }
@@ -240,7 +241,13 @@ import { esc, mb } from "./lib/format.js";
     if (!overlay || !history.state?.overlay || !sheet.hidden || !stage.hidden) return;
     overlay = null; poppingOverlay = true; history.back();
   }
-  function backLabel() { return here() > 0 ? history.state?.prev || "Back" : null; }
+  function backLabel() {
+    if (here() <= 0) return null;
+    // on the Deck's entry with the pane switched to Page, the page is in view again and Back would change the list only
+    const s = history.state || {};
+    if (s.prevList && wide() && state.browse?.tab === "deck" && !state.q.trim() && paneView === "page" && pageOpen()) return s.prevList;
+    return s.prev || "Back";
+  }
   function goBack() {
     if (here() > 0) history.back();
     else goHome();
@@ -415,14 +422,12 @@ import { esc, mb } from "./lib/format.js";
     if (wide()) placePanes(); else { readerPane.hidden = true; panelPane.hidden = true; window.scrollTo(0, 0); } // a list starts at its top (a restore puts it back after)
     document.body.classList.toggle("reading", !wide() && !readerPane.hidden);
     syncControls();
-    updateThinkFab();
   }
   function showReader() {
     listPane.hidden = !wide();
     if (wide()) placePanes(); else { readerPane.hidden = false; panelPane.hidden = true; }
     document.body.classList.toggle("reading", !wide());
     window.scrollTo(0, 0);
-    updateThinkFab();
     measureBar();
   }
   // The header's real height, for what must sit just under it (the phone's reader bar)
@@ -790,6 +795,8 @@ import { esc, mb } from "./lib/format.js";
       const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents" && !data.typeahead;
       const line = el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}` });
       if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline", text: `${data.lexical_total.toLocaleString()} with these words`, title: "Every match, in reading order", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
+      // the results as a whole, handed to Claude (the floating pill's other job)
+      if (data.hits.length && window.Ask) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline think-these", text: "Think these through", title: "Think these through with Claude", onclick: () => thinkHere() }));
       frag.append(line);
     } else if (data.typeahead && !data.jump && !(data.titles || []).length) {
       frag.append(el("div", { class: "empty" }, [el("div", { text: "Keep typing, or press return to search more widely." })]));
@@ -820,7 +827,6 @@ import { esc, mb } from "./lib/format.js";
     listPane.replaceChildren(frag);
     listPane.scrollTop = 0;
     markActive();
-    updateThinkFab();
     studiesInResults(data);
   }
   function scopeLabel() { return state.scope === "all" ? "" : ` in ${SCOPE_NAME[state.scope] || state.scope}`; }
@@ -953,7 +959,6 @@ import { esc, mb } from "./lib/format.js";
     listPane.scrollTop = restore ? restore.list || 0 : 0;
     if (restore) window.scrollTo(0, restore.win || 0);
     markActive();
-    updateThinkFab();
   }
 
   // A book's name on a concordance chip: the Doctrine and Covenants keeps its sections under "Sections".
@@ -1034,7 +1039,7 @@ import { esc, mb } from "./lib/format.js";
     nameEntry();
     try {
       if (!tab) return renderOverview(body, st);
-      if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); updateThinkFab(); return; }
+      if (tab === "ask") { const { question, think } = state.browse; state.browse = { tab: "ask" }; const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Ask?.render(host, { question, think }); return; }
       if (tab === "deck") { const t = listTrail(); if (t) body.append(t); const host = el("div"); body.append(host); window.Deck?.render(host); return; }
       body.append(el("div", { class: "home-head" }, [
         el("span", { class: "head-back" }, [headBack()]),
@@ -1234,7 +1239,6 @@ import { esc, mb } from "./lib/format.js";
     nameEntry(); // the page's title, or Ask or the Deck when the page rides beside one
     refreshTrailButtons();
     focusParagraph(state.pid, { scroll });
-    updateThinkFab();
     // on a phone the page replaces the list, so the way back is what a keyboard or VoiceOver user meets first
     if (!wide() && doPush && !replace) { const back = readerPane.querySelector(".trail-back"); if (back) try { back.focus({ preventScroll: true }); } catch (_) {} }
     const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(state.pid || "") ? Number(state.pid.slice(1)) : null;
@@ -1249,6 +1253,7 @@ import { esc, mb } from "./lib/format.js";
       el("div", { class: "spacer" }),
       ...sizeTools(doc),
       el("button", { class: "icon-btn bar-extra", "aria-label": "Present", title: "Present on a big screen", onclick: () => startPresenting(), html: ICON_PRESENT }),
+      thinkBtn(),
       doc.collection && doc.collection.startsWith("jsp-") ? el("button", { class: "text-btn", text: "Cite", title: "Copy a citation for this page", onclick: () => citePapers(doc) }) : null,
       el("a", { class: "icon-btn bar-extra", href: doc.source_url, target: "_blank", rel: "noopener", title: doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", "aria-label": doc.collection && doc.collection.startsWith("jsp-") ? "Open on josephsmithpapers.org" : "Open on churchofjesuschrist.org", html: ICON_OUT }),
       el("span", { class: "pane-switch-slot" }),
@@ -1286,6 +1291,7 @@ import { esc, mb } from "./lib/format.js";
         focusUnit(first);
         deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
       }),
+      footBtn("Think", ICON_THINK, () => thinkHere(), "Think it through with Claude"),
       el("a", { class: "foot-btn", href: doc.source_url, target: "_blank", rel: "noopener", "aria-label": "Open on the Church's site" }, [el("span", { class: "ic", html: ICON_OUT }), el("span", { class: "lb", text: "Site" })]),
     ]);
     readerPane.replaceChildren(bar, body, nav, foot, sizeRow, rfoot);
@@ -1600,7 +1606,6 @@ import { esc, mb } from "./lib/format.js";
     }
     nameEntry();
     refreshTrailButtons();
-    updateThinkFab();
   }
   function renderStudy(rec, scroll = 0) {
     studyScroll = scroll || 0;
@@ -1608,6 +1613,7 @@ import { esc, mb } from "./lib/format.js";
       trailButton(),
       el("button", { type: "button", class: "crumb", text: rec.title, title: "My studies: all of them", "aria-label": `${rec.title}. Open My studies`, onclick: () => openList({ tab: "studies" }) }),
       el("div", { class: "spacer" }),
+      thinkBtn(" on-phone"), // a study has no bottom bar on a phone, so the lamp stays up here
       el("span", { class: "pane-switch-slot" }),
     ]);
     const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts allow-forms" });
@@ -1863,22 +1869,13 @@ import { esc, mb } from "./lib/format.js";
   }
 
   // ---- Think it through, from anywhere ------------------------------------
-  // A floating button over the page being read, or over the results: the page (with anything
-  // selected) or the search goes to Claude on the Ask tab, which comes back with what the
-  // library holds that connects to it, each passage a card for the deck.
-  let thinkFab = null;
-  function updateThinkFab() {
-    if (!thinkFab) {
-      thinkFab = el("button", { type: "button", class: "fab-think", hidden: true, title: "Think it through with Claude", "aria-label": "Think it through with Claude", onclick: () => thinkHere() }, [
-        el("span", { class: "ic", html: ICON_THINK }), el("span", { class: "lb", text: "Think it through" })]);
-      document.body.append(thinkFab);
-    }
-    const askOpen = state.browse?.tab === "ask" && !listPane.hidden;
-    const page = !!(state.docId && currentDoc && currentDoc.id === state.docId && !readerPane.hidden) || !!(state.studyId && currentStudy && currentStudy.id === state.studyId && !readerPane.hidden);
-    const results = !page && !listPane.hidden && !!(state.lastSearch && state.lastSearch.hits && state.lastSearch.hits.length) && state.q.trim().length >= 2;
-    thinkFab.hidden = !(page || results) || (askOpen && !page) || !stage.hidden;
-    thinkFab.classList.toggle("over-reader", page);
-    $(".lb", thinkFab).textContent = page ? "Think it through" : "Think these through";
+  // A lamp in the reader bar (in the bottom bar on a phone) for the page being read, and "Think
+  // these through" on the line above a set of results: the page (with anything selected) or the
+  // search goes to Claude on the Ask tab, which comes back with what the library holds that
+  // connects to it, each passage a card for the deck. It was a floating pill once, and sat on
+  // the words and on the link to the next chapter.
+  function thinkBtn(cls = "") {
+    return el("button", { type: "button", class: "icon-btn think-btn" + cls, title: "Think it through with Claude", "aria-label": "Think it through with Claude", html: ICON_THINK, onclick: () => thinkHere() });
   }
   function thinkHere() {
     if (!window.Ask) return;
@@ -1897,8 +1894,8 @@ import { esc, mb } from "./lib/format.js";
     renderHome(); showList(); push();
   }
 
-  function footBtn(label, icon, onclick) {
-    return el("button", { type: "button", class: "foot-btn", "aria-label": label, onclick }, [el("span", { class: "ic", html: icon }), el("span", { class: "lb", text: label })]);
+  function footBtn(label, icon, onclick, aria = label) {
+    return el("button", { type: "button", class: "foot-btn", "aria-label": aria, onclick }, [el("span", { class: "ic", html: icon }), el("span", { class: "lb", text: label })]);
   }
 
   // Tap a verse or paragraph to select it for the deck; a bar offers what to do with the selection.
@@ -2201,6 +2198,7 @@ import { esc, mb } from "./lib/format.js";
       el("button", { type: "button", role: "menuitem", onclick: () => resize(1) }, [el("span", { class: "g", html: glyph(20) }), "Larger text"]),
       el("button", { type: "button", role: "menuitem", class: "menu-extra", onclick: () => { shut(); startPresenting(); } }, [el("span", { class: "g", html: ICON_PRESENT }), "Present"]),
       el("a", { role: "menuitem", class: "menu-extra", href: doc.source_url, target: "_blank", rel: "noopener", onclick: () => shut() }, [el("span", { class: "g", html: ICON_OUT }), jsp ? "josephsmithpapers.org" : "churchofjesuschrist.org"]),
+      el("button", { type: "button", role: "menuitem", class: "menu-think", onclick: () => { shut(); thinkHere(); } }, [el("span", { class: "g", html: ICON_THINK }), "Think it through"]),
     ]);
     const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size", title: "Text size", "aria-haspopup": "menu", "aria-expanded": "false", text: "Aa", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } });
     const away = (e) => { if (!wrap.contains(e.target)) shut(); };
@@ -2217,9 +2215,9 @@ import { esc, mb } from "./lib/format.js";
     ];
   }
   // How much of the bar folds away: none, the sizes into Aa, then the match count's words and a
-  // tighter switch, then Present and the site into the menu. Measured with nothing allowed to shrink
+  // tighter switch, then Present and the site into the menu, and last the lamp. Measured with nothing allowed to shrink
   // and the crumb at a readable minimum, so it is the real need and not what flexbox squeezed to fit.
-  const BAR_LEVELS = ["compact", "tight", "tighter"];
+  const BAR_LEVELS = ["compact", "tight", "tighter", "tightest"];
   function fitReaderBar(bar) {
     if (!bar.querySelector(".size-pop")) return;
     bar.classList.remove(...BAR_LEVELS);
@@ -2372,7 +2370,6 @@ import { esc, mb } from "./lib/format.js";
     for (const k of ["bg", "fg", "accent", "muted"]) stage.style.setProperty(`--stage-${k}`, next.theme?.[k] || "");
     stage.hidden = false;
     inertBehind(stage, true);
-    updateThinkFab();
     renderStage();
     stage.tabIndex = -1;
     try { stage.focus({ preventScroll: true }); } catch (_) {}
@@ -2389,7 +2386,6 @@ import { esc, mb } from "./lib/format.js";
     stage.hidden = true;
     inertBehind(stage, false); // Escape, Close, Back and leaving full screen all come through here
     stage.classList.remove("blank");
-    updateThinkFab();
     stage.classList.remove("themed");
     document.body.classList.remove("presenting");
     if (atPid) focusParagraph(atPid);
@@ -2819,7 +2815,6 @@ import { esc, mb } from "./lib/format.js";
     if (document.body.classList.toggle("page-open", !readerPane.hidden) !== pageWasOpen) { pageWasOpen = !pageWasOpen; measureBar(); }
     for (const s of document.querySelectorAll(".head-back")) s.replaceChildren(headBack());
     refreshSwitches();
-    updateThinkFab();
   }
   function refreshSwitches() {
     const on = wide() && !!panel.lastEl && pageOpen();
@@ -2835,6 +2830,8 @@ import { esc, mb } from "./lib/format.js";
     }
     // a switch that had focus keeps it on the pane now showing
     if (hadFocus) { const visible = [...document.querySelectorAll(".pane-switch button")].find((b) => b.offsetParent !== null && b.classList.contains("on")); if (visible) { try { visible.focus({ preventScroll: true }); } catch (_) {} } }
+    // what Back brings back depends on which pane is up: its label is redrawn when that changes it
+    for (const b of document.querySelectorAll(".reader-bar .trail-back")) if (b.querySelector(".lb")?.textContent !== (backLabel() || "Library")) b.replaceWith(trailButton());
     fitReaderBars(); // a pane just shown, or a switch come or gone, changes what the bar needs
     fitSelectBar();
   }

@@ -39,8 +39,9 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   line above the results says how the search was read ("Exact phrase
   found, then by words and meaning: faith, perfect knowledge · all
   shelves") with an "Only exact words" switch.
-- Think it through, from anywhere. A floating button over the page you are
-  reading (or over a set of results) hands it to Claude on the Ask tab, with
+- Think it through, from anywhere. The lamp in the reader bar (in the bottom
+  bar on a phone), or "Think these through" above a set of results, hands
+  the page or the results to Claude on the Ask tab, with
   anything you have selected: Claude studies the chapter, lesson or talk,
   searches the library itself, and comes back with what connects to it
   across the shelves, the Hebrew or Greek behind a key word, three questions

@@ -62,8 +62,10 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     for (const sel of ["#askBtn", "#askBtn", "#deckBtn"]) { await page.click(sel); await page.waitForTimeout(350); }
     check(name, (await depth(page)) === n0 + 1, `Deck, Ask, Ask, Deck made ${(await depth(page)) - n0} entries, not 1`);
     check(name, (await backLabel(page)) === "Alma 33", `Back from the tabs says ${await backLabel(page)}`);
+    check(name, !(await page.$(".fab-think")) && !(await page.evaluate(() => [...document.querySelectorAll(".think-btn")].some((x) => x.offsetParent !== null))), "the lamp or the old pill shows over the board");
     await tapBack(page);
     check(name, (await title(page)) === "Alma 33" && (await depth(page)) === n0, "Back from the tabs did not return to the page");
+    check(name, await page.evaluate(() => { const x = document.querySelector("#reader .reader-bar .think-btn"); return !!x && x.offsetParent !== null && /Think it through/.test(x.getAttribute("aria-label")); }), "the lamp is missing from the reader bar");
 
     // 3. the bar: the chapter by name, previous and next in place, the keys, up to the book
     const scopes = () => page.evaluate(() => getComputedStyle(document.querySelector(".scopes")).display);
@@ -156,7 +158,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const items = await page.evaluate(() => [...document.querySelectorAll("#reader .select-bar .size-menu:not([hidden]) [role=menuitem]")].map((x) => x.textContent.trim()));
     check(name, items.join("|") === "Present|Copy with the citation|Clear selection", `the more menu holds ${items.join("|")}`);
     await page.screenshot({ path: `${SHOTS}nav3-portrait-more.png` });
-    await page.evaluate(() => [...document.querySelectorAll("#reader .select-bar .size-menu [role=menuitem]")].find((x) => /Clear/.test(x.textContent)).click()); await page.waitForTimeout(200);
+    await page.click("#reader .select-bar .size-menu >> text=Clear selection"); await page.waitForTimeout(200);
     check(name, !(await page.$("#reader .doc .sel")) && !(await page.$("#reader .select-bar")), "Clear selection in the more menu did not clear");
     await page.context().close();
   }
@@ -172,6 +174,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#reader .reader-bar .chap[data-dir=prev]"); await titled(page, "Genesis 1"); await page.waitForTimeout(300);
     const bar = await page.evaluate(() => { const x = document.querySelector("#reader .reader-bar"); return { over: x.scrollWidth - x.clientWidth, crumb: x.querySelector(".crumb").textContent, n: history.state.n, y: Math.round(scrollY) }; });
     check(name, bar.crumb === "Genesis 1" && bar.n === n0 && bar.over <= 1 && bar.y === 0, `after the previous arrow: ${JSON.stringify(bar)}`);
+    check(name, await page.evaluate(() => { const x = document.querySelector("#reader .reader-foot .foot-btn[aria-label^='Think it through']"); return !!x && x.offsetParent !== null; }) && !(await page.$(".fab-think")), "the phone's bottom bar has no Think button, or the pill is back");
     await page.screenshot({ path: `${SHOTS}nav3-iphone-bar.png` });
     await page.click("#reader .reader-bar .crumb"); await page.waitForTimeout(700);
     const up = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), n: history.state.n, grid: !!document.querySelector("#homeBody .chapters"), reader: !document.querySelector("#reader").hidden }));
