@@ -96,6 +96,14 @@ import { esc, mb } from "./lib/format.js";
   const panelPane = el("section", { id: "panel", class: "pane", hidden: true });
   readerPane.after(panelPane);
 
+  // What changed, said aloud: one polite live region that is never seen, made before anything
+  // happens so VoiceOver is already listening to it ("3 verses selected"). The toast is the other
+  // live region; this one is for changes that need no words on the screen.
+  const sayEl = el("div", { id: "say", class: "vh", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+  document.body.append(sayEl, el("div", { id: "selSay", hidden: true, text: "Selected" })); // the second: what a selected verse is described by
+  let sayTimer = null;
+  function say(text) { clearTimeout(sayTimer); sayEl.textContent = ""; sayTimer = setTimeout(() => { sayEl.textContent = text; }, 60); } // emptied first, so the same words twice are read twice
+
   // ----------------------------------------------------------- routing ----
   // Hash routes, so the app works from any static host. Every place has an address:
   //   #                       the library (home)
@@ -1231,12 +1239,14 @@ import { esc, mb } from "./lib/format.js";
     b.toggle("ask-up", !!listPane.querySelector(".ask-page"));
     b.toggle("search-top", !!listPane.querySelector(".search-home"));
   }
+  let saidSel = 0; // the count last said aloud (updateSelectBar)
   function syncPanes() {
     const b = document.body.classList;
     b.toggle("list-only", readerPane.hidden && panelPane.hidden);
     const bar = !!readerPane.querySelector(":scope > .select-bar");
     readerPane.classList.toggle("selecting", bar); // the pane is a column while the bar is up, the bar ordered last
     b.toggle("sel-up", bar && !readerPane.hidden);
+    if (!bar) saidSel = 0; // a page drawn over a selection: the next one is said from nothing
   }
   // the list emptied or refilled by a search, the concordance or the setup screens
   new MutationObserver(syncList).observe(listPane, { childList: true });
@@ -2105,8 +2115,30 @@ import { esc, mb } from "./lib/format.js";
     if (data.ask && window.Ask?.restore) got.push(...window.Ask.restore(data.ask));
     return got;
   }
-  function openSettings() {
-    if (!state.ready || overlay) return;
+  // The keys the app answers to, as a list: "?" shows it, and so does a row in Settings (which
+  // it then leads back to). The same sheet as Settings, so Escape, Back and the scrim close it.
+  const KEYS = [
+    ["Anywhere", [["/  or  ⌘F  or  ⌘K", "Search"], ["⌘[", "Back"], ["⌘Z", "Undo (the last add, mark or deck change)"], ["Esc", "Close a sheet, leave a field, let a selection go"], ["?", "This list"]]],
+    ["Reading", [["←  →", "Previous and next chapter"], ["Tab", "To the verses, then on to the bars"], ["↑  ↓", "From verse to verse"], ["Return  or  Space", "Select the verse, or let it go"], ["P", "Present from here"]]],
+    ["Presenting", [["→  Space  ↓", "Next"], ["←  ↑  Delete", "Previous"], ["+  −", "Larger and smaller"], ["B  or  .", "Blank the screen, and bring it back"], ["Esc", "Stop presenting"]]],
+  ];
+  function openShortcuts(fromSettings = false) {
+    if (!state.ready || (overlay && !fromSettings)) return;
+    const head = el("h2", { text: "Keyboard shortcuts", tabindex: "-1" });
+    const box = el("div", { class: "settings keys" }, [
+      fromSettings ? el("button", { type: "button", class: "text-btn keys-back", text: "‹ Settings", onclick: () => openSettings(true) }) : null,
+      head,
+      el("p", { class: "set-note", text: "With a keyboard attached. On other keyboards Ctrl stands in for ⌘." }),
+      ...KEYS.map(([title, rows]) => el("section", { class: "set-sec" }, [el("h3", { text: title }), el("dl", { class: "key-list" }, rows.flatMap(([k, what]) => [el("dt", {}, k.split("  ").map((part) => (part === "or" ? el("span", { class: "or", text: "or" }) : el("kbd", { text: part })))), el("dd", { text: what })]))])),
+    ].filter(Boolean));
+    $(".sheet-body", sheet).replaceChildren(box);
+    sheet.classList.add("page");
+    sheet.scrollTop = 0;
+    openSheet("Keyboard shortcuts");
+    setTimeout(() => { try { head.focus({ preventScroll: true }); } catch (_) {} }, 60);
+  }
+  function openSettings(again = false) {
+    if (!state.ready || (overlay && !again)) return;
     const head = el("h2", { text: "Settings", tabindex: "-1" });
     const box = el("div", { class: "settings" }, [head]);
     const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [el("h3", { text: title }), ...[].concat(kids).filter(Boolean)]); box.append(s); return s; };
@@ -2179,6 +2211,10 @@ import { esc, mb } from "./lib/format.js";
       ]),
       said,
     ]);
+    sec("keys", "Keyboard", [
+      el("p", { class: "set-note", text: "With a keyboard attached, the app answers to a few keys. Press ? at any time for the list." }),
+      el("div", { class: "set-acts" }, [el("button", { type: "button", class: "text-btn", text: "Keyboard shortcuts", onclick: () => openShortcuts(true) })]),
+    ]);
     // About
     const ver = el("p", { class: "set-note" });
     sec("about", "About", [
@@ -2188,6 +2224,7 @@ import { esc, mb } from "./lib/format.js";
     try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
     $(".sheet-body", sheet).replaceChildren(box);
     sheet.classList.add("page");
+    sheet.scrollTop = 0;
     openSheet("Settings");
     // the sheet puts the cursor in its first field; here that would raise the keyboard over the
     // settings before anything is read, so the heading takes the focus instead
@@ -2245,7 +2282,18 @@ import { esc, mb } from "./lib/format.js";
   }
   function updateSelectBar() {
     let bar = $(".select-bar", readerPane);
-    const n = readerPane.querySelectorAll(".sel").length;
+    const picked = [...readerPane.querySelectorAll(".doc .sel")];
+    const n = picked.length;
+    // Each selected verse says so to VoiceOver: by its description (and the check mark's own words,
+    // app.css). A role that carries aria-selected or aria-pressed (option, button) would make the
+    // verse one flat label and hide the footnote links inside it, so the verse keeps its own role.
+    for (const u of readerPane.querySelectorAll(".doc [aria-describedby='selSay']")) if (!u.classList.contains("sel")) u.removeAttribute("aria-describedby");
+    for (const u of picked) u.setAttribute("aria-describedby", "selSay");
+    if (n !== saidSel) {
+      const noun = picked.every((u) => u.classList.contains("verse")) ? (n === 1 ? "verse" : "verses") : (n === 1 ? "passage" : "passages");
+      say(n ? `${n} ${noun} selected` : "Selection cleared");
+      saidSel = n;
+    }
     if (!n) { bar?.remove(); syncPanes(); return; }
     if (!bar) {
       const present = () => { const u = selectedUnits(); startPresentingUnits(u.map((x) => ({ text: x.text, kind: x.kind, where: x.kind === "verse" && currentDoc ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) }))); };
@@ -2706,7 +2754,10 @@ import { esc, mb } from "./lib/format.js";
   const stage = $("#stage");
   let show = null; // { units: [{pid, kind, html, verse}], i, doc }
   const stageKicker = el("div", { class: "stage-kicker", hidden: true, text: "Question" });
-  stage.append(stageKicker);
+  // each slide said as it comes: its citation and its place in the run (the words on the stage
+  // are there to be read by touch; a change of slide was silent)
+  const stageSay = el("div", { class: "vh stage-say", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+  stage.append(stageKicker, stageSay);
 
   function presentUnits(doc) {
     const scratch = sanitize(el("div", { html: doc.body_html || "" })); // the same cleaning renderDoc gives the page
@@ -2871,6 +2922,7 @@ import { esc, mb } from "./lib/format.js";
     const after = show.units[show.i + 1];
     const peek = after ? firstWords(after) : "";
     $(".stage-upnext", stage).textContent = peek ? `Next: ${peek}` : "";
+    stageSay.textContent = `${where || firstWords(u, 8) || "Slide"}, ${show.i + 1} of ${show.units.length}`;
     fitStage();
   }
 
@@ -3007,7 +3059,7 @@ import { esc, mb } from "./lib/format.js";
     if (on) {
       if (inertSets.has(node)) return;
       node.setAttribute("aria-modal", "true");
-      const list = [...document.body.children].filter((n) => n !== node && !n.contains(node) && !n.inert && n.id !== "scrim" && n.id !== "toast" && n.tagName !== "SCRIPT");
+      const list = [...document.body.children].filter((n) => n !== node && !n.contains(node) && !n.inert && n.id !== "scrim" && n.id !== "toast" && n.id !== "say" && n.id !== "selSay" && n.tagName !== "SCRIPT");
       for (const n of list) n.inert = true;
       inertSets.set(node, list);
     } else {
@@ -3166,6 +3218,7 @@ import { esc, mb } from "./lib/format.js";
       return;
     }
     if (e.key === "/" && state.ready && sheet.hidden) { e.preventDefault(); focusSearch(); }
+    if (e.key === "?" && state.ready && sheet.hidden) { e.preventDefault(); openShortcuts(); }
     if ((e.key === "p" || e.key === "P") && currentDoc && !readerPane.hidden) { e.preventDefault(); startPresenting(); }
   });
 

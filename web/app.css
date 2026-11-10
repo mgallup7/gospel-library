@@ -78,6 +78,8 @@ button:focus-visible, input:focus-visible, a:focus-visible, textarea:focus-visib
 a { color: var(--accent); }
 mark { background: var(--mark); color: var(--mark-ink); border-radius: 2px; padding: 0 1px; }
 [hidden] { display: none !important; }
+/* there for VoiceOver, not for the eye: the live regions that say what changed */
+.vh { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---- the four places: a bar along the bottom on a phone, a rail down the left on an iPad ---- */
 /* The wide layout (two panes, the rail) is "(min-width: 760px) and (min-height: 500px)" throughout,
@@ -906,6 +908,14 @@ body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
 .set-acts .text-btn { box-shadow: inset 0 0 0 1px var(--rule); }
 .set-acts .primary, .settings .primary { height: 44px; padding: 0 18px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .set-said { min-height: 1.4em; margin: 8px 0 0; color: var(--ink-2); }
+/* the keyboard shortcut list: the keys on the left, what each does beside them */
+.keys .keys-back { margin: 0 0 2px -12px; }
+.key-list { display: grid; grid-template-columns: clamp(150px, 42%, 190px) minmax(0, 1fr); margin: 0; }
+.key-list dt, .key-list dd { margin: 0; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
+.key-list dt { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding-right: 12px; }
+.key-list dd { color: var(--ink-2); line-height: 1.4; }
+.key-list kbd { display: inline-block; min-width: 26px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--rule); border-bottom-width: 2px; background: var(--chrome); color: var(--ink); font: 600 var(--ui-13)/1.5 var(--sans); text-align: center; white-space: nowrap; }
+.key-list .or { color: var(--ink-3); font-size: var(--ui-12); }
 .settings .ask-settings .ask-actions { position: static; margin: 4px 0 0; padding: 4px 0 0; background: none; }
 .ask-settings { font-family: var(--sans); line-height: 1.4; }
 .ask-settings h2:focus { outline: none; }
@@ -934,7 +944,7 @@ body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
 /* the selection's rule and check sit in a left padding, as a colored verse's do, off the first
    glyphs and inside the page's own margin (the check was cut off at the phone's edge) */
 .doc p.sel, .doc li.sel, .doc .sel.is-target { padding-left: 18px; margin-left: -18px; }
-.doc .sel::before { content: "✓"; position: absolute; left: -2px; top: .3em; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 700 11px/16px var(--sans); text-align: center; }
+.doc .sel::before { content: "✓"; content: "✓" / "Selected."; position: absolute; left: -2px; top: .3em; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 700 11px/16px var(--sans); text-align: center; }
 /* a note over several verses: a light bracket in the right margin from its first verse to its last */
 .doc .note-range { position: relative; }
 .doc .note-range::after { content: ""; position: absolute; right: -11px; top: -.3em; bottom: -.3em; width: 4px; border-right: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); pointer-events: none; }
