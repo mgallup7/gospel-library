@@ -61,8 +61,9 @@ CREATE TABLE removed(uri TEXT PRIMARY KEY, id INTEGER);
 CREATE TABLE paragraphs(rowid INTEGER PRIMARY KEY, text TEXT, document_id INTEGER, seq INTEGER, pid TEXT, kind TEXT, verse INTEGER);
 CREATE TABLE footnotes(id INTEGER PRIMARY KEY, document_id INTEGER NOT NULL, note_id TEXT NOT NULL, marker TEXT, pid TEXT, html TEXT, text TEXT, refs TEXT);
 CREATE TABLE vecbits(paragraph_id INTEGER PRIMARY KEY, bits BLOB NOT NULL);
-CREATE TABLE collections(id INTEGER PRIMARY KEY, slug TEXT, title TEXT, kind TEXT, sort INTEGER, toc_next_check TEXT, status TEXT);
-CREATE TABLE books(id INTEGER PRIMARY KEY, collection_id INTEGER, uri TEXT, title TEXT, sort INTEGER, parent_id INTEGER, kind TEXT, toc_next_check TEXT, status TEXT);
+CREATE TABLE collections(id INTEGER PRIMARY KEY, slug TEXT, title TEXT, kind TEXT, sort INTEGER);
+CREATE TABLE books(id INTEGER PRIMARY KEY, collection_id INTEGER, uri TEXT, title TEXT, content_type TEXT, sort INTEGER, year INTEGER, month INTEGER,
+  entry_count INTEGER, toc_json TEXT, toc_checked_at TEXT, toc_next_check TEXT, status TEXT);
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
 """
 
@@ -242,7 +243,11 @@ def build_delta(now: sqlite3.Connection, compact_path: Path, snap: dict, version
                 chunk = fresh[i:i + 500]
                 vec += d.execute(f"INSERT OR IGNORE INTO vecbits(paragraph_id, bits) SELECT paragraph_id, bits FROM src.vecbits WHERE paragraph_id IN ({','.join('?' * len(chunk))})", chunk).rowcount
         d.executemany("INSERT INTO removed(uri, id) VALUES (?, ?)", [(uri, doc_id) for uri, doc_id in p["removed"]])
-        # the small tables travel whole
+        # the small tables travel whole, every column: a book's contents list (toc_json) and a
+        # conference's year and month live in books, and a shelf is empty without them
+        missing = [c for c in _table_cols(d, "src.books") if c not in set(_table_cols(d, "books"))] + [c for c in _table_cols(d, "src.collections") if c not in set(_table_cols(d, "collections"))]
+        if missing:
+            raise RuntimeError(f"the delta's small tables lack columns the library has: {missing}")
         ccols = [c for c in _table_cols(d, "collections") if c in set(_table_cols(d, "src.collections"))]
         d.execute(f"INSERT INTO collections({','.join(ccols)}) SELECT {','.join(ccols)} FROM src.collections")
         bcols = [c for c in _table_cols(d, "books") if c in set(_table_cols(d, "src.books"))]
@@ -332,3 +337,39 @@ def apply_delta(conn: sqlite3.Connection, delta_path: Path) -> dict:
         return info
     finally:
         conn.execute("DETACH DATABASE d")
+
+
+SMALL_TABLES = """
+CREATE TABLE collections(id INTEGER PRIMARY KEY, slug TEXT, title TEXT, kind TEXT, sort INTEGER);
+CREATE TABLE books(id INTEGER PRIMARY KEY, collection_id INTEGER, uri TEXT, title TEXT, content_type TEXT, sort INTEGER, year INTEGER, month INTEGER,
+  entry_count INTEGER, toc_json TEXT, toc_checked_at TEXT, toc_next_check TEXT, status TEXT);
+"""
+
+
+def build_books(db_path: Path, out_path: Path, passphrase: str, version: str) -> dict:
+    """The shelves' small tables (collections and books, with each book's contents list) as a
+    sealed file of their own. A device whose books lost their contents (deltas built before
+    November 10, 2026 left toc_json, year and month behind) fetches this and is whole again
+    without downloading the library."""
+    from .bundle import encrypt_file
+    tmp = out_path.with_suffix(".sqlite")
+    tmp.unlink(missing_ok=True)
+    d = sqlite3.connect(tmp)
+    try:
+        d.executescript(SMALL_TABLES)
+        d.execute("ATTACH DATABASE ? AS src", (str(db_path),))
+        for t in ("collections", "books"):
+            have = set(_table_cols(d, t))
+            lacking = [c for c in _table_cols(d, f"src.{t}") if c not in have]
+            if lacking:
+                raise RuntimeError(f"books file: {t} lacks columns the library has: {lacking}")
+            cols = [c for c in _table_cols(d, t) if c in set(_table_cols(d, f"src.{t}"))]
+            d.execute(f"INSERT INTO {t}({','.join(cols)}) SELECT {','.join(cols)} FROM src.{t}")
+        d.commit()
+        d.execute("DETACH DATABASE src")
+        d.execute("VACUUM")
+    finally:
+        d.close()
+    header = encrypt_file(tmp, out_path, passphrase, extra={"kind": "books", "version": version})
+    tmp.unlink(missing_ok=True)
+    return {"file": out_path.name, "size": out_path.stat().st_size, "sha256": header["sha256"]}

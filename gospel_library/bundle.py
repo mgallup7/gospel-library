@@ -240,6 +240,14 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
         delta_mod.save_snapshot(conn, delta_mod.take_snapshot(conn, version))
     except Exception as exc:  # the bundle still ships without deltas
         log.warning("deltas not built: %s", exc)
+    # the shelves' small tables as a file of their own: a device whose books lost their contents
+    # lists (deltas built before November 10, 2026 left them behind) fetches this and is whole
+    books_info = None
+    try:
+        from . import delta as _delta
+        books_info = _delta.build_books(compact, out_dir / "books.bin", passphrase, version)
+    except Exception as exc:
+        log.warning("books file not built: %s", exc)
     compact.unlink(missing_ok=True)
     conn.close()
     manifest = {
@@ -261,6 +269,8 @@ def build(out_dir: Path, passphrase: str, *, db_path: Path = config.DB_PATH, ski
         manifest["originals"] = json.loads(orig_row[0])
     if emb_row:
         manifest["embeddings"] = json.loads(emb_row[0])
+    if books_info:
+        manifest["books"] = books_info
     if deltas:
         manifest["deltas"] = [{"from": d["from"], "file": d["file"], "size": d["size"], "sha256": d["sha256"], "documents_changed": d["documents_changed"], "documents_removed": d["documents_removed"]} for d in deltas]
     if sealed_skills_path.exists():

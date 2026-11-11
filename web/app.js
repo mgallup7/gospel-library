@@ -731,7 +731,24 @@ import { esc, mb } from "./lib/format.js";
   // build, only what changed is downloaded and applied in place; otherwise, or if that fails,
   // the whole library is installed into the other slot and the app switches to it.
   // asked: Settings' "Check for an update", which says what it found; the check at start is silent
+  // Shelves that lost their contents lists to an early delta mend themselves from a small file
+  // (engine.js healBooks); asked once a launch, silently unless something was mended.
+  let mendTried = false;
+  async function mendShelves() {
+    if (mendTried || !navigator.onLine) return;
+    mendTried = true;
+    try {
+      const r = await call("healBooks", { passphrase: store.get("passphrase"), manifestUrl: MANIFEST_URL });
+      if (r && r.healed) {
+        statsCache = null;
+        try { window.dispatchEvent(new CustomEvent("library:change")); } catch (_) {}
+        await render({ restore: { list: listPane.scrollTop, reader: readerPane.scrollTop, win: window.scrollY } }).catch(() => {});
+        toast("Your shelves are whole again: Preach My Gospel, the Handbook, Come, Follow Me and the conferences have their contents back.");
+      } else if (r && r.reason) mendTried = false; // not published yet: ask again at the next check
+    } catch (err) { mendTried = false; console.warn("shelves not mended:", err?.message); }
+  }
   async function checkForUpdate(asked = false) {
+    mendShelves();
     if (!navigator.onLine) { if (asked) toast("This device is offline; the library on it is the one in use."); return "offline"; }
     const active = store.get("active");
     let manifest;

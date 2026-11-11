@@ -380,6 +380,52 @@ const methods = {
     try { return await work; } finally { if (exclusive === work) exclusive = null; }
   },
 
+  // The shelves' small tables, mended. Deltas built before November 10, 2026 carried the books
+  // table without its contents lists (toc_json) or a conference's year and month, so a device
+  // that took one found Preach My Gospel, the Handbook and the conferences empty. Every build
+  // now publishes those tables whole as books.bin; a device whose books have no contents at all
+  // fetches it (small) and is whole again, with nothing else touched.
+  async healBooks({ passphrase, manifestUrl, force = false }) {
+    need();
+    const damaged = () => value("SELECT COUNT(*) FROM books") > 0 && value("SELECT COUNT(*) FROM books WHERE toc_json IS NOT NULL") === 0;
+    if (!force && !damaged()) return { healed: false };
+    if (exclusive) await exclusive.catch(() => {});
+    const work = (async () => {
+      const manifest = await (await fetch(manifestUrl, { cache: "no-store" })).json();
+      if (!manifest.books || !manifest.books.file) return { healed: false, reason: "the published library has no books file yet" };
+      const url = new URL(manifest.books.file + "?v=" + encodeURIComponent(manifest.version), manifestUrl).href;
+      const sealed = await openSealed(url, passphrase, manifest.books.size, () => {}, { kind: "books" });
+      let bytes = await sealed.all();
+      const size = bytes.length;
+      db.exec("ATTACH DATABASE ':memory:' AS d");
+      try {
+        const p = sqlite3.wasm.allocFromTypedArray(bytes);
+        bytes = null;
+        const rc = sqlite3.capi.sqlite3_deserialize(db.pointer, "d", p, size, size,
+          sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_RESIZEABLE);
+        if (rc) throw new Error("the books file could not be read");
+        if (!value("SELECT COUNT(*) FROM d.books WHERE toc_json IS NOT NULL")) throw new Error("the books file holds no contents lists");
+        const cols = (t) => rows(`PRAGMA ${t.includes(".") ? t.split(".")[0] + "." : ""}table_info(${t.split(".").pop()})`).map((r) => r.name);
+        const shared = (t) => { const a = new Set(cols(t)); return cols("d." + t).filter((c) => a.has(c)); };
+        db.exec("BEGIN");
+        try {
+          const cc = shared("collections").join(","), bc = shared("books").join(",");
+          db.exec("DELETE FROM collections");
+          db.exec(`INSERT INTO collections(${cc}) SELECT ${cc} FROM d.collections`);
+          db.exec("DELETE FROM books");
+          db.exec(`INSERT INTO books(${bc}) SELECT ${bc} FROM d.books`);
+          // every document must still have its shelf and its book
+          if (value("SELECT COUNT(*) FROM documents d WHERE NOT EXISTS (SELECT 1 FROM collections c WHERE c.id = d.collection_id)")) throw new Error("the books file does not fit this library");
+          db.exec("COMMIT");
+        } catch (err) { try { db.exec("ROLLBACK"); } catch (_) {} throw err; }
+        forgetDerived();
+        return { healed: true, books: value("SELECT COUNT(*) FROM books WHERE toc_json IS NOT NULL") };
+      } finally { try { db.exec("DETACH DATABASE d"); } catch (_) {} }
+    })();
+    exclusive = work;
+    try { return await work; } finally { if (exclusive === work) exclusive = null; }
+  },
+
   async manifest({ manifestUrl }) {
     const r = await fetch(manifestUrl, { cache: "no-store" });
     if (!r.ok) throw new Error(`manifest ${r.status}`);

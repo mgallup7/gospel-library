@@ -413,6 +413,9 @@ def test_delta_between_builds(tmp_path, monkeypatch):
     node = toc.from_state(state, "/general-conference/2023/10").content_nodes[0]
     talk = parse_content(TALK_PAYLOAD, node.uri)
     store.save_document(collection_id=gcid, book_id=gbid, doc=talk, node=node, extra=context_for(node.uri, node=node))
+    # a book's contents list, which a shelf is empty without
+    store.conn.execute("UPDATE books SET toc_json=?, entry_count=1 WHERE id=?", (json.dumps([{"uri": node.uri, "title": "A talk"}]), gbid))
+    store.conn.commit()
     store.optimize()
     store.close()
 
@@ -468,6 +471,21 @@ def test_delta_between_builds(tmp_path, monkeypatch):
     assert info["paragraphs_total"] == dev.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
     _assert_cheap_verification(dev)
     assert dev.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 9
+    # the shelves' tables arrive whole: every column of every book, its contents list and the
+    # conference's year and month included (a delta once left them behind, and shelves emptied)
+    fc = sqlite3.connect(full)
+    for t in ("books", "collections"):
+        assert dev.execute(f"SELECT * FROM {t} ORDER BY id").fetchall() == fc.execute(f"SELECT * FROM {t} ORDER BY id").fetchall(), t
+    assert dev.execute("SELECT toc_json, year, month FROM books WHERE id=?", (gbid,)).fetchone() == (json.dumps([{"uri": node.uri, "title": "A talk"}]), 2023, 10)
+    # and the same tables are published as a file of their own, for a device to mend itself from
+    assert m2["books"]["file"] == "books.bin"
+    mend = tmp_path / "books.sqlite"
+    bundle.decrypt_file(site2 / "books.bin", mend, "pw")
+    mc = sqlite3.connect(mend)
+    for t in ("books", "collections"):
+        assert mc.execute(f"SELECT * FROM {t} ORDER BY id").fetchall() == fc.execute(f"SELECT * FROM {t} ORDER BY id").fetchall(), t
+    mc.close()
+    fc.close()
     assert dev.execute("SELECT rowid FROM paragraphs WHERE paragraphs MATCH 'eternal'").fetchall()
     assert dev.execute("SELECT title FROM documents_fts WHERE documents_fts MATCH 'Alma'").fetchall()
     assert json.loads(dev.execute("SELECT value FROM meta WHERE key='counts'").fetchone()[0])["paragraphs"] == dev.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
