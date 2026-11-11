@@ -5,8 +5,8 @@
    the scriptures or to a talk opens the local copy. The files live in the browser's own
    database (IndexedDB), apart from the library, so a library update leaves them alone.
 
-   The page is shown in a sandboxed frame (study-frame.html, which writes the page into
-   itself): its own styles and scripts run, but it cannot see the app or the library key.
+   The page is shown in a sandboxed frame (from a blob address of its own, so its #links
+   work): its own styles and scripts run, but it cannot see the app or the library key.
    A small script added to the page hands its links to the web over to the app, which
    resolves them against the library (app.js followLink). */
 import { markdown as renderMarkdown } from "./lib/markdown.js";
@@ -104,24 +104,15 @@ a{color:var(--accent)}code{font:14px ui-monospace,Menlo,monospace;background:rgb
 pre.plain{white-space:pre-wrap;font:inherit;margin:0}hr{border:0;border-top:1px solid var(--rule);margin:1.6em 0}
 </style></head><body>${body}</body></html>`;
   }
-  // The app's own page is pinned by a Content-Security-Policy (index.html), and a page shown
-  // from a blob address inherits the policy of the page that made it: the study's own scripts,
-  // and the hand-off script above, would all be refused. So the frame is sent to
-  // study-frame.html instead, a page of the app's with no policy of its own; sandboxed as
-  // before, it asks for the study and writes it into itself. mount does that for one frame.
-  const FRAME_URL = new URL("./study-frame.html", import.meta.url).href;
-  const waiting = new WeakMap(); // frame -> the HTML it is to show
+  // The page is shown from a blob address of its own (not srcdoc), so its #links work and it
+  // needs nothing from the network, which is how it was first built and proven on the iPad.
+  // The frame is sandboxed, so the page cannot see the app, its storage or the library key.
+  let lastUrl = null;
   function mount(frame, rec) {
-    waiting.set(frame, typeof rec === "string" ? rec : frameHtml(rec));
-    frame.src = FRAME_URL;
+    if (lastUrl) { try { URL.revokeObjectURL(lastUrl); } catch (_) {} }
+    lastUrl = URL.createObjectURL(new Blob([typeof rec === "string" ? rec : frameHtml(rec)], { type: "text/html;charset=utf-8" }));
+    frame.src = lastUrl;
   }
-  window.addEventListener("message", (e) => {
-    if (!e.data || e.data.type !== "gospel:frame-ready") return;
-    for (const frame of document.querySelectorAll("iframe.study-frame")) {
-      // the frame has no origin to name (it is sandboxed), so the test is that it is ours
-      if (frame.contentWindow === e.source && waiting.has(frame)) e.source.postMessage({ type: "gospel:page", html: waiting.get(frame) }, "*");
-    }
-  });
   // Enough Markdown for notes and lessons: headings, paragraphs, lists, quotes, emphasis, links.
   // The renderer is Ask's (lib/markdown.js) in its page mode: no citation buttons and no
   // quotation check, since the frame has neither the passages nor the app.

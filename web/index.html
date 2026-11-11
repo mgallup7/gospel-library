@@ -2,14 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- What the app may reach, pinned. Its own files; Claude at api.anthropic.com and nowhere else
-     (the API key and the passphrase sit in this page's storage, so nothing here may send them
-     elsewhere); no script but the app's own files, so a stray onerror or script tag in library
-     HTML cannot run. 'wasm-unsafe-eval' and blob workers are for SQLite and the search model;
-     inline style attributes are used by the app (never by library HTML, which is cleaned of
-     them before it is shown), inline scripts by nothing. A study page shows in
-     study-frame.html, sandboxed, under a policy of its own that lets it reach nothing. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.anthropic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Gospel Library</title>
 <meta name="description" content="A personal copy of the scriptures, general conference, and manuals, with instant search.">

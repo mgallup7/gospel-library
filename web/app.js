@@ -1837,9 +1837,8 @@ import { esc, mb } from "./lib/format.js";
       el("button", { type: "button", class: "icon-btn gear-btn phone-only", "aria-label": "Settings", title: "Settings", html: ICON_GEAR, onclick: () => openSettings() }),
       el("span", { class: "pane-switch-slot" }),
     ]);
-    const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts" }); // no forms: a study page is read, and has nothing to submit to
-    // the frame goes to study-frame.html, which asks for the page and writes it into itself: the
-    // app's own page is pinned by a policy that a blob or srcdoc page would inherit
+    const frame = el("iframe", { class: "study-frame", title: rec.title, sandbox: "allow-scripts allow-forms" });
+    // a blob address of its own (studies.js mount), as first built and proven on the iPad
     window.Studies.mount(frame, rec);
     frame.addEventListener("load", () => {
       if (studyAnchor) { frame.contentWindow?.postMessage({ type: "gospel:anchor", id: studyAnchor }, "*"); studyAnchor = null; }

@@ -215,9 +215,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check((await page.evaluate(() => window.__mail.join(" | "))) === "tel:+13035551212 acts", `study phone link, tapped in the offer: ${await page.evaluate(() => window.__mail.join(" | "))}`);
   check((await frame().locator("h1").textContent().catch(() => "")) === "Every link", "study mail link blanked the frame");
   await frame().locator("#inpage").click();
-  check((await page.frames().find((f) => /study-frame\.html/.test(f.url())).evaluate(() => scrollY)) > 300, "study #anchor did not scroll within the page");
+  check((await page.frames().find((f) => f.url().startsWith("blob:")).evaluate(() => scrollY)) > 300, "study #anchor did not scroll within the page");
   // plain references in an HTML study are links; a link, a script and a style keep their words
-  const plain = await page.frames().find((f) => /study-frame\.html/.test(f.url())).evaluate(() => ({ refs: [...document.querySelectorAll("#plain a:not(#own)")].map((a) => a.textContent), own: document.querySelector("#own").innerHTML, note: window.note, style: document.querySelector("style").textContent }));
+  const plain = await page.frames().find((f) => f.url().startsWith("blob:")).evaluate(() => ({ refs: [...document.querySelectorAll("#plain a:not(#own)")].map((a) => a.textContent), own: document.querySelector("#own").innerHTML, note: window.note, style: document.querySelector("style").textContent }));
   check(plain.refs.join("|") === "Alma 32:27|D&C 76:22-24" && plain.own === "My own link to Alma 32:28" && plain.note === "Alma 32:29" && /content:"Alma 32:21"/.test(plain.style), `study plain references: ${JSON.stringify(plain)}`);
   await frame().locator("#plain a").first().click();
   check(/Alma 32:27/.test(await peekTitle()), "study plain reference: no passage sheet");
