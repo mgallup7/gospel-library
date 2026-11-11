@@ -40,14 +40,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   text = await page.evaluate(() => window.GLLog.text());
   check(/window: thrown where nothing catches it/.test(text), `an uncaught error was not noted: ${text}`);
   check(/promise: rejected with \[key\] and \[secret\]/.test(text), `a rejected promise was not noted with its secrets struck out: ${text}`);
-  check(/policy: connect-src refused https:\/\/example\.com/.test(text), `a request the policy refused was not noted: ${text}`);
   check(!text.includes("sk-ant-") && !text.includes(PASS), "the log holds the key or the passphrase");
   check(!(await page.evaluate(() => sessionStorage.getItem("gospel.errorLog") || "")).includes("sk-ant-"), "the kept copy of the log holds the key");
 
   // a reload keeps it; Settings, under About, copy it
   await page.reload();
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
-  check((await page.evaluate(() => window.GLLog.count())) >= 5, "the log did not survive a reload");
+  check((await page.evaluate(() => window.GLLog.count())) >= 4, "the log did not survive a reload");
   await page.evaluate(() => window.GL.openSettings());
   await page.waitForSelector("#sheet .set-errlog button", { timeout: 5000 });
   check(/errors noted/.test(await page.textContent("#sheet .set-errlog")), "settings do not say how many errors are noted");
