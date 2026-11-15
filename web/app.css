@@ -686,6 +686,37 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .doc .hl.is-target { padding-left: 12px; margin-left: -12px; }
 .doc .note-mark { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 24px; margin-left: 4px; vertical-align: -4px; border-radius: 6px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .doc .note-mark svg { width: 15px; height: 15px; }
+/* Words marked inside a verse: a stronger tint than a whole verse's color, so a phrase shows on a
+   verse that is itself colored, mixed with the paper so it is the same color on any verse. A
+   browser without color-mix keeps the plain tint (.doc .hl-y above), which is why this is asked. */
+.doc mark.hlp { color: inherit; padding: .08em 0; border-radius: 3px; cursor: pointer; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+@supports (background: color-mix(in srgb, red 50%, blue)) {
+  .doc mark.hlp.hl-y { background: color-mix(in srgb, var(--hl-y-dot) 55%, var(--paper)); }
+  .doc mark.hlp.hl-g { background: color-mix(in srgb, var(--hl-g-dot) 50%, var(--paper)); }
+  .doc mark.hlp.hl-b { background: color-mix(in srgb, var(--hl-b-dot) 45%, var(--paper)); }
+  .doc mark.hlp.hl-p { background: color-mix(in srgb, var(--hl-p-dot) 50%, var(--paper)); }
+  /* on a dark page the words are light: less of the color, so they still read */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-y { background: color-mix(in srgb, var(--hl-y-dot) 34%, var(--paper)); }
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-g { background: color-mix(in srgb, var(--hl-g-dot) 34%, var(--paper)); }
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-b { background: color-mix(in srgb, var(--hl-b-dot) 36%, var(--paper)); }
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-p { background: color-mix(in srgb, var(--hl-p-dot) 34%, var(--paper)); }
+  }
+}
+/* The bar for the words selected: docked at the foot of the page like the selection bar (and in
+   its place while both would show), clear of the iPad's own callout, which sits by the words. */
+.phrase-bar { position: sticky; bottom: 0; order: 2; display: flex; align-items: center; gap: 6px; padding: 10px calc(14px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(14px + var(--safe-left)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
+@media (max-width: 759px), (max-height: 499px) { #reader .phrase-bar { bottom: var(--tabs-h); padding-bottom: 10px; } }
+.phrase-bar .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-13); color: var(--ink-2); }
+.phrase-bar .text-btn { white-space: nowrap; height: 44px; flex: none; }
+.phrase-bar .hl-dots { flex: none; }
+/* too full for one row (a phone, with Remove in it): the words give way, then the controls close up (app.js showPhraseBar) */
+.phrase-bar.snug { justify-content: space-between; }
+.phrase-bar.snug .n { display: none; }
+.phrase-bar.close { gap: 2px; }
+.phrase-bar.close .hl-dots { gap: 10px; margin: 0 2px; }
+.phrase-bar.close .text-btn { padding: 0 6px; }
+#reader.phrasing > .select-bar { display: none; }
 .hl-dots { display: inline-flex; gap: 6px; align-items: center; }
 .hl-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0,0,0,.08); }
 .hl-dot.hl-y { background: var(--hl-y-dot); } .hl-dot.hl-g { background: var(--hl-g-dot); } .hl-dot.hl-b { background: var(--hl-b-dot); } .hl-dot.hl-p { background: var(--hl-p-dot); }
