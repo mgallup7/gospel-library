@@ -2504,6 +2504,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       said,
       offer,
     ]);
+    // Sync between devices (sync.js draws its own part, as ask.js does): after Backup, which it does not replace
+    if (window.Sync?.settingsBox) sec("sync", "Sync between devices", window.Sync.settingsBox());
     sec("keys", "Keyboard", [
       el("p", { class: "set-note", text: "With a keyboard attached, the app answers to a few keys. Press ? at any time for the list." }),
       el("div", { class: "set-acts" }, [el("button", { type: "button", class: "text-btn", text: "Keyboard shortcuts", onclick: () => openShortcuts(true) })]),
@@ -3859,6 +3861,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     api, el, esc, store, openDoc, followLink, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
     get ready() { return state.ready; },
+    passphrase: () => store.get("passphrase") || "", // sync.js seals the synced file with it
     get skills() { return store.get("skills")?.data || null; },
     get wide() { return wide(); },
     get reading() { return currentDoc ? { doc: currentDoc, open: state.docId === currentDoc.id, selection: state.docId === currentDoc.id ? selectedUnits() : [] } : null; }, // for Ask: the page open (or read last) and what is selected in it
@@ -3887,5 +3890,6 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     setTimeout(checkForUpdate, 1500);
     setTimeout(loadSkills, 400);
     setTimeout(loadSemantic, 2500);
+    setTimeout(() => { try { window.Sync?.start(); } catch (_) {} }, 1200); // highlights and notes from the other devices (sync.js)
   })();
 })();

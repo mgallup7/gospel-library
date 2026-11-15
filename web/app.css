@@ -971,6 +971,15 @@ body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
 .set-acts .text-btn { box-shadow: inset 0 0 0 1px var(--rule); }
 .set-acts .primary, .settings .primary { height: 44px; padding: 0 18px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .set-said { min-height: 1.4em; margin: 8px 0 0; color: var(--ink-2); }
+/* Sync between devices (sync.js): the steps fold away once connected; the fields are 16px so an iPhone does not zoom into them */
+.sync-set label { display: grid; gap: 4px; max-width: 440px; margin: 0 0 12px; font-size: var(--ui-13); color: var(--ink-2); }
+.sync-set label .lb { font-weight: 600; font-size: var(--ui-14); color: var(--ink); }
+.sync-set input { width: 100%; min-width: 0; box-sizing: border-box; height: var(--ctl-h); padding: 0 12px; font: var(--ui-16) var(--sans); border: 1px solid var(--rule); border-radius: var(--r-ctl); background: var(--paper); color: var(--ink); -webkit-appearance: none; }
+.sync-steps { margin: 0 0 14px; padding: 4px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--chrome); }
+.sync-steps summary { padding: 10px 0; font-weight: 600; color: var(--accent); cursor: pointer; }
+.sync-steps ol { margin: 4px 0 10px; padding-left: 1.4em; color: var(--ink-2); line-height: 1.5; max-width: 60ch; }
+.sync-steps li { margin-bottom: 6px; }
+.sync-said.bad { color: var(--danger); }
 .set-incoming { margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--chrome); }
 .set-incoming h4 { margin: 0 0 4px; font-size: var(--ui-15, 15px); }
 .set-incoming .lb { margin: 10px 0 4px; font-weight: 600; font-size: var(--ui-13); }

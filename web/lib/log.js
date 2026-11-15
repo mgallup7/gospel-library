@@ -4,15 +4,16 @@
 // Three ways in: an error nothing caught, a promise nothing caught, and GLLog.note(where, err)
 // from a catch that carries on with a fallback. The log lives in memory and in sessionStorage
 // (so a reload keeps it; closing the app ends it) and goes nowhere unless he copies it.
-// The API key and the library passphrase never enter it: anything shaped like a key, and the
-// stored key and passphrase themselves, are struck out of every line before it is kept.
+// The API key, the library passphrase and the sync token never enter it: anything shaped like
+// a key or a GitHub token, and the stored ones themselves, are struck out of every line before
+// it is kept.
 
 const MAX = 200;
 const KEY = "gospel.errorLog";
 
 /** text with anything like an API key, and each of the given secrets, struck out. */
 export function scrub(text, secrets = []) {
-  let s = String(text ?? "").replace(/sk-ant-[A-Za-z0-9_-]*/g, "[key]");
+  let s = String(text ?? "").replace(/sk-ant-[A-Za-z0-9_-]*/g, "[key]").replace(/\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+/g, "[token]");
   for (const x of secrets) if (typeof x === "string" && x.length >= 4) s = s.split(x).join("[secret]");
   return s;
 }
@@ -62,7 +63,7 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
   const stored = (k) => { try { const v = JSON.parse(localStorage.getItem(k)); return typeof v === "string" ? v : ""; } catch (_) { return ""; } };
   let session = null;
   try { session = window.sessionStorage; } catch (_) { session = null; }
-  const log = makeLog({ storage: session, secrets: () => [stored("gospel.apiKey"), stored("gospel.passphrase")] });
+  const log = makeLog({ storage: session, secrets: () => [stored("gospel.apiKey"), stored("gospel.passphrase"), stored("gospel.syncToken")] });
   window.addEventListener("error", (e) => {
     if (e.error || e.message) log.note("window", e.error || `${e.message}${e.filename ? ` at ${String(e.filename).split("/").pop()}:${e.lineno}` : ""}`);
   });

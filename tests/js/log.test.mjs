@@ -49,6 +49,7 @@ test("the API key and the passphrase never enter the log", () => {
   // a stored key that does not look like one is struck out by its value
   assert.equal(scrub("sent oddkey-12345 away", ["oddkey-12345"]), "sent [secret] away");
   assert.equal(scrub("nothing secret here", ["", null, "abc"]), "nothing secret here");
+  assert.equal(scrub("401 for github_pat_11ABC_def and ghp_abcDEF123, not github itself"), "401 for [token] and [token], not github itself");
 });
 
 test("the log comes back after a reload, and a damaged copy starts it empty", () => {
