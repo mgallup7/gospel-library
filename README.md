@@ -61,6 +61,12 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   your study pages, your decks, your instructions to Claude and what it was
   asked to remember, to keep somewhere other than the device; Import brings
   it back. The API key and the passphrase are never in it.
+- Sync between devices: a highlight or note made on the iPad is on the iPhone
+  a few seconds later, and the other way round. The marks are kept in one
+  file in a private repository on your own GitHub account, sealed with the
+  library passphrase, so GitHub holds it and cannot read it; each device
+  merges, newest wins, and never overwrites. Set up once in Settings (the
+  steps are written out there).
 - A Back that says where it leads. Every place has an address (a shelf and
   how far into it you are, a search, a page, Ask, Deck), so "‹ Alma 32" or
   "‹ Results" in the reader bar, and at the top of every list on a phone,
@@ -306,6 +312,15 @@ devices.
    then **Add to Home Screen**, and open it from there (this is what lets the
    library stay on the device). Enter the passphrase; the library downloads
    once and everything works from then on, offline included.
+
+To have highlights and notes follow you between devices (optional): create a
+second, **private** repository named `gospel-library-sync`; under your
+picture, Settings, Developer settings, Personal access tokens, Fine-grained
+tokens, generate a token with Repository access "Only select repositories"
+(that one) and the repository permission Contents set to "Read and write";
+then in the app's Settings, under "Sync between devices", enter your user
+name and paste the token, on each device. The app keeps one sealed file
+there, `marks.json.enc` (`web/sync.js`), and the token stays on the device.
 
 Nightly runs that change nothing publish nothing. When conference talks or
 edits arrive, the app shows "A newer library is available: 12 pages changed,
