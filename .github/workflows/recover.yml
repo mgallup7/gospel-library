@@ -1,0 +1,60 @@
+name: Recover the library state
+
+# One-off repair: on November 15, 2026 a build could not download the saved state, started from an
+# empty library and saved that over the real one, losing the Joseph Smith Papers pages and the
+# meaning vectors gathered over two weeks. The library a build published is the same database,
+# so this takes the published library from an earlier build and puts it back as the state.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "The build whose published library to bring back"
+        required: true
+
+concurrency:
+  group: library-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+      - name: Bring back the published library
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIBRARY_PASSPHRASE: ${{ secrets.LIBRARY_PASSPHRASE }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p got work
+          gh run download "$RUN_ID" --name github-pages --dir got
+          tar -xf got/artifact.tar -C work
+          ls -la work/data | head -20
+          python -m gospel_library unseal work/data/library.bin work/library.sqlite
+          python - <<'PY'
+          import sqlite3
+          c = sqlite3.connect("work/library.sqlite")
+          docs = c.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+          jsp = c.execute("SELECT COUNT(*) FROM documents d JOIN collections k ON k.id = d.collection_id WHERE k.slug LIKE 'jsp-%'").fetchone()[0]
+          vec = c.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+          print(f"::notice::recovered library: {docs} documents, {jsp} Joseph Smith Papers pages, {vec} vectors")
+          assert c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+          assert jsp > 30000 and vec > 300000, "this is not the full library; nothing was changed"
+          PY
+          python -m gospel_library seal work/library.sqlite work/library.bin
+          # keep what is there now beside it, in case this needs undoing
+          mkdir -p old && gh release download state --pattern library.bin --dir old && mv old/library.bin old/library-before-recovery.bin && gh release upload state old/library-before-recovery.bin --clobber
+          gh release upload state work/library.bin --clobber
+          echo "::notice::state restored from build $RUN_ID"
