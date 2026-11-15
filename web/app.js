@@ -4,6 +4,7 @@
 import { shortTitle as shortTitleOf, chapterOf, papersCitation, papersPageOf } from "./lib/cite.js";
 import { pickDelta, looksLikeIos, iosVersion, needsNewerIos } from "./lib/checks.js";
 import { esc, mb } from "./lib/format.js";
+import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrases } from "./lib/phrase.js";
 
 (() => {
   "use strict";
@@ -1654,6 +1655,7 @@ import { esc, mb } from "./lib/format.js";
   let docMarks = new Map(); // pid -> mark, for the page open now
   async function applyMarks(doc, body) {
     docMarks = new Map();
+    applyPhrases(doc, body); // the words marked inside verses, read and drawn on their own
     if (!window.Marks || !doc?.uri) return;
     let list = [];
     try { list = await window.Marks.forDoc(doc.uri); } catch (_) { return; }
@@ -1724,9 +1726,8 @@ import { esc, mb } from "./lib/format.js";
   }
   function citeUnit(x) { return x.kind === "verse" && currentDoc?.citation ? `${chapterOf(currentDoc.citation)}:${x.verse}` : crumbFor(currentDoc) || currentDoc?.title || ""; }
   // Color the selected paragraphs; the same color again takes it off
-  async function highlightSelection(color) {
+  async function highlightSelection(color, units = selectedUnits()) {
     if (!currentDoc || !window.Marks) return;
-    const units = selectedUnits();
     if (!units.length) return;
     const body = $(".doc", readerPane);
     const page = currentDoc; // the page as it is now: a move while the marks save must not send them to another page
@@ -2039,6 +2040,186 @@ import { esc, mb } from "./lib/format.js";
     if (head) head.append(line); else body.prepend(line);
   }
 
+  // ---- Phrase highlights ----------------------------------------------------
+  // A color on some words inside a verse or paragraph, apart from a color on the whole of it.
+  // The words are chosen with the browser's own text selection (a long press and drag on an
+  // iPad, a mouse drag on a desk); a bar docked at the foot of the page then offers the colors.
+  // It sits at the foot, not by the words, so that the iPad's own Copy and Look Up callout,
+  // which comes up by the words on its own, is never under it; nothing here stops that callout.
+  // A phrase is kept by word indexes within its paragraph (lib/phrase.js) under its own id, so
+  // a verse can hold several, beside its own whole-verse color and note.
+  let docPhrases = new Map(); // id -> phrase mark, for the page open now
+  let phraseSel = null;       // what the bar is offering: { mode: "new", pid, start, end, text }, { mode: "edit", id } or { mode: "verses", pids }
+  let phraseTimer = null, phraseHide = null;
+  async function applyPhrases(doc, body) {
+    docPhrases = new Map();
+    hidePhraseBar();
+    if (!window.Marks || !window.Marks.phrases || !doc?.uri) return;
+    let list = [];
+    try { list = await window.Marks.phrases(doc.uri); } catch (_) { return; }
+    if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
+    for (const m of list) docPhrases.set(m.id, m);
+    // every paragraph that has a phrase now, and every one that shows one from before
+    const pids = new Set(list.map((m) => m.pid));
+    for (const old of body.querySelectorAll("mark.hlp")) { const u = old.closest(UNIT_SEL); if (u && u.id) pids.add(u.id); }
+    for (const pid of pids) drawPhrases(body, pid);
+  }
+  // One paragraph's phrases drawn afresh: where two overlap the later one has the shared words;
+  // one whose words are no longer in the paragraph (the text changed under it) is left undrawn.
+  function drawPhrases(body, pid) {
+    const unit = body ? body.querySelector(`#${CSS.escape(pid)}`) : null;
+    if (!unit) return;
+    try {
+      unwrapPhrases(unit);
+      const { text } = unitText(unit);
+      const spans = wordSpans(text);
+      const here = [];
+      for (const m of docPhrases.values()) {
+        if (m.pid !== pid) continue;
+        const at = locate(text, spans, m);
+        if (at) here.push({ id: m.id, start: at.start, end: at.end, color: m.color, updated: m.updated });
+      }
+      for (const r of paint(here)) wrapWords(unit, r.start, r.end, `hlp hl-${r.color}`, { "data-phrase": r.id });
+    } catch (err) { window.GLLog?.note("phrases.draw", err); }
+  }
+  function dropTextSelection() { try { const s = window.getSelection ? window.getSelection() : null; if (s) s.removeAllRanges(); } catch (_) {} }
+  // What the browser's text selection covers in the page: words of one paragraph, or several paragraphs
+  function readTextSelection() {
+    const body = $(".doc", readerPane);
+    const s = window.getSelection ? window.getSelection() : null;
+    if (!body || !s || !s.rangeCount || s.isCollapsed) return null;
+    const range = s.getRangeAt(0);
+    const top = range.commonAncestorContainer;
+    if (!top || !body.contains(top)) return null;
+    const anc = top.nodeType === 1 ? top : top.parentElement;
+    const one = anc ? anc.closest(UNIT_SEL) : null;
+    const units = one ? [one] : [...body.querySelectorAll(UNIT_SEL)].filter((u) => range.intersectsNode(u));
+    const hits = [];
+    for (const u of units) { if (!u.id) continue; const w = rangeWords(u, range); if (w) hits.push({ pid: u.id, start: w.start, end: w.end, text: w.text }); }
+    if (!hits.length) return null;
+    return hits.length === 1 ? { mode: "new", ...hits[0] } : { mode: "verses", pids: hits.map((h) => h.pid) };
+  }
+  // The selection is read once it has been still for a moment (it changes with every move of a
+  // handle). When it goes, the bar waits: a tap on the bar itself lets the selection go on an
+  // iPad before the tap arrives, and the tap must still find what it was offered.
+  function onTextSelection() {
+    if (!currentDoc || readerPane.hidden || !window.Marks || !window.Marks.save) return;
+    const got = readTextSelection();
+    if (got) { clearTimeout(phraseHide); phraseSel = got; showPhraseBar(); return; }
+    if (phraseSel && phraseSel.mode !== "edit") { clearTimeout(phraseHide); phraseHide = setTimeout(hidePhraseBar, 700); }
+  }
+  document.addEventListener("selectionchange", () => { clearTimeout(phraseTimer); phraseTimer = setTimeout(onTextSelection, 220); });
+  function hidePhraseBar() {
+    clearTimeout(phraseHide);
+    phraseSel = null;
+    const bar = $(".phrase-bar", readerPane);
+    if (bar) bar.remove();
+    readerPane.classList.remove("phrasing");
+  }
+  function showPhraseBar() {
+    const s = phraseSel;
+    const old = $(".phrase-bar", readerPane);
+    if (old) old.remove();
+    const rec = s && s.mode === "edit" ? docPhrases.get(s.id) : null;
+    if (!s || (s.mode === "edit" && !rec)) { hidePhraseBar(); return; }
+    const words = s.mode === "edit" ? rec.text : s.text;
+    const label = s.mode === "verses" ? `${s.pids.length} passages` : `“${words.length > 60 ? words.slice(0, 58) + "…" : words}”`;
+    const name = (c) => window.Marks.COLOR_NAME[c];
+    const bar = el("div", { class: "phrase-bar", role: "group", "aria-label": s.mode === "verses" ? "The selected passages" : "The selected words" }, [
+      el("span", { class: "n", text: label }),
+      el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": String(!!rec && rec.color === c), "aria-label": `Highlight ${name(c)}`, title: `Highlight ${name(c)}`, onclick: () => phraseColor(c) }))),
+      el("button", { type: "button", class: "text-btn ph-note", text: "Note", title: s.mode === "verses" ? "A note on these passages, first to last" : "A note on the verse or paragraph these words are in", onclick: phraseNote }),
+      s.mode === "edit" ? el("button", { type: "button", class: "text-btn danger ph-remove", text: "Remove", title: "Take this highlight off", onclick: () => phraseRemove(rec) }) : null,
+      el("button", { type: "button", class: "text-btn ph-clear", text: s.mode === "edit" ? "Done" : "Clear", onclick: () => { if (s.mode !== "edit") dropTextSelection(); hidePhraseBar(); } }),
+    ].filter(Boolean));
+    // A mouse press on the bar leaves the page's selection as it is, so the words stay lit while a
+    // color is chosen. Only a real mouse: a finger's press is never touched.
+    let mouse = false;
+    bar.addEventListener("pointerdown", (e) => {
+      mouse = e.pointerType === "mouse";
+      // the tap is coming: the bar stays for it, and goes by itself if it never does
+      clearTimeout(phraseHide);
+      phraseHide = setTimeout(() => { if (phraseSel && phraseSel.mode !== "edit" && !readTextSelection()) hidePhraseBar(); }, 2500);
+    });
+    bar.addEventListener("mousedown", (e) => { if (mouse) e.preventDefault(); });
+    readerPane.append(bar);
+    readerPane.classList.add("phrasing");
+    // too full for one row (a phone, with Remove in it): the words give way, then the controls close up
+    for (const level of ["snug", "close"]) { if (bar.scrollWidth <= bar.clientWidth + 1) break; bar.classList.add(level); }
+    placeToast(); // a toast still showing moves up over the bar
+  }
+  function phraseFields(page, unit, s, color) {
+    const u = unitInfo(unit);
+    return { kind: "phrase", uri: page.uri, doc_id: page.id, pid: s.pid, verse: u.verse, start: s.start, end: s.end, color, text: s.text, citation: citeUnit(u), title: page.title };
+  }
+  // A color from the bar: on new words it marks them (the same color on the same words takes it
+  // off), on a marked phrase it changes the color, on several passages it colors each whole.
+  async function phraseColor(color) {
+    const s = phraseSel, page = currentDoc, body = $(".doc", readerPane);
+    if (!s || !page || !body) return;
+    if (s.mode === "verses") {
+      const units = s.pids.map((pid) => body.querySelector(`#${CSS.escape(pid)}`)).filter(Boolean).map(unitInfo);
+      dropTextSelection(); hidePhraseBar();
+      if (units.length) highlightSelection(color, units);
+      return;
+    }
+    const old = s.mode === "edit" ? docPhrases.get(s.id) : docPhrases.get(`${page.uri}#${s.pid}~${s.start}-${s.end}`);
+    if (old && old.color === color) { phraseRemove(old); return; }
+    const pid = old ? old.pid : s.pid;
+    const unit = body.querySelector(`#${CSS.escape(pid)}`);
+    if (!unit) return;
+    try {
+      const rec = await window.Marks.save(old ? { ...old, color } : phraseFields(page, unit, s, color));
+      // an older phrase that lies wholly under the new one would show none of its words: it goes
+      const under = old ? [] : [...docPhrases.values()].filter((m) => m.pid === pid && m.id !== rec.id && m.start >= rec.start && m.end <= rec.end);
+      for (const m of under) { await window.Marks.removeId(m.id); docPhrases.delete(m.id); }
+      dropTextSelection(); hidePhraseBar();
+      if (currentDoc !== page) return;
+      docPhrases.set(rec.id, rec);
+      drawPhrases($(".doc", readerPane), pid);
+      if (old) toast("Color changed.", { action: "Undo", onAction: () => restorePhrase(page, old, "Color put back.") });
+      else toast("Highlighted.");
+    } catch (_) { toast("Could not save that mark."); }
+  }
+  async function phraseRemove(rec) {
+    const page = currentDoc;
+    if (!rec || !page) return;
+    try {
+      await window.Marks.removeId(rec.id);
+      dropTextSelection(); hidePhraseBar();
+      if (currentDoc === page) { docPhrases.delete(rec.id); drawPhrases($(".doc", readerPane), rec.pid); }
+      toast("Highlight removed.", { action: "Undo", onAction: () => restorePhrase(page, rec, "Highlight put back.") });
+    } catch (_) { toast("Could not save that mark."); }
+  }
+  // a phrase put back as it was (the Undo of a removal or a change of color)
+  async function restorePhrase(page, rec, said) {
+    try {
+      const back = await window.Marks.save(rec);
+      if (currentDoc === page) { docPhrases.set(back.id, back); drawPhrases($(".doc", readerPane), back.pid); }
+      toast(said);
+    } catch (_) { toast("Could not put that back."); }
+  }
+  // Note: the note is the verse's (or the paragraph's) own, as from the selection bar
+  function phraseNote() {
+    const s = phraseSel, body = $(".doc", readerPane);
+    if (!s || !body) return;
+    const pids = s.mode === "verses" ? s.pids : [s.mode === "edit" ? docPhrases.get(s.id)?.pid : s.pid];
+    const units = pids.map((pid) => (pid ? body.querySelector(`#${CSS.escape(pid)}`) : null)).filter(Boolean).map(unitInfo);
+    dropTextSelection(); hidePhraseBar();
+    if (units.length) editNote(units[0], units.length > 1 ? units[units.length - 1] : null);
+  }
+  // Marks that came from another device (the sync): the page open draws them, and the list of
+  // marks if it is showing. A change made here was drawn by whoever made it.
+  window.addEventListener("marks:change", (e) => {
+    if (!e.detail || e.detail.local) return;
+    statsCache = null;
+    if (currentDoc && state.docId === currentDoc.id) {
+      const b = $(".doc", readerPane);
+      if (b) { for (const pid of [...docMarks.keys()]) undrawMark(b, pid); docMarks.clear(); applyMarks(currentDoc, b); }
+    }
+    if ($(".marks-sec")) renderHome();
+  });
+
   // Highlights and notes across the library, newest first (the latest few, or all of them on request),
   // with a way to keep them safe
   // The list can be searched (words, citation, note) and narrowed to one color; it shows the latest
@@ -2053,21 +2234,37 @@ import { esc, mb } from "./lib/format.js";
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
     const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
-    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked` : "Nothing marked yet" }), allBtn]));
+    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? (marks.some((m) => m.kind === "phrase" || m.kind === "word") ? `${marks.length} ${marks.length === 1 ? "mark" : "marks"}` : `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked`) : "Nothing marked yet" }), allBtn]));
     const list = el("div", { class: "mark-list" });
-    const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
+    // A phrase reads as its words in quotation marks under its verse; a Hebrew or Greek word as
+    // its verse and the word with its meaning ("Revelation 3:16, χλιαρὸς lukewarm").
+    const where = (m) => (m.kind === "word" ? [m.citation, m.text].filter(Boolean).join(", ") : m.citation || m.title || m.uri);
+    const said = (m) => {
+      if (m.kind === "word") return `${m.lang === "he" ? "Hebrew" : "Greek"} word${m.strongs ? `, Strong's ${m.strongs}` : ""}`;
+      const t = (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "");
+      return m.kind === "phrase" && t ? `“${t}”` : t;
+    };
+    const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}${m.kind === "phrase" || m.kind === "word" ? ` mk-${m.kind}` : ""}`, onclick: async () => {
       let id = m.doc_id;
       try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
-      if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
+      if (!id) { toast("That page is not in the library now."); return; }
+      // a word opens its chapter with the Hebrew or Greek showing: a page drawn now shows it by
+      // the remembered choice, a page already open is asked to
+      if (m.kind === "word") store.set("orig", true);
+      await openDoc(id, m.pid);
+      if (m.kind === "word") {
+        const d = $(".doc", readerPane), b = $(".reader-bar .orig-btn", readerPane);
+        if (d && b && !b.disabled && !b.classList.contains("on") && !d.classList.contains("with-orig")) b.click();
+      }
     } }, [
-      el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
-      el("span", { class: "mk-text", text: (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "") }),
+      el("span", { class: "mk-cite", text: where(m) }),
+      el("span", { class: "mk-text", text: said(m) }),
       m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
     ].filter(Boolean));
     function draw() {
       const words = marksFilter.q.toLowerCase().split(/\s+/).filter(Boolean);
       const hits = marks.filter((m) => (!marksFilter.color || m.color === marksFilter.color)
-        && words.every((w) => [m.text, m.citation, m.title, m.note].some((f) => (f || "").toLowerCase().includes(w))));
+        && words.every((w) => [m.text, m.citation, m.title, m.note, m.strongs].some((f) => (f || "").toLowerCase().includes(w))));
       const shown = hits.slice(0, allMarksShown ? hits.length : 10);
       allBtn.hidden = hits.length <= 10;
       allBtn.textContent = allMarksShown ? "Latest only" : `All ${hits.length}`;
@@ -2078,7 +2275,7 @@ import { esc, mb } from "./lib/format.js";
       list.replaceChildren(...[...books].flatMap(([b, ms]) => [el("h3", { class: "mk-book", text: b }), ...ms.map(row)]));
     }
     if (!marks.length) {
-      sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note: your marks come back whenever the page opens, and are listed here." }));
+      sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note; or select a few words and give them a color. Your marks come back whenever the page opens, and are listed here." }));
     } else {
       if (marks.length > 3) {
         const find = el("input", { type: "search", class: "mk-find", placeholder: "Find in your marks", "aria-label": "Find in your highlights and notes", value: marksFilter.q });
@@ -2370,6 +2567,15 @@ import { esc, mb } from "./lib/format.js";
     if (e.defaultPrevented || e.target.closest("a, button, .notes, header, .orig")) return;
     const unit = e.target.closest("p.verse, .body-block p, .body-block li, p[id]");
     if (!unit || !unit.id || !unit.closest(".doc")) return;
+    // the click that ends a drag over the words is not a tap on the verse: the words are selected, not the verse
+    try {
+      const s = window.getSelection ? window.getSelection() : null;
+      if (s && s.rangeCount && !s.isCollapsed && String(s).trim() && s.getRangeAt(0).intersectsNode(unit)) return;
+    } catch (_) {}
+    // a tap on words already marked offers their colors, a note and Remove
+    const ph = e.target.closest("mark.hlp");
+    if (ph && docPhrases.has(ph.getAttribute("data-phrase"))) { clearTimeout(phraseHide); phraseSel = { mode: "edit", id: ph.getAttribute("data-phrase") }; showPhraseBar(); return; }
+    if (phraseSel) hidePhraseBar();
     unit.classList.toggle("sel");
     updateSelectBar();
   }
@@ -2513,7 +2719,7 @@ import { esc, mb } from "./lib/format.js";
     if (!toastEl) return;
     const vh = window.innerHeight;
     let top = vh;
-    for (const n of [wide() ? null : $("#tabs"), $(".select-bar", readerPane), listPane.querySelector(".ask-dock")]) {
+    for (const n of [wide() ? null : $("#tabs"), $(".select-bar", readerPane), $(".phrase-bar", readerPane), listPane.querySelector(".ask-dock")]) {
       if (!n || n.offsetParent === null && getComputedStyle(n).position !== "fixed") continue;
       const r = n.getBoundingClientRect();
       if (r.height > 0 && r.bottom > vh - 120 && r.top < vh) top = Math.min(top, r.top);

@@ -686,6 +686,37 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .doc .hl.is-target { padding-left: 12px; margin-left: -12px; }
 .doc .note-mark { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 24px; margin-left: 4px; vertical-align: -4px; border-radius: 6px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .doc .note-mark svg { width: 15px; height: 15px; }
+/* Words marked inside a verse: a stronger tint than a whole verse's color, so a phrase shows on a
+   verse that is itself colored, mixed with the paper so it is the same color on any verse. A
+   browser without color-mix keeps the plain tint (.doc .hl-y above), which is why this is asked. */
+.doc mark.hlp { color: inherit; padding: .08em 0; border-radius: 3px; cursor: pointer; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+@supports (background: color-mix(in srgb, red 50%, blue)) {
+  .doc mark.hlp.hl-y { background: color-mix(in srgb, var(--hl-y-dot) 55%, var(--paper)); }
+  .doc mark.hlp.hl-g { background: color-mix(in srgb, var(--hl-g-dot) 50%, var(--paper)); }
+  .doc mark.hlp.hl-b { background: color-mix(in srgb, var(--hl-b-dot) 45%, var(--paper)); }
+  .doc mark.hlp.hl-p { background: color-mix(in srgb, var(--hl-p-dot) 50%, var(--paper)); }
+  /* on a dark page the words are light: less of the color, so they still read */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-y { background: color-mix(in srgb, var(--hl-y-dot) 34%, var(--paper)); }
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-g { background: color-mix(in srgb, var(--hl-g-dot) 34%, var(--paper)); }
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-b { background: color-mix(in srgb, var(--hl-b-dot) 36%, var(--paper)); }
+    :root:not([data-theme="light"]) .doc mark.hlp.hl-p { background: color-mix(in srgb, var(--hl-p-dot) 34%, var(--paper)); }
+  }
+}
+/* The bar for the words selected: docked at the foot of the page like the selection bar (and in
+   its place while both would show), clear of the iPad's own callout, which sits by the words. */
+.phrase-bar { position: sticky; bottom: 0; order: 2; display: flex; align-items: center; gap: 6px; padding: 10px calc(14px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(14px + var(--safe-left)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
+@media (max-width: 759px), (max-height: 499px) { #reader .phrase-bar { bottom: var(--tabs-h); padding-bottom: 10px; } }
+.phrase-bar .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-13); color: var(--ink-2); }
+.phrase-bar .text-btn { white-space: nowrap; height: 44px; flex: none; }
+.phrase-bar .hl-dots { flex: none; }
+/* too full for one row (a phone, with Remove in it): the words give way, then the controls close up (app.js showPhraseBar) */
+.phrase-bar.snug { justify-content: space-between; }
+.phrase-bar.snug .n { display: none; }
+.phrase-bar.close { gap: 2px; }
+.phrase-bar.close .hl-dots { gap: 10px; margin: 0 2px; }
+.phrase-bar.close .text-btn { padding: 0 6px; }
+#reader.phrasing > .select-bar { display: none; }
 .hl-dots { display: inline-flex; gap: 6px; align-items: center; }
 .hl-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0,0,0,.08); }
 .hl-dot.hl-y { background: var(--hl-y-dot); } .hl-dot.hl-g { background: var(--hl-g-dot); } .hl-dot.hl-b { background: var(--hl-b-dot); } .hl-dot.hl-p { background: var(--hl-p-dot); }
@@ -736,6 +767,9 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .mark-row:active { background: var(--chrome); }
 .mk-cite { font: 600 var(--ui-13) var(--sans); color: var(--ink-2); }
 .mk-text { font: calc(var(--reading-size) - 2px)/1.45 var(--serif); }
+/* a Hebrew or Greek word: the word itself leads, in the ink of a passage; what it is sits small under it */
+.mark-row.mk-word .mk-cite { font-size: var(--ui-15); color: var(--ink); }
+.mark-row.mk-word .mk-text { font: var(--ui-13)/1.4 var(--sans); color: var(--ink-2); }
 .mk-note { display: flex; gap: 6px; align-items: flex-start; font: var(--ui-14)/1.4 var(--sans); color: var(--ink); margin-top: 2px; }
 .mk-note .ic { display: inline-flex; color: var(--accent); flex: none; margin-top: 2px; }
 .mk-note .ic svg { width: 14px; height: 14px; }
@@ -1182,12 +1216,6 @@ a.toast-action { display: inline-flex; align-items: center; }
 .bcard .w.first { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bcard .w.drop { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--target); }
 .bcard .vn { font: 600 .6em var(--sans); color: var(--ink-3); vertical-align: super; margin: 0 2px 0 6px; }
-/* the reader's highlight color, carried onto the card: on the verse number, or beside a talk's citation; on the stage, a bar beside the words */
-.bcard .vn.rc { color: #2a2200; padding: 1px 5px; border-radius: 5px; }
-.bcard .rc-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
-.bcard .rc-y { background: var(--hl-y-dot); } .bcard .rc-g { background: var(--hl-g-dot); } .bcard .rc-b { background: var(--hl-b-dot); } .bcard .rc-p { background: var(--hl-p-dot); }
-.stage-text .rc { display: block; padding-left: 2.6vmin; border-left: .9vmin solid transparent; }
-.stage-text .rc-y { border-left-color: #f3cf3a; } .stage-text .rc-g { border-left-color: #6cbf6a; } .stage-text .rc-b { border-left-color: #6b9ff0; } .stage-text .rc-p { border-left-color: #f08bb5; }
 .port { display: inline-block; width: 17px; height: 17px; border-radius: 50%; background: var(--accent); border: 2px solid var(--paper); box-shadow: 0 0 0 1.5px var(--accent); vertical-align: middle; margin: 0 5px 0 4px; touch-action: none; cursor: grab; position: relative; } /* the margins keep the dot and its ring off the words either side */
 .port::before { content: ""; position: absolute; inset: -14px; border-radius: 50%; }
 .port.src, .port.drop { transform: scale(1.2); }
@@ -1337,6 +1365,13 @@ a.toast-action { display: inline-flex; align-items: center; }
 .ow-details p { margin: 0 0 .45em; }
 .ow-section { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--rule); }
 .ow-section .nm { margin-bottom: 4px; }
+/* a word he colored: the tile takes the reader's tint, and the word's sheet offers the four colors and None */
+.orig .ow.hl-y { background: var(--hl-y); border-color: var(--hl-y-dot); } .orig .ow.hl-g { background: var(--hl-g); border-color: var(--hl-g-dot); }
+.orig .ow.hl-b { background: var(--hl-b); border-color: var(--hl-b-dot); } .orig .ow.hl-p { background: var(--hl-p); border-color: var(--hl-p-dot); }
+.ow-colors { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; font-family: var(--sans); }
+.ow-colors .nm { margin: 0; }
+.ow-colors .ow-none { height: 44px; }
+.ow-colors .ow-none[aria-pressed="true"] { color: var(--ink-2); }
 .ow-note { color: var(--ink-2); font-style: italic; }
 .ow-lemma .lemma { font-family: "SBL Hebrew", "Ezra SIL", "SBL Greek", "Gentium Plus", "Times New Roman", "Arial Hebrew", serif; font-size: 1.25em; }
 .ow-type { color: var(--ink-2); }

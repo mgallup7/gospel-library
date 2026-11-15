@@ -51,6 +51,7 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
     store.set("orig", true);
     btn.classList.add("on");
     body.classList.add("with-orig");
+    data.uri = doc.uri; data.title = doc.title; // for a word's highlight: the page it is on
     const byVerse = new Map(data.verses.map((v) => [v.verse, v]));
     let placed = 0;
     for (const p of body.querySelectorAll("p.verse")) {
@@ -64,6 +65,8 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
     const first = body.querySelector("p.verse");
     if (title && first) { first.before(block(title, data, true)); placed++; }
     if (!placed) { GL().toast("The verses here could not be matched to the original text."); }
+    shown = { uri: doc.uri, body };
+    paintTiles();
     if (!body.querySelector(".orig-credit")) body.append(el("div", { class: "orig-credit" }, [
       el("span", { text: CREDIT + ". " }),
       el("button", { type: "button", class: "text-btn small orig-legend-btn", text: "What the marks mean", onclick: () => legendSheet(data.lang || BIBLE[doc.volume]) }),
@@ -114,6 +117,52 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
     return m ? Number(m[1]) : NaN;
   }
 
+  // ---- a color on a word
+  // A Hebrew or Greek word can carry one of the reader's four colors, kept with his other marks
+  // (marks.js, kind "word") under the word's own place: book, chapter, verse and its number in
+  // the verse, so the same word elsewhere is not colored with it. The tiles take their colors
+  // when a chapter's words are shown and whenever the marks change (here, or from another device).
+  const wordId = (w, v, data) => (data && data.book && Number.isFinite(data.chapter) && Number.isFinite(v.verse) && Number.isFinite(w.seq) && (v.lang === "he" || v.lang === "gr")
+    ? `orig:${data.book}.${data.chapter}.${v.verse}.${w.seq}:${v.lang}` : null);
+  let shown = null; // { uri, body }: the chapter whose tiles are up
+  function colorTile(tile, color) {
+    for (const c of window.Marks.COLORS) tile.classList.remove(`hl-${c}`);
+    tile.classList.toggle("marked", !!color);
+    if (color) tile.classList.add(`hl-${color}`);
+  }
+  async function paintTiles() {
+    const at = shown;
+    if (!at || !at.body.isConnected || !window.Marks || !window.Marks.words) return;
+    let list = [];
+    try { list = await window.Marks.words(at.uri); } catch (_) { return; }
+    if (shown !== at || !at.body.isConnected) return;
+    const colors = new Map(list.map((m) => [m.id, m.color]));
+    for (const tile of at.body.querySelectorAll(".orig .ow[data-wid]")) colorTile(tile, colors.get(tile.getAttribute("data-wid")) || null);
+  }
+  window.addEventListener("marks:change", () => { paintTiles(); });
+  // The row in a word's sheet: the four colors and None. The choice is saved and drawn at once.
+  function colorRow(w, v, data, cite) {
+    const id = wordId(w, v, data);
+    if (!id || !window.Marks || !window.Marks.save) return null;
+    const name = (c) => window.Marks.COLOR_NAME[c];
+    const press = (color) => { for (const b of row.querySelectorAll("button")) b.setAttribute("aria-pressed", String((b.getAttribute("data-color") || null) === color)); };
+    const choose = async (color) => {
+      try {
+        if (color) await window.Marks.save({ kind: "word", id, uri: data.uri || "", doc_id: data.doc_id, pid: v.pid || null, verse: v.verse, color,
+          text: `${w.word} ${cleanGloss(w.gloss)}`.trim(), citation: cite, title: data.title || "", strongs: w.strongs || "" });
+        else await window.Marks.removeId(id);
+        press(color);
+      } catch (_) { GL().toast("Could not save that mark."); }
+    };
+    const row = el("div", { class: "ow-colors", role: "group", "aria-label": "Highlight this word" }, [
+      el("span", { class: "nm", text: "Highlight" }),
+      el("span", { class: "hl-dots" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${name(c)}`, title: `Highlight ${name(c)}`, onclick: () => choose(c) }))),
+      el("button", { type: "button", class: "text-btn ow-none", "aria-pressed": "true", text: "None", title: "No highlight on this word", onclick: () => choose(null) }),
+    ]);
+    window.Marks.getId(id).then((m) => { if (m) press(m.color); }).catch(() => {});
+    return row;
+  }
+
   // One verse's words, in reading order (right to left for Hebrew), each a
   // tile: the word, how it sounds, what it means.
   function block(v, data, isTitle = false) {
@@ -128,6 +177,8 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
         el("span", { class: "t", dir: "ltr", lang: "en", text: w.translit || "" }),
         el("span", { class: "g", dir: "ltr", lang: "en", text: cleanGloss(w.gloss) }),
       ]);
+      const wid = wordId(w, v, data);
+      if (wid) tile.setAttribute("data-wid", wid);
       wrap.append(tile);
     }
     return wrap;
@@ -176,7 +227,7 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
       ].filter(Boolean)),
     ]);
     const details = el("div", { class: "ow-details" }, [el("div", { class: "status", text: "Looking it up…" })]);
-    bodyEl.replaceChildren(head, details);
+    bodyEl.replaceChildren(...[head, colorRow(w, v, data, cite), details].filter(Boolean));
     openSheet(sheet);
     const [lex, morph] = await Promise.all([
       w.strongs ? GL().api("lexicon", { strongs: w.strongs, limit: 0 }).catch(() => null) : Promise.resolve(null),

@@ -8,6 +8,169 @@ const barDo = async (page, sel, item) => {
   await page.click(`#reader .select-bar .size-menu >> text=${item}`);
 };
 import { box, readerTool } from "./helpers.mjs";
+
+// ---- words marked inside a verse
+// The page's text selection laid over some words of one paragraph: by a real mouse drag where
+// there is a mouse (the iPad's size), set from the page where there is not (the phone's).
+// the words' place in the paragraph, whatever marks already divide its text: a Range over them
+const RANGE_OF = `(pid, words) => {
+  const p = document.querySelector("#reader .doc #" + pid);
+  const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement.closest(".verse-number, sup.marker, .note-mark") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
+  const nodes = []; let text = "";
+  while (w.nextNode()) { nodes.push({ n: w.currentNode, at: text.length }); text += w.currentNode.nodeValue; }
+  const from = text.indexOf(words), to = from + words.length;
+  if (from < 0) return null;
+  const spot = (i, end) => { const x = nodes.filter((o) => (end ? o.at < i : o.at <= i)).pop(); return [x.n, i - x.at]; };
+  const r = document.createRange(); r.setStart(...spot(from, false)); r.setEnd(...spot(to, true));
+  return r;
+}`;
+const wordsBox = (page, pid, words) => page.evaluate(`(() => {
+  const r = (${RANGE_OF})(${JSON.stringify(pid)}, ${JSON.stringify(words)});
+  if (!r) return null;
+  const rects = [...r.getClientRects()].filter((b) => b.width > 1);
+  const a = rects[0], z = rects[rects.length - 1];
+  return { x1: a.left + 1, y1: a.top + a.height / 2, x2: z.right - 1, y2: z.top + z.height / 2 };
+})()`);
+const selectWords = async (page, pid, words, mouse) => {
+  await page.evaluate((pid) => document.querySelector(`#reader .doc #${pid}`).scrollIntoView({ block: "center" }), pid);
+  await page.waitForTimeout(150);
+  if (mouse) {
+    const b = await wordsBox(page, pid, words);
+    await page.mouse.move(b.x1, b.y1);
+    await page.mouse.down();
+    await page.mouse.move((b.x1 + b.x2) / 2, b.y2, { steps: 4 });
+    await page.mouse.move(b.x2, b.y2, { steps: 4 });
+    await page.mouse.up();
+  } else {
+    await page.evaluate(`(() => { const r = (${RANGE_OF})(${JSON.stringify(pid)}, ${JSON.stringify(words)}); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); })()`);
+  }
+  await page.waitForSelector("#reader .phrase-bar", { timeout: 5000 });
+};
+const marked = (page, pid) => page.evaluate((pid) => [...document.querySelectorAll(`#reader .doc #${pid} mark.hlp`)].map((m) => `${m.className.replace("hlp hl-", "")}:${m.textContent}`), pid);
+const kept = (page) => page.evaluate(async () => (await window.Marks.phrases(window.GL.reading.doc.uri)).map((r) => `${r.pid}~${r.start}-${r.end}:${r.color}:${r.text}`).sort());
+async function phrases(page, { name, viewport, check, shot }) {
+  const mouse = viewport.width >= 760;
+  const undo = async () => { await page.waitForSelector(".toast.show .toast-action", { timeout: 3000 }); await page.click(".toast.show .toast-action"); await page.waitForTimeout(500); };
+  // verse 21 is yellow and carries a note: a phrase inside it is its own mark, beside those
+  await selectWords(page, "p21", "a perfect knowledge of things", mouse);
+  check(!(await page.evaluate(() => document.querySelector("#reader .doc #p21").classList.contains("sel"))), "selecting words does not select the verse");
+  check(/a perfect knowledge of things/.test(await page.textContent("#reader .phrase-bar .n")) || viewport.width < 760, "the bar names the words");
+  check(await page.evaluate(() => { const b = document.querySelector("#reader .phrase-bar"); const r = b.getBoundingClientRect(); return b.scrollWidth <= b.clientWidth + 1 && r.bottom <= window.innerHeight + 1 && r.top > window.innerHeight / 2; }), "the bar is docked at the foot of the page, on one row");
+  await shot("06-phrase-bar");
+  await page.click("#reader .phrase-bar .hl-dot.hl-g");
+  await page.waitForTimeout(500);
+  check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["g:a perfect knowledge of things"]), `exactly those words are green: ${JSON.stringify(await marked(page, "p21"))}`);
+  check(await page.evaluate(() => { const p = document.querySelector("#reader .doc #p21"); return p.classList.contains("hl-y") && !!p.querySelector(".note-mark"); }), "the verse keeps its own yellow and its note");
+  check(!(await page.$("#reader .phrase-bar")) && (await page.evaluate(() => window.getSelection().isCollapsed)), "the bar and the selection go once the words are marked");
+  const rec = await page.evaluate(async () => (await window.Marks.phrases(window.GL.reading.doc.uri))[0]);
+  check(rec && rec.kind === "phrase" && rec.id === `${rec.uri}#p21~${rec.start}-${rec.end}` && rec.end - rec.start === 4 && rec.color === "g" && rec.text === "a perfect knowledge of things" && rec.citation === "Alma 32:21", `the record: ${JSON.stringify(rec)}`);
+  check((await page.evaluate(async () => (await window.Marks.forDoc(window.GL.reading.doc.uri)).some((m) => m.kind === "phrase"))) === false, "forDoc still returns verse and paragraph marks only");
+  // a second phrase in the same verse; then one over part of the first: the newer has the shared words
+  await selectWords(page, "p21", "which are not seen", mouse);
+  await page.click("#reader .phrase-bar .hl-dot.hl-b");
+  await page.waitForTimeout(400);
+  await selectWords(page, "p21", "not to have a perfect", mouse);
+  await page.click("#reader .phrase-bar .hl-dot.hl-p");
+  await page.waitForTimeout(400);
+  check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["p:not to have a perfect", "g:knowledge of things", "b:which are not seen,"]), `three phrases, the newer over the older where they meet: ${JSON.stringify(await marked(page, "p21"))}`);
+  await shot("07-phrases");
+  // a tap on a marked phrase: its color is pressed; another color changes it, and Undo puts it back
+  await page.click("#reader .doc #p21 mark.hlp.hl-b");
+  await page.waitForSelector("#reader .phrase-bar .ph-remove");
+  check((await page.getAttribute("#reader .phrase-bar .hl-dot.hl-b", "aria-pressed")) === "true", "the phrase's color is pressed in the bar");
+  check(!(await page.evaluate(() => document.querySelector("#reader .doc #p21").classList.contains("sel"))), "a tap on a marked phrase does not select the verse");
+  check(await page.evaluate(() => { const b = document.querySelector("#reader .phrase-bar"); return b.scrollWidth <= b.clientWidth + 1; }), "the bar with Remove in it fits on one row");
+  await shot("08-phrase-tapped");
+  await page.click("#reader .phrase-bar .hl-dot.hl-y");
+  await page.waitForTimeout(400);
+  check((await marked(page, "p21")).includes("y:which are not seen,"), "the phrase is recolored");
+  await undo();
+  check((await marked(page, "p21")).includes("b:which are not seen,"), `Undo puts the color back: ${JSON.stringify(await marked(page, "p21"))}`);
+  // Remove, and Undo
+  await page.click("#reader .doc #p21 mark.hlp.hl-b");
+  await page.click("#reader .phrase-bar .ph-remove");
+  await page.waitForTimeout(400);
+  check(!(await marked(page, "p21")).some((m) => /which are not seen/.test(m)) && (await kept(page)).length === 2, `Remove takes the phrase off: ${JSON.stringify(await kept(page))}`);
+  check((await page.evaluate(async () => (await window.Marks.dump()).filter((r) => r.deleted && /~/.test(r.id)).length)) >= 1, "the removal leaves a tombstone for the other devices");
+  await undo();
+  check((await marked(page, "p21")).includes("b:which are not seen,") && (await kept(page)).length === 3, `Undo puts the phrase back: ${JSON.stringify(await kept(page))}`);
+  // words across two verses: the bar offers the verses whole, as the selection bar does
+  await page.evaluate(() => {
+    const a = [...document.querySelector("#reader .doc #p25").childNodes].filter((n) => n.nodeType === 3).pop(), z = [...document.querySelector("#reader .doc #p26").childNodes].find((n) => n.nodeType === 3 && n.nodeValue.trim().length > 8);
+    const r = document.createRange(); r.setStart(a, Math.max(0, a.nodeValue.length - 12)); r.setEnd(z, 8);
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  });
+  await page.waitForSelector("#reader .phrase-bar", { timeout: 5000 });
+  check(/2 passages/.test(await page.evaluate(() => document.querySelector("#reader .phrase-bar .n").textContent)), "two verses under the selection are offered as two passages");
+  await page.click("#reader .phrase-bar .hl-dot.hl-p");
+  await page.waitForTimeout(500);
+  check(await page.evaluate(() => ["p25", "p26"].every((id) => { const p = document.querySelector(`#reader .doc #${id}`); return p.classList.contains("hl-p") && !p.querySelector("mark.hlp"); })), "both verses are pink, whole");
+  // a plain tap still selects a verse
+  await page.click("#reader .doc #p24 .verse-number");
+  check(await page.evaluate(() => document.querySelector("#reader .doc #p24").classList.contains("sel")) && !!(await page.$("#reader .select-bar")), "a tap with no words selected selects the verse, as before");
+  await barDo(page, ".clear-sel", "Clear selection");
+  // marks that arrive from another device are drawn at once
+  await page.evaluate(async () => { const u = window.GL.reading.doc.uri; await window.Marks.merge([{ kind: "phrase", uri: u, pid: "p24", start: 0, end: 2, color: "y", text: "", citation: "Alma 32:24", updated: Date.now() }, { uri: u, pid: "p27", kind: "verse", verse: 27, color: "b", updated: Date.now() }]); });
+  await page.waitForTimeout(600);
+  check((await marked(page, "p24")).length === 1 && (await marked(page, "p24"))[0].startsWith("y:") && await page.evaluate(() => document.querySelector("#reader .doc #p27").classList.contains("hl-b")), `a merge draws on the open page: ${JSON.stringify(await marked(page, "p24"))}`);
+  check((await marked(page, "p21")).length === 3, "and what was there is drawn once, not twice");
+  // reload: the phrases come back
+  await page.reload();
+  for (let i = 0; i < 5; i++) {
+    const again = await page.waitForSelector("#reader .doc #p21, .setup button:has-text('Try again')", { timeout: 30000 });
+    if ((await again.textContent()) === "Try again") { await page.waitForTimeout(800); await again.click(); continue; }
+    break;
+  }
+  await page.waitForSelector("#reader .doc #p21 mark.hlp", { timeout: 30000 });
+  await page.waitForTimeout(600);
+  check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["p:not to have a perfect", "g:knowledge of things", "b:which are not seen,"]), `the phrases survive a reload: ${JSON.stringify(await marked(page, "p21"))}`);
+  await page.evaluate(() => document.querySelector("#reader .doc #p21").scrollIntoView({ block: "center" }));
+  await shot("09-phrases-after-reload");
+  // the list of marks has the phrases, and a Greek word, beside the verses; the color filter and the search take them in
+  await page.evaluate(() => window.Marks.save({ kind: "word", id: "orig:revelation.3.16.16003:gr", uri: "/scriptures/nt/rev/3", pid: "p16", verse: 16, color: "g", text: "χλιαρὸς lukewarm", citation: "Revelation 3:16", strongs: "G5513" }));
+  await page.click("#homeBtn");
+  await page.waitForSelector("#homeBody .shelf-grid", { timeout: 10000 });
+  await page.waitForTimeout(400);
+  await page.click("#homeBody .own-row:has-text('Highlights and notes')");
+  await page.waitForSelector("#homeBody .mark-row.mk-phrase", { timeout: 10000 });
+  const rows = () => page.evaluate(() => [...document.querySelectorAll("#homeBody .mark-row")].map((r) => ({ kind: r.classList.contains("mk-phrase") ? "phrase" : r.classList.contains("mk-word") ? "word" : "verse", color: (r.className.match(/hl-(\w)/) || [])[1] || null, cite: r.querySelector(".mk-cite").textContent, text: r.querySelector(".mk-text").textContent })));
+  let list = await rows();
+  check(/^10 marks$/.test(await page.textContent("#homeBody .marks-count")), `the heading counts every kind: ${await page.textContent("#homeBody .marks-count")}`);
+  check(list.some((r) => r.kind === "phrase" && r.cite === "Alma 32:21" && r.text === "“which are not seen,”" && r.color === "b"), `a phrase is listed with its words and verse: ${JSON.stringify(list.filter((r) => r.kind === "phrase"))}`);
+  check(list.some((r) => r.kind === "word" && r.cite === "Revelation 3:16, χλιαρὸς lukewarm" && r.text === "Greek word, Strong's G5513" && r.color === "g"), `a word is listed with its verse, itself and its meaning: ${JSON.stringify(list.filter((r) => r.kind === "word"))}`);
+  await shot("10-list-with-phrases");
+  await page.click("#homeBody .mk-colors .mk-dot.hl-b");
+  list = await rows();
+  check(list.length === 2 && list.every((r) => r.color === "b") && list.some((r) => r.kind === "phrase") && list.some((r) => r.kind === "verse"), `the color filter takes in phrases: ${JSON.stringify(list)}`);
+  await page.click("#homeBody .mk-colors .mk-dot.all");
+  await page.fill("#homeBody .mk-find", "lukewarm");
+  list = await rows();
+  check(list.length === 1 && list[0].kind === "word", `the search finds a word by its meaning: ${JSON.stringify(list)}`);
+  await page.fill("#homeBody .mk-find", "g5513");
+  check((await rows()).length === 1, "and by its Strong's number");
+  await page.fill("#homeBody .mk-find", "not seen");
+  list = await rows();
+  check(list.some((r) => r.kind === "phrase" && /which are not seen/.test(r.text)), `the search finds a phrase by its words: ${JSON.stringify(list)}`);
+  // tapping a phrase opens its verse
+  await page.click("#homeBody .mark-row.mk-phrase");
+  await page.waitForSelector("#reader .doc .is-target", { timeout: 10000 });
+  check((await page.getAttribute("#reader .doc .is-target", "id")) === "p21", "a phrase's row opens its verse");
+  await page.evaluate(() => window.Marks.removeId("orig:revelation.3.16.16003:gr"));
+  // The deck is a separate thing: verses added now, colored whole and in part, arrive plain. And a
+  // deck saved when colors were carried (color fields on its card and verses) still opens, the fields ignored.
+  await page.click("#reader .doc #p25 .verse-number");
+  await page.click("#reader .select-bar .add-deck");
+  await page.waitForTimeout(600);
+  const plain = await page.evaluate(() => { const c = window.Deck.state.items.find((i) => i.pid === "p25"); return c ? { color: "color" in c, verses: (c.verses || []).some((v) => "color" in v), hl: c.hl.length } : null; });
+  check(plain && !plain.color && !plain.verses && plain.hl === 0, `a pink verse arrives on the deck plain: ${JSON.stringify(plain)}`);
+  await page.evaluate(() => { for (const it of window.Deck.state.items) { it.color = "y"; for (const v of it.verses || []) v.color = "y"; } });
+  await page.click("#deckBtn");
+  await page.waitForSelector(".bcard", { timeout: 10000 });
+  await page.waitForTimeout(300);
+  check((await page.locator(".bcard").count()) >= 2 && (await page.locator(".bcard .rc, .bcard .rc-dot, .bcard mark.hlp").count()) === 0, "the board draws the cards with no reader color on them");
+  await shot("11-deck-plain");
+}
+
 export default async function run(browser, { BASE, PASS, SHOTS }) {
   const errors = [];
   const OUT = SHOTS + "marks/";
@@ -55,11 +218,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(!!(await page.$("#reader .doc #p21 .note-mark")) && !(await page.$("#reader .doc #p22 .note-mark")), "the range note's marker sits on the first verse");
     check(await page.evaluate(() => document.querySelector("#reader .doc #p21").classList.contains("note-range-start") && document.querySelector("#reader .doc #p22").classList.contains("note-range-end")), "the range is bracketed 21 to 22");
     await shot("02b-range-note");
-    // still selected: Add to deck carries the color and the note
+    // still selected: Add to deck takes the note along and leaves the color behind (the deck is a separate thing)
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(600);
     const card = await page.evaluate(() => { return window.Deck.state.items.find((i) => i.pid === "p21") || null; });
-    check(card && card.color === "y", `the card should carry the reader's yellow: ${card && card.color}`);
+    check(card && !("color" in card) && (card.verses || []).length === 2 && card.verses.every((v) => !("color" in v)), `the card should not carry the reader's yellow: ${JSON.stringify(card && [card.color, card.verses])}`);
     check(card && /Two verses, one note\./.test(card.notes || ""), `the range note should be the card's speaker note: ${card && card.notes}`);
     check(card && Array.isArray(card.hl) && card.hl.length === 0, "the card's phrase highlights (and so the PowerPoint) are unchanged");
     // a note on verse 23
@@ -130,6 +293,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#homeBody .mark-row >> nth=1");
     await page.waitForSelector("#reader .doc .is-target", { timeout: 10000 });
     check((await page.getAttribute("#reader .doc .is-target", "id")) === "p21", "mark row should open its verse");
+    await phrases(page, { name, viewport, check, shot });
     await ctx.close();
   }
   for (const [name, vp] of [["ipad", { width: 1180, height: 820 }], ["iphone", { width: 393, height: 852 }]]) {
