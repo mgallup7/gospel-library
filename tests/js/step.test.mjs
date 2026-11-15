@@ -142,3 +142,12 @@ test("exampleOf: Greek sentences lose their underlines", () => {
   assert.equal(exampleOf("_not_ giving this _nor_ that"), "not giving this nor that"); // PRT-N
   assert.equal(exampleOf("Example: he/it did or does rise"), "he/it did or does rise"); // TEHMC's own line
 });
+
+test("meaningsOf lists what a word can mean, from a Greek and a Hebrew entry", async () => {
+  const { meaningsOf } = await import("../../web/lib/step.js");
+  const chliaros = "<b>χλιαρός</b>, -ά, -όν<BR /> (χλίω, to become warm), <BR /><b>warm, tepid</b>; metaphorically, of persons, <b>luke-warm</b>: <ref='Rev.3.16.'>Rev.3:16.</ref>†<BR /> (AS)";
+  assert.deepEqual(meaningsOf(chliaros, "lukewarm"), ["warm", "tepid", "luke-warm"]);
+  assert.deepEqual(meaningsOf("firmness, fidelity, steadfastness, steadiness", "faithfulness"), ["firmness", "fidelity", "steadfastness", "steadiness", "faithfulness"]);
+  const pistis = "<b>πίστις</b>, -εως, ἡ <BR /> __1. in active sense, <b>faith, belief, trust, confidence</b>, <BR /> __2. In passive sense, <BR />__(a) <b>fidelity, faithfulness</b>: <BR /> __(b) <b>plighted faith, a pledge</b> of fidelity";
+  assert.deepEqual(meaningsOf(pistis, "faith"), ["faith", "belief", "trust", "confidence", "fidelity", "faithfulness", "plighted faith", "a pledge"]);
+});

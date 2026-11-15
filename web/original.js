@@ -2,7 +2,7 @@
    verses, each with its transliteration, meaning, grammar and Strong's number,
    and the lexicon behind the numbers. Data: STEP Bible, Tyndale House,
    Cambridge (CC BY 4.0), www.STEPBible.org. */
-import { foldGlosses, exampleOf, grammarMeaning, outlineOf } from "./lib/step.js";
+import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from "./lib/step.js";
 
 (() => {
   "use strict";
@@ -202,6 +202,18 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf } from "./lib/step.js
           el("span", { text: ` ${e.translit || ""}` }),
           e.gloss ? el("span", { text: `, ${e.gloss}` }) : null,
           e.type ? el("span", { class: "ow-type", text: ` (${typeName(e.type)})` }) : null,
+        ]));
+        // what else the word can mean, before the dictionary's own dense entry
+        const means = meaningsOf(e.definition, e.gloss);
+        const here = cleanGloss(w.gloss);
+        if (means.length) sec.append(el("div", { class: "ow-means" }, [
+          el("div", { class: "nm", text: means.length > 1 ? "It can mean" : "It means" }),
+          el("div", { class: "ow-means-list" }, means.map((m) => el("span", { class: `ow-mean${here && m.toLowerCase().replace(/[^a-z]/g, "") === here.toLowerCase().replace(/[^a-z]/g, "") ? " here" : ""}`, text: m }))),
+          here ? el("p", { class: "ow-fine", text: `In ${cite} it is rendered “${here}”.` }) : null,
+        ]));
+        if (window.Ask) sec.append(el("div", { class: "deck-actions" }, [
+          el("button", { type: "button", class: "text-btn", text: "Ask Claude what else it can mean", title: "Its range of meaning, its root, how else it could be translated here, and what the picture meant to its first hearers",
+            onclick: () => GL().ask(`What is the range of meaning of ${e.lemma || w.word} (${e.translit || w.translit || ""}, Strong's ${lex.strongs}) as used in ${cite}? Give the other ways it could be translated here, its root and related words, where else it or its family appears in scripture and in the Greek Old Testament, and what the picture would have meant to its first hearers.`) }),
         ]));
         if (e.definition) sec.append(definitionEl(e.definition));
         if (e.relation) sec.append(el("p", { class: "ow-fine", text: e.relation }));

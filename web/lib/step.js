@@ -123,3 +123,26 @@ export function grammarMeaning(meaning) {
   });
   return seen.length ? `${t} (${seen.join(" and ")} in grammar)` : t;
 }
+
+
+// The meanings a lexicon entry gives for its word, as a short list a teacher can read at a
+// glance: "warm, tepid, lukewarm". The Greek entries (Abbott-Smith) set each English sense in
+// bold; the Hebrew ones are a plain list. Greek letters, references and the lemma itself are
+// left out, and a sense said twice is said once.
+export function meaningsOf(definition, gloss = "") {
+  const out = [], seen = new Set();
+  const add = (t) => {
+    for (let part of String(t || "").split(/[,;]/)) {
+      part = part.replace(/<[^>]*>/g, "").replace(/\([^)]*\)/g, "").replace(/[.:\u2020*]+$/g, "").replace(/\s+/g, " ").trim();
+      if (!part || part.length > 40 || !/^[A-Za-z]/.test(part) || /[\u0370-\u03ff\u1f00-\u1fff\u0590-\u05ff]/.test(part)) continue;
+      const key = part.toLowerCase().replace(/[^a-z]/g, "");
+      if (!key || seen.has(key)) continue;
+      seen.add(key); out.push(part);
+    }
+  };
+  const def = String(definition || "");
+  if (/<b>/i.test(def)) for (const m of def.matchAll(/<b>([\s\S]*?)<\/b>/gi)) add(m[1]);
+  else add(def.replace(/__\S+/g, ","));
+  add(gloss.replace(/:/g, ","));
+  return out.slice(0, 14);
+}

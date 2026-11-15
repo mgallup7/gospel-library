@@ -3642,7 +3642,14 @@ import { esc, mb } from "./lib/format.js";
     if (!wide()) { state.docId = null; state.pid = null; }
     syncControls(); showList(); runSearch({ typeahead: false });
   }
+  // A question handed to Ask from elsewhere (the word sheet's "Ask Claude what else it can mean")
+  function askQuestion(question) {
+    rememberScroll(); hideNote();
+    state.browse = { tab: "ask", question }; state.q = "";
+    syncControls(); renderHome(); showList(); push();
+  }
   window.GL = {
+    ask: askQuestion,
     api, el, esc, store, openDoc, followLink, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
     get ready() { return state.ready; },

@@ -1350,6 +1350,11 @@ a.toast-action { display: inline-flex; align-items: center; }
 .orig-behind-slot:empty { display: none; }
 .ow-def a.oref { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
 .ow-fine { color: var(--ink-2); font-size: var(--ui-13); }
+/* what the word can mean, as a row of plain words; the one used in this verse is marked */
+.ow-means { margin: 6px 0 10px; }
+.ow-means-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.ow-mean { padding: 5px 11px; border: 1px solid var(--rule); border-radius: 999px; font-size: var(--ui-15); background: var(--paper); }
+.ow-mean.here { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .ow-credit { color: var(--ink-3); font-size: var(--ui-12); margin-top: 10px; }
 .ow-details .deck-actions { margin: 8px 0 2px; }
 .ow-details .primary { height: var(--ctl-h); padding: 0 14px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: var(--ui-14); }
