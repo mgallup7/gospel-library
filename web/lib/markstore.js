@@ -10,7 +10,7 @@
 
 export const COLORS = ["y", "g", "b", "p"];
 export const TOMB_MS = 180 * 24 * 60 * 60 * 1000; // a tombstone is kept this long, then dropped
-const WORD_ID = /^orig:[A-Za-z0-9_-]{1,40}\.\d{1,3}\.\d{1,3}\.\d{1,5}:(he|gr)$/;
+const WORD_ID = /^orig:[A-Za-z0-9_-]{1,40}\.\d{1,3}\.\d{1,3}\.\d{1,7}:(he|gr)$/;
 
 const str = (v, max) => (typeof v === "string" ? v : v === null || v === undefined ? "" : String(v)).slice(0, max);
 const num = (v) => (Number.isFinite(v) ? v : null);

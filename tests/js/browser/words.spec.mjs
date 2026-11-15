@@ -75,6 +75,48 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       await page.click(".toast button");
       await page.waitForTimeout(300);
       check(await page.evaluate(() => window.Deck.state.items.length) === before, "Undo left the note on the deck");
+      if (!(await page.evaluate(() => document.querySelector("#sheet").hidden))) await page.click("#sheet .close");
+
+      // Revelation 3:16, lukewarm: a color on the Greek word, kept with his marks under the word's own place
+      await chapter("Revelation 3");
+      const luke = page.locator("#reader .orig .ow", { has: page.locator(".t", { hasText: /^chliaros$/ }) }).first();
+      await luke.scrollIntoViewIfNeeded(); await luke.click();
+      await page.waitForSelector("#sheet:not([hidden]) .ow-colors", { timeout: 8000 });
+      check((await page.getAttribute("#sheet .ow-colors .ow-none", "aria-pressed")) === "true", "a word with no color has None pressed");
+      await page.screenshot({ path: `${OUT}${name}-05-word-colors.png` });
+      await page.click("#sheet .ow-colors .hl-dot.hl-g");
+      await page.waitForTimeout(400);
+      check((await page.getAttribute("#sheet .ow-colors .hl-dot.hl-g", "aria-pressed")) === "true" && (await page.getAttribute("#sheet .ow-colors .ow-none", "aria-pressed")) === "false", "the chosen color is pressed in the sheet");
+      const tileClass = () => luke.evaluate((t) => t.className);
+      check(/\bhl-g\b/.test(await tileClass()), `the tile takes the color: ${await tileClass()}`);
+      const wrec = await page.evaluate(async () => (await window.Marks.words(window.GL.reading.doc.uri))[0]);
+      check(wrec && /^orig:revelation\.3\.16\.\d+:gr$/.test(wrec.id) && wrec.kind === "word" && wrec.color === "g" && /^χλιαρ.ς lukewarm/.test(wrec.text) && wrec.citation === "Revelation 3:16" && /^G\d+/.test(wrec.strongs), `the word's record: ${JSON.stringify(wrec)}`);
+      check((await page.locator("#reader .orig .ow.marked").count()) === 1, "only that one tile is colored");
+      await page.click("#sheet .close");
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: `${OUT}${name}-06-word-colored.png` });
+      // reload: the tiles come back with their colors
+      await page.reload();
+      for (let i = 0; i < 5; i++) { // the old worker may still hold the storage for a moment: the app offers Try again
+        const again = await page.waitForSelector("#reader .orig .ow, .setup button:has-text('Try again')", { timeout: 30000 });
+        if ((await again.textContent()) === "Try again") { await page.waitForTimeout(800); await again.click(); continue; }
+        break;
+      }
+      await page.waitForSelector("#reader .orig .ow.marked", { timeout: 30000 });
+      check(/\bhl-g\b/.test(await tileClass()), `the color survives a reload: ${await tileClass()}`);
+      // a change from another device is drawn on the tiles at once
+      await page.evaluate(async (rec) => { await window.Marks.merge([{ ...rec, color: "p", updated: rec.updated + 5 }]); }, wrec);
+      await page.waitForTimeout(400);
+      check(/\bhl-p\b/.test(await tileClass()) && !/\bhl-g\b/.test(await tileClass()), `a merge recolors the tile: ${await tileClass()}`);
+      // None takes it off
+      await luke.scrollIntoViewIfNeeded(); await luke.click();
+      await page.waitForSelector("#sheet:not([hidden]) .ow-colors", { timeout: 8000 });
+      await page.waitForTimeout(300);
+      check((await page.getAttribute("#sheet .ow-colors .hl-dot.hl-p", "aria-pressed")) === "true", "the sheet shows the word's color");
+      await page.click("#sheet .ow-colors .ow-none");
+      await page.waitForTimeout(400);
+      check(!/\bhl-|marked/.test(await tileClass()) && (await page.evaluate(async () => (await window.Marks.words(window.GL.reading.doc.uri)).length)) === 0, `None takes the color off: ${await tileClass()}`);
+      await page.click("#sheet .close");
     } catch (e) { errors.push(`${name} aborted: ${e.message.split("\n")[0]}`); await page.screenshot({ path: `${OUT}${name}-failed.png` }).catch(() => {}); }
     await ctx.close();
   }
