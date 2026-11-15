@@ -2234,21 +2234,37 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
     const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
-    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked` : "Nothing marked yet" }), allBtn]));
+    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? (marks.some((m) => m.kind === "phrase" || m.kind === "word") ? `${marks.length} ${marks.length === 1 ? "mark" : "marks"}` : `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked`) : "Nothing marked yet" }), allBtn]));
     const list = el("div", { class: "mark-list" });
-    const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}`, onclick: async () => {
+    // A phrase reads as its words in quotation marks under its verse; a Hebrew or Greek word as
+    // its verse and the word with its meaning ("Revelation 3:16, χλιαρὸς lukewarm").
+    const where = (m) => (m.kind === "word" ? [m.citation, m.text].filter(Boolean).join(", ") : m.citation || m.title || m.uri);
+    const said = (m) => {
+      if (m.kind === "word") return `${m.lang === "he" ? "Hebrew" : "Greek"} word${m.strongs ? `, Strong's ${m.strongs}` : ""}`;
+      const t = (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "");
+      return m.kind === "phrase" && t ? `“${t}”` : t;
+    };
+    const row = (m) => el("button", { type: "button", class: `mark-row${m.color ? ` hl-${m.color}` : ""}${m.kind === "phrase" || m.kind === "word" ? ` mk-${m.kind}` : ""}`, onclick: async () => {
       let id = m.doc_id;
       try { const res = await api("resolve", { href: m.uri }); if (res.found && res.doc_id) id = res.doc_id; } catch (_) {}
-      if (id) openDoc(id, m.pid); else toast("That page is not in the library now.");
+      if (!id) { toast("That page is not in the library now."); return; }
+      // a word opens its chapter with the Hebrew or Greek showing: a page drawn now shows it by
+      // the remembered choice, a page already open is asked to
+      if (m.kind === "word") store.set("orig", true);
+      await openDoc(id, m.pid);
+      if (m.kind === "word") {
+        const d = $(".doc", readerPane), b = $(".reader-bar .orig-btn", readerPane);
+        if (d && b && !b.disabled && !b.classList.contains("on") && !d.classList.contains("with-orig")) b.click();
+      }
     } }, [
-      el("span", { class: "mk-cite", text: m.citation || m.title || m.uri }),
-      el("span", { class: "mk-text", text: (m.text || "").length > 140 ? m.text.slice(0, 138) + "…" : (m.text || "") }),
+      el("span", { class: "mk-cite", text: where(m) }),
+      el("span", { class: "mk-text", text: said(m) }),
       m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
     ].filter(Boolean));
     function draw() {
       const words = marksFilter.q.toLowerCase().split(/\s+/).filter(Boolean);
       const hits = marks.filter((m) => (!marksFilter.color || m.color === marksFilter.color)
-        && words.every((w) => [m.text, m.citation, m.title, m.note].some((f) => (f || "").toLowerCase().includes(w))));
+        && words.every((w) => [m.text, m.citation, m.title, m.note, m.strongs].some((f) => (f || "").toLowerCase().includes(w))));
       const shown = hits.slice(0, allMarksShown ? hits.length : 10);
       allBtn.hidden = hits.length <= 10;
       allBtn.textContent = allMarksShown ? "Latest only" : `All ${hits.length}`;
@@ -2259,7 +2275,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       list.replaceChildren(...[...books].flatMap(([b, ms]) => [el("h3", { class: "mk-book", text: b }), ...ms.map(row)]));
     }
     if (!marks.length) {
-      sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note: your marks come back whenever the page opens, and are listed here." }));
+      sec.append(el("p", { class: "studies-lede", text: "Tap a verse or paragraph while reading, then a color or Note; or select a few words and give them a color. Your marks come back whenever the page opens, and are listed here." }));
     } else {
       if (marks.length > 3) {
         const find = el("input", { type: "search", class: "mk-find", placeholder: "Find in your marks", "aria-label": "Find in your highlights and notes", value: marksFilter.q });

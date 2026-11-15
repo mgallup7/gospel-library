@@ -126,6 +126,36 @@ async function phrases(page, { name, viewport, check, shot }) {
   check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["p:not to have a perfect", "g:knowledge of things", "b:which are not seen,"]), `the phrases survive a reload: ${JSON.stringify(await marked(page, "p21"))}`);
   await page.evaluate(() => document.querySelector("#reader .doc #p21").scrollIntoView({ block: "center" }));
   await shot("09-phrases-after-reload");
+  // the list of marks has the phrases, and a Greek word, beside the verses; the color filter and the search take them in
+  await page.evaluate(() => window.Marks.save({ kind: "word", id: "orig:revelation.3.16.16003:gr", uri: "/scriptures/nt/rev/3", pid: "p16", verse: 16, color: "g", text: "χλιαρὸς lukewarm", citation: "Revelation 3:16", strongs: "G5513" }));
+  await page.click("#homeBtn");
+  await page.waitForSelector("#homeBody .shelf-grid", { timeout: 10000 });
+  await page.waitForTimeout(400);
+  await page.click("#homeBody .own-row:has-text('Highlights and notes')");
+  await page.waitForSelector("#homeBody .mark-row.mk-phrase", { timeout: 10000 });
+  const rows = () => page.evaluate(() => [...document.querySelectorAll("#homeBody .mark-row")].map((r) => ({ kind: r.classList.contains("mk-phrase") ? "phrase" : r.classList.contains("mk-word") ? "word" : "verse", color: (r.className.match(/hl-(\w)/) || [])[1] || null, cite: r.querySelector(".mk-cite").textContent, text: r.querySelector(".mk-text").textContent })));
+  let list = await rows();
+  check(/^10 marks$/.test(await page.textContent("#homeBody .marks-count")), `the heading counts every kind: ${await page.textContent("#homeBody .marks-count")}`);
+  check(list.some((r) => r.kind === "phrase" && r.cite === "Alma 32:21" && r.text === "“which are not seen,”" && r.color === "b"), `a phrase is listed with its words and verse: ${JSON.stringify(list.filter((r) => r.kind === "phrase"))}`);
+  check(list.some((r) => r.kind === "word" && r.cite === "Revelation 3:16, χλιαρὸς lukewarm" && r.text === "Greek word, Strong's G5513" && r.color === "g"), `a word is listed with its verse, itself and its meaning: ${JSON.stringify(list.filter((r) => r.kind === "word"))}`);
+  await shot("10-list-with-phrases");
+  await page.click("#homeBody .mk-colors .mk-dot.hl-b");
+  list = await rows();
+  check(list.length === 2 && list.every((r) => r.color === "b") && list.some((r) => r.kind === "phrase") && list.some((r) => r.kind === "verse"), `the color filter takes in phrases: ${JSON.stringify(list)}`);
+  await page.click("#homeBody .mk-colors .mk-dot.all");
+  await page.fill("#homeBody .mk-find", "lukewarm");
+  list = await rows();
+  check(list.length === 1 && list[0].kind === "word", `the search finds a word by its meaning: ${JSON.stringify(list)}`);
+  await page.fill("#homeBody .mk-find", "g5513");
+  check((await rows()).length === 1, "and by its Strong's number");
+  await page.fill("#homeBody .mk-find", "not seen");
+  list = await rows();
+  check(list.some((r) => r.kind === "phrase" && /which are not seen/.test(r.text)), `the search finds a phrase by its words: ${JSON.stringify(list)}`);
+  // tapping a phrase opens its verse
+  await page.click("#homeBody .mark-row.mk-phrase");
+  await page.waitForSelector("#reader .doc .is-target", { timeout: 10000 });
+  check((await page.getAttribute("#reader .doc .is-target", "id")) === "p21", "a phrase's row opens its verse");
+  await page.evaluate(() => window.Marks.removeId("orig:revelation.3.16.16003:gr"));
 }
 
 export default async function run(browser, { BASE, PASS, SHOTS }) {

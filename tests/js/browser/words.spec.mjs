@@ -108,6 +108,23 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       await page.evaluate(async (rec) => { await window.Marks.merge([{ ...rec, color: "p", updated: rec.updated + 5 }]); }, wrec);
       await page.waitForTimeout(400);
       check(/\bhl-p\b/.test(await tileClass()) && !/\bhl-g\b/.test(await tileClass()), `a merge recolors the tile: ${await tileClass()}`);
+      // the list of marks names the word, and its row opens the chapter at the verse with the Greek showing,
+      // though the Greek was put away meanwhile
+      await page.evaluate(() => document.querySelector("#reader .reader-bar .orig-btn").click());
+      await page.waitForFunction(() => !document.querySelector("#reader .orig"), null, { timeout: 5000 });
+      await page.click("#homeBtn");
+      await page.waitForSelector("#homeBody .shelf-grid", { timeout: 10000 });
+      await page.waitForTimeout(400);
+      await page.click("#homeBody .own-row:has-text('Highlights and notes')");
+      await page.waitForSelector("#homeBody .mark-row.mk-word", { timeout: 10000 });
+      const rowText = await page.evaluate(() => { const r = document.querySelector("#homeBody .mark-row.mk-word"); return [r.querySelector(".mk-cite").textContent, r.querySelector(".mk-text").textContent, r.className]; });
+      check(/^Revelation 3:16, χλιαρ.ς lukewarm$/.test(rowText[0]) && rowText[1] === "Greek word, Strong's G5513" && /hl-p/.test(rowText[2]), `the word's row: ${JSON.stringify(rowText)}`);
+      await page.screenshot({ path: `${OUT}${name}-07-word-in-list.png` });
+      await page.click("#homeBody .mark-row.mk-word");
+      await page.waitForSelector("#reader .doc .is-target", { timeout: 10000 });
+      check((await page.getAttribute("#reader .doc .is-target", "id")) === "p16", "the word's row opens its verse");
+      await page.waitForSelector("#reader .orig .ow.marked", { timeout: 10000 }).catch(() => {});
+      check(/\bhl-p\b/.test(await tileClass().catch(() => "")), "and the Greek is showing again, the word colored");
       // None takes it off
       await luke.scrollIntoViewIfNeeded(); await luke.click();
       await page.waitForSelector("#sheet:not([hidden]) .ow-colors", { timeout: 8000 });
