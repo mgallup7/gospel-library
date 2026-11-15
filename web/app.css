@@ -1366,6 +1366,15 @@ a.toast-action { display: inline-flex; align-items: center; }
 .ow-section { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--rule); }
 .ow-section .nm { margin-bottom: 4px; }
 /* a word he colored: the tile takes the reader's tint, and the word's sheet offers the four colors and None */
+/* Words that carry a footnote or a link stay easy to find inside a highlight: on a tint the
+   dotted rule and the pale underline all but vanish, so there they are drawn solid, in the
+   accent, with the footnote letter in bold. Whole-verse tints and phrase marks alike. */
+.doc .hl-y .study-note-ref, .doc .hl-g .study-note-ref, .doc .hl-b .study-note-ref, .doc .hl-p .study-note-ref,
+.doc .study-note-ref mark.hlp { border-bottom: 2px solid var(--accent); }
+.doc .study-note-ref mark.hlp { padding-bottom: 0; }
+.doc .hl-y .study-note-ref .marker, .doc .hl-g .study-note-ref .marker, .doc .hl-b .study-note-ref .marker, .doc .hl-p .study-note-ref .marker { font-weight: 700; }
+.doc .hl-y a:not(.study-note-ref), .doc .hl-g a:not(.study-note-ref), .doc .hl-b a:not(.study-note-ref), .doc .hl-p a:not(.study-note-ref),
+.doc a:not(.study-note-ref) mark.hlp { color: var(--accent); text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 2px; }
 .orig .ow.hl-y { background: var(--hl-y); border-color: var(--hl-y-dot); } .orig .ow.hl-g { background: var(--hl-g); border-color: var(--hl-g-dot); }
 .orig .ow.hl-b { background: var(--hl-b); border-color: var(--hl-b-dot); } .orig .ow.hl-p { background: var(--hl-p); border-color: var(--hl-p-dot); }
 .ow-colors { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; font-family: var(--sans); }
