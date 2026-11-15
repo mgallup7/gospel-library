@@ -423,24 +423,20 @@ import { database } from "./lib/idb.js";
     if (added) carryMarks(doc, cards);
     return added;
   }
-  // The reader's marks come along: a verse he colored arrives with that color (item.color, and on
-  // each verse; the board shows it on the verse number, the stage and the PowerPoint as a bar
-  // beside the words, see RC), and a note on a verse the card
-  // holds becomes its speaker note. The marks store answers after the add has returned, so the
-  // cards are filled in a moment later; a card already taken off (Undo) is left alone.
+  // The reader's notes come along: a note on a verse the card holds becomes its speaker note.
+  // His highlight colors do not: marking the library and building a deck are separate things,
+  // and a card's own highlight is the phrase the slide stresses. (A deck saved when colors were
+  // carried may still hold color fields on its cards and verses; nothing reads them now.) The
+  // marks store answers after the add has returned, so the cards are filled in a moment later;
+  // a card already taken off (Undo) is left alone.
   function carryMarks(doc, cards) {
     if (!window.Marks || !doc?.uri) return;
     window.Marks.forDoc(doc.uri).then((marks) => {
       if (!marks || !marks.length) return;
-      const byPid = new Map(marks.map((m) => [m.pid, m]));
       let changed = false;
       for (const { id, pids } of cards) {
         const it = deck.items.find((i) => i.id === id);
         if (!it) continue;
-        const colors = pids.map((p) => byPid.get(p)?.color || null);
-        if (it.verses) it.verses.forEach((v, i) => { if (colors[i]) v.color = colors[i]; });
-        const color = colors.find(Boolean) || null;
-        if (color) { it.color = color; changed = true; }
         // a note covers its own verse, or a range of them: any overlap with the card brings it
         const lo = it.verses ? it.verses[0].n : null, hi = it.verses ? it.verses[it.verses.length - 1].n : null;
         const notes = marks.filter((m) => m.note && (pids.includes(m.pid) || (m.pid_end && pids.includes(m.pid_end))
@@ -1001,8 +997,6 @@ import { database } from "./lib/idb.js";
     const meta = el("div", { class: "bc-meta" }, [it.doc_id
       ? el("button", { type: "button", class: "bc-cite", text: it.citation, title: "Open this page at the passage", "aria-label": `${it.citation}: open the page at this passage`, onclick: () => openPassage(it) })
       : el("div", { class: "bc-cite", text: it.citation })]);
-    // a talk colored in the reader (or a passage whose verses do not say which was) shows the color beside its citation
-    if (RC[it.color] && !(it.verses || []).some((v) => RC[v.color])) meta.firstChild.prepend(el("span", { class: `rc-dot rc-${it.color}`, title: `Highlighted ${RC_NAME[it.color]} in the reader` }));
     const port = el("button", { type: "button", class: "port card-port", "data-item": it.id, "data-hl": "", "aria-label": `Link the whole passage ${it.citation}`, title: "Drag to another passage to link the whole passage" });
     // the dot has a name beside it once there is another passage to link to (app.css shows it
     // on a board that can link; syncHead says when that is): a tap on the word
@@ -1146,12 +1140,6 @@ import { database } from "./lib/idb.js";
     wrap.append(toggle, ta);
     return wrap;
   }
-  // The reader's highlight colors (marks.js: y, g, b, p), as the PowerPoint wants them. On the
-  // board a colored verse wears the color on its number, and a talk beside its citation; the
-  // words themselves stay plain, so the deck's own highlight (the phrase the slide stresses) is
-  // never confused with it.
-  const RC = { y: "F3CF3A", g: "6CBF6A", b: "6B9FF0", p: "F08BB5" };
-  const RC_NAME = { y: "yellow", g: "green", b: "blue", p: "pink" };
   // A passage as tappable words, with verse numbers, highlights and a port after each highlight.
   // A highlighted phrase is one run (its words and the spaces between them in one span), so it
   // reads as a phrase, not a row of boxes, and its active outline goes round the whole of it.
@@ -1161,10 +1149,7 @@ import { database } from "./lib/idb.js";
     let host = text;
     words.forEach((x, i) => {
       if (x.first && x.para > 0) host.append(el("br"), el("br"));
-      if (x.n !== null && x.n !== undefined) {
-        const color = it.verses.find((v) => v.n === x.n)?.color;
-        host.append(el("span", { class: "vn" + (RC[color] ? ` rc rc-${color}` : ""), text: String(x.n), ...(RC[color] ? { title: `Highlighted ${RC_NAME[color]} in the reader` } : {}) }));
-      }
+      if (x.n !== null && x.n !== undefined) host.append(el("span", { class: "vn", text: String(x.n) }));
       const h = hlAt(it, i);
       if (h && host === text) {
         host = el("span", { class: "hl-run" + (active && active.id === it.id && active.hl === h.id ? " active" : "") + (linking && linking.id === it.id && linking.hl === h.id ? " src" : ""), "data-hl": h.id });
@@ -2147,9 +2132,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // half showed nowhere.
   function pieces(it, max) {
     const out = max ? chunksOf(it, max) : chunksOf(it);
-    // the reader's color: a piece holding a colored verse has it (c.color); a talk's pieces all do
-    const anyVerse = (it.verses || []).some((v) => RC[v.color]);
-    if (!it.verses || !it.verses.length) { for (const c of out) c.color = RC[it.color] ? it.color : null; return out; }
+    if (!it.verses || !it.verses.length) return out;
     const words = (t) => t.split(/\s+/).filter(Boolean).length;
     const first = [];
     let n = 0;
@@ -2157,14 +2140,12 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     let vi = -1, at = 0, done = 0; // the verse being walked; how far its text and its words have been used
     for (const c of out) {
       if (!c.verses) continue;
-      c.color = anyVerse ? null : RC[it.color] ? it.color : null;
       c.starts = c.verses.map((p) => {
         const whole = it.verses.indexOf(p); // a verse that was not cut is the deck's own object
-        if (whole >= 0) { vi = whole; at = 0; done = 0; if (!c.color && RC[p.color]) c.color = p.color; return first[whole]; }
+        if (whole >= 0) { vi = whole; at = 0; done = 0; return first[whole]; }
         if (p.n !== null && p.n !== undefined) { vi = it.verses.findIndex((v, j) => j > vi && v.n === p.n); at = 0; done = 0; }
         const v = it.verses[vi];
         if (!v) return 0;
-        if (!c.color && RC[v.color]) c.color = v.color;
         const pos = v.text.indexOf(p.text, at);
         const before = pos >= 0 ? words(v.text.slice(0, pos)) : done; // a piece whose spacing was tidied: go on from the last one
         if (pos >= 0) at = pos + p.text.length;
@@ -2182,12 +2163,8 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     const idx = it.verses.findIndex((v) => v.n === n);
     return it.verses.slice(0, Math.max(0, idx)).reduce((a, v) => a + v.text.split(/\s+/).filter(Boolean).length, 0);
   }
-  // Chunk text with verse numbers and highlights, as HTML for the stage. A piece colored in the
-  // reader is wrapped, and the stage draws a bar in that color beside it.
-  function chunkHtml(it, chunk) {
-    const html = chunkWords(it, chunk);
-    return RC[chunk.color] ? `<span class="rc rc-${chunk.color}">${html}</span>` : html;
-  }
+  // Chunk text with verse numbers and highlights, as HTML for the stage
+  function chunkHtml(it, chunk) { return chunkWords(it, chunk); }
   function chunkWords(it, chunk) {
     if (chunk.verses && it.verses) {
       const parts = [];
@@ -2716,8 +2693,6 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         const s = slide();
         report.slides++; report.boxes++;
         kicker(s, chunk.label);
-        // the reader's color, as a bar beside the words
-        if (RC[chunk.color]) s.addShape(pptx.ShapeType.rect, { x: M - 0.2, y: 1.08 + boxH * 0.2, w: 0.07, h: boxH * 0.6, fill: { color: RC[chunk.color] }, line: { color: RC[chunk.color], width: 0 } });
         const runs = passageRuns(it, chunk, t);
         const fit = fits[ci];
         if (!fit.fits) report.tight.push(n);

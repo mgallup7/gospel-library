@@ -92,6 +92,12 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   your marks on the page as earlier study and answers the notes that ask
   something. Export writes them all to a file; Import brings them back on
   another device.
+- Highlights on words. Select a few words inside a verse (long press and
+  drag on the iPad) and a bar at the foot of the page offers the colors for
+  just those words; tap a marked phrase to change or remove it. A Hebrew or
+  Greek word takes a color from its sheet. Both are listed with the other
+  marks. Adding verses to the deck does not take their colors along: the
+  deck's highlights are its own.
 - My studies: pages of your own, read inside the app. Add an HTML page (a
   study built with Claude, say), a Markdown file or plain text from Files;
   it is kept on the device, apart from the library, with its own look and

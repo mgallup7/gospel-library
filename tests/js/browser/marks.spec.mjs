@@ -156,6 +156,19 @@ async function phrases(page, { name, viewport, check, shot }) {
   await page.waitForSelector("#reader .doc .is-target", { timeout: 10000 });
   check((await page.getAttribute("#reader .doc .is-target", "id")) === "p21", "a phrase's row opens its verse");
   await page.evaluate(() => window.Marks.removeId("orig:revelation.3.16.16003:gr"));
+  // The deck is a separate thing: verses added now, colored whole and in part, arrive plain. And a
+  // deck saved when colors were carried (color fields on its card and verses) still opens, the fields ignored.
+  await page.click("#reader .doc #p25 .verse-number");
+  await page.click("#reader .select-bar .add-deck");
+  await page.waitForTimeout(600);
+  const plain = await page.evaluate(() => { const c = window.Deck.state.items.find((i) => i.pid === "p25"); return c ? { color: "color" in c, verses: (c.verses || []).some((v) => "color" in v), hl: c.hl.length } : null; });
+  check(plain && !plain.color && !plain.verses && plain.hl === 0, `a pink verse arrives on the deck plain: ${JSON.stringify(plain)}`);
+  await page.evaluate(() => { for (const it of window.Deck.state.items) { it.color = "y"; for (const v of it.verses || []) v.color = "y"; } });
+  await page.click("#deckBtn");
+  await page.waitForSelector(".bcard", { timeout: 10000 });
+  await page.waitForTimeout(300);
+  check((await page.locator(".bcard").count()) >= 2 && (await page.locator(".bcard .rc, .bcard .rc-dot, .bcard mark.hlp").count()) === 0, "the board draws the cards with no reader color on them");
+  await shot("11-deck-plain");
 }
 
 export default async function run(browser, { BASE, PASS, SHOTS }) {
@@ -205,11 +218,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(!!(await page.$("#reader .doc #p21 .note-mark")) && !(await page.$("#reader .doc #p22 .note-mark")), "the range note's marker sits on the first verse");
     check(await page.evaluate(() => document.querySelector("#reader .doc #p21").classList.contains("note-range-start") && document.querySelector("#reader .doc #p22").classList.contains("note-range-end")), "the range is bracketed 21 to 22");
     await shot("02b-range-note");
-    // still selected: Add to deck carries the color and the note
+    // still selected: Add to deck takes the note along and leaves the color behind (the deck is a separate thing)
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(600);
     const card = await page.evaluate(() => { return window.Deck.state.items.find((i) => i.pid === "p21") || null; });
-    check(card && card.color === "y", `the card should carry the reader's yellow: ${card && card.color}`);
+    check(card && !("color" in card) && (card.verses || []).length === 2 && card.verses.every((v) => !("color" in v)), `the card should not carry the reader's yellow: ${JSON.stringify(card && [card.color, card.verses])}`);
     check(card && /Two verses, one note\./.test(card.notes || ""), `the range note should be the card's speaker note: ${card && card.notes}`);
     check(card && Array.isArray(card.hl) && card.hl.length === 0, "the card's phrase highlights (and so the PowerPoint) are unchanged");
     // a note on verse 23

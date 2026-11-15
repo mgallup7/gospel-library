@@ -1216,12 +1216,6 @@ a.toast-action { display: inline-flex; align-items: center; }
 .bcard .w.first { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bcard .w.drop { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--target); }
 .bcard .vn { font: 600 .6em var(--sans); color: var(--ink-3); vertical-align: super; margin: 0 2px 0 6px; }
-/* the reader's highlight color, carried onto the card: on the verse number, or beside a talk's citation; on the stage, a bar beside the words */
-.bcard .vn.rc { color: #2a2200; padding: 1px 5px; border-radius: 5px; }
-.bcard .rc-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
-.bcard .rc-y { background: var(--hl-y-dot); } .bcard .rc-g { background: var(--hl-g-dot); } .bcard .rc-b { background: var(--hl-b-dot); } .bcard .rc-p { background: var(--hl-p-dot); }
-.stage-text .rc { display: block; padding-left: 2.6vmin; border-left: .9vmin solid transparent; }
-.stage-text .rc-y { border-left-color: #f3cf3a; } .stage-text .rc-g { border-left-color: #6cbf6a; } .stage-text .rc-b { border-left-color: #6b9ff0; } .stage-text .rc-p { border-left-color: #f08bb5; }
 .port { display: inline-block; width: 17px; height: 17px; border-radius: 50%; background: var(--accent); border: 2px solid var(--paper); box-shadow: 0 0 0 1.5px var(--accent); vertical-align: middle; margin: 0 5px 0 4px; touch-action: none; cursor: grab; position: relative; } /* the margins keep the dot and its ring off the words either side */
 .port::before { content: ""; position: absolute; inset: -14px; border-radius: 50%; }
 .port.src, .port.drop { transform: scale(1.2); }
