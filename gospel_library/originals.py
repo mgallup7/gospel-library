@@ -156,6 +156,11 @@ def ascii_translit(text: str) -> str:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
+    # a library made before the lexicon had its typed transliteration gets the column first,
+    # or the index on it below cannot be made and the whole step stops
+    have = [r[1] for r in conn.execute("PRAGMA table_info(original_lexicon)")]
+    if have and "ascii" not in have:
+        conn.execute("ALTER TABLE original_lexicon ADD COLUMN ascii TEXT")
     conn.executescript(SCHEMA)
 
 
