@@ -1205,7 +1205,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ["missionary-standards", "Missionary Standards", () => "The booklet, its supplement, the service missionary edition", () => "All three editions"],
     ["handbook", "General Handbook", (st) => `${count(st, "handbook")} chapters`, (st) => `${count(st, "handbook")} chapters`],
     ["come-follow-me", "Come, Follow Me", () => "This year and last", () => "This year and last"],
-    ["manuals", "Manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
+    ["manuals", "Books and manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
     ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Not downloaded yet"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Not downloaded yet"],
     // the two that are his own: rows under the shelves, not tiles among them
