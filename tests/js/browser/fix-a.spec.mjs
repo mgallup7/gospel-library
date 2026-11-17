@@ -369,6 +369,44 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await pad.ctx.close();
   });
 
+  step("7", async () => {
+    const { ctx, page } = await open({ width: 393, height: 852 });
+    await read(page, "Alma 32:1");
+    await tapVerse(page, 5);
+    const x = await page.evaluate(() => { const b = document.querySelector("#reader .select-bar .sel-x"); const r = b?.getBoundingClientRect(); const bar = document.querySelector("#reader .select-bar").getBoundingClientRect(); const kids = [...document.querySelector("#reader .select-bar").children].filter((c) => c.offsetParent).map((c) => c.getBoundingClientRect()); return r ? { w: r.width, h: r.height, inBar: r.left >= bar.left && r.right <= bar.right, fits: kids.every((k) => k.left >= bar.left - 1 && k.right <= bar.right + 1), label: b.getAttribute("aria-label") } : null; });
+    check(!!x && x.w >= 44 && x.h >= 44 && x.inBar && x.fits && x.label === "Clear selection", `the phone's selection bar should show a 44pt clear and still fit: ${JSON.stringify(x)}`);
+    await page.screenshot({ path: `${SHOTS}fix-a-selbar-phone.png` });
+    await tapOn(page, "#reader .select-bar .sel-x"); await page.waitForTimeout(250);
+    const cleared = await page.evaluate(() => ({ sel: document.querySelectorAll("#reader .doc .sel").length, bar: !!document.querySelector("#reader .select-bar") }));
+    check(cleared.sel === 0 && !cleared.bar, `the x should clear the selection: ${JSON.stringify(cleared)}`);
+    // two neighbours and one apart: two cards, said as such, and Split makes three
+    for (const n of [22, 23, 27]) await tapVerse(page, n);
+    await tapOn(page, "#reader .select-bar .add-deck"); await page.waitForTimeout(300);
+    let t = await page.evaluate(() => ({ text: document.querySelector("#toast span")?.textContent, acts: [...document.querySelectorAll("#toast .toast-action")].map((b) => b.textContent), n: window.Deck.count(), box: (() => { const r = document.querySelector("#toast").getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })() }));
+    check(/^Added as 2 cards/.test(t.text || "") && t.acts.includes("Split") && t.acts.includes("Undo") && t.n === 2 && t.box, `neighbours added together should say so and offer Split and Undo: ${JSON.stringify(t)}`);
+    await page.screenshot({ path: `${SHOTS}fix-a-split-phone.png` });
+    await page.locator("#toast .toast-action", { hasText: "Split" }).tap(); await page.waitForTimeout(400);
+    t = await page.evaluate(() => ({ text: document.querySelector("#toast span")?.textContent, acts: [...document.querySelectorAll("#toast .toast-action")].map((b) => b.textContent), n: window.Deck.count(), refs: window.Deck.state.items.map((i) => i.citation || i.label || "") }));
+    check(t.n === 3 && /3 separate cards/.test(t.text || "") && t.acts.includes("Undo"), `Split should make a card for each verse, with an Undo: ${JSON.stringify(t)}`);
+    await page.locator("#toast .toast-action", { hasText: "Undo" }).tap(); await page.waitForTimeout(400);
+    check((await page.evaluate(() => window.Deck.count())) === 0, "Undo after Split should take the three cards off");
+    // one run alone: "Added as one card"
+    for (const n of [22, 23]) await tapVerse(page, n);
+    await tapOn(page, "#reader .select-bar .add-deck"); await page.waitForTimeout(300);
+    t = await page.evaluate(() => ({ text: document.querySelector("#toast span")?.textContent, n: window.Deck.count() }));
+    check(t.text === "Added as one card." && t.n === 1, `two neighbours should say "Added as one card.": ${JSON.stringify(t)}`);
+    await page.locator("#toast .toast-action", { hasText: "Undo" }).tap(); await page.waitForTimeout(300);
+    check((await page.evaluate(() => window.Deck.count())) === 0, "Undo should take the one card off");
+    await ctx.close();
+    // the iPad keeps Clear in words and has no x
+    const pad = await open({ width: 1180, height: 820 });
+    await read(pad.page, "Alma 32:1");
+    await tapVerse(pad.page, 5);
+    const words = await pad.page.evaluate(() => ({ x: !!document.querySelector("#reader .select-bar .sel-x")?.offsetParent, clear: !!document.querySelector("#reader .select-bar .clear-sel")?.offsetParent }));
+    check(!words.x && words.clear, `the iPad's bar should keep Clear in words: ${JSON.stringify(words)}`);
+    await pad.ctx.close();
+  });
+
   for (const [name, fn] of STEPS) {
     if (only && !only.includes(name)) continue;
     try { await fn(); } catch (err) { errors.push(`item ${name} aborted: ${String(err.message).split("\n")[0]}`); }

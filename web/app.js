@@ -2704,14 +2704,31 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       };
       const clear = () => { const f = $(".doc .sel", readerPane); clearSelection(); focusUnit(f); };
       bar = el("div", { class: "select-bar" }, [
+        // on a phone the way out of a selection is in sight, not under "more" (app.css shows this one there only)
+        el("button", { type: "button", class: "sel-x", "aria-label": "Clear selection", title: "Clear selection", html: ICON_CLEAR, onclick: clear }),
         el("span", { class: "n" }),
         window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
         window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the selected passages, first to last", onclick: () => { const u = selectedUnits(); if (u.length) editNote(u[0], u.length > 1 ? u[u.length - 1] : null); } }) : null,
         el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
           const first = $(".doc .sel", readerPane);
-          const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
+          const doc = currentDoc, units = selectedUnits();
+          const fresh = units.filter((u) => !window.Deck?.has(doc.id, u.pid));
+          const added = window.Deck?.addFromDoc(doc, units);
           clearSelection(); // the bar goes, and focus with it: back to the first verse that was selected
           focusUnit(first);
+          // Verses next to each other go on as one card. The toast says so, and Split puts each
+          // on a card of its own (he asked for three cards and got two, with "On the deck").
+          if (added && added < fresh.length) {
+            const ids = window.Deck.lastAdded?.() || [];
+            const split = () => {
+              window.Deck.removeIds(ids);
+              const made = [];
+              for (const u of fresh) { if (window.Deck.addFromDoc(doc, [u])) made.push(...window.Deck.lastAdded()); }
+              toast(`${made.length} separate cards.`, { action: "Undo", onAction: () => { window.Deck.removeIds(made); toast(`${made.length} passages taken off the deck.`); } });
+            };
+            deckToast(added, added === 1 ? "Added as one card." : `Added as ${added} cards: neighbours share one.`, [{ action: "Split", onAction: split }]);
+            return;
+          }
           deckToast(added, added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
         // these three fold behind "more" when the bar has no room for them (fitSelectBar)
@@ -2842,11 +2859,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     else if (window.Deck && window.Deck.undo && window.Deck.undo()) toast("Undone."); // deck.js listens too, and stands down once this has taken the key
   });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
-  function deckToast(added, text) {
+  function deckToast(added, text, more = null) {
     if (added && window.Deck?.saysWhere?.()) return; // the deck says where it went, with an Undo of its own: one toast, not two
     const ids = added ? window.Deck?.lastAdded?.() || [] : [];
     if (!ids.length) { toast(added === 0 ? "Already on the deck." : text); return; }
-    toast(text, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); } });
+    toast(text, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); }, more });
   }
   // The + and Add to deck buttons on results follow the deck, whatever changed it: an undo, the board's remove, another tab.
   function syncHitButtons() {

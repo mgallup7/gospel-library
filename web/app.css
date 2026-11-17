@@ -1058,6 +1058,14 @@ body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
   #reader .select-bar { bottom: var(--tabs-h); padding-bottom: 10px; }
 }
 .select-bar .n { flex: 1; font-size: var(--ui-13); color: var(--ink-2); white-space: nowrap; }
+/* the phone's visible clear: a 44pt x at the start of the bar (the iPad's bar says Clear in words) */
+.select-bar .sel-x { display: none; flex: none; width: 44px; height: 44px; margin-left: -6px; border-radius: var(--r-ctl); align-items: center; justify-content: center; color: var(--ink-2); }
+.select-bar .sel-x svg { width: 20px; height: 20px; }
+.select-bar .sel-x:active { background: var(--chrome-2); }
+@media (max-width: 759px), (max-height: 499px) {
+  .select-bar .sel-x { display: inline-flex; }
+  .select-bar .clear-sel { display: none; }
+}
 .select-bar .text-btn { white-space: nowrap; height: 44px; }
 /* what does not fit on one row (Present, Copy, Clear) folds behind one "more" button (app.js fitSelectBar) */
 .select-bar .sel-more { display: none; position: relative; flex: none; }
