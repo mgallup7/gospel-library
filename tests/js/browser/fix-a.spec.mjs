@@ -59,6 +59,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   }, n);
   const place = (page) => page.evaluate(() => ({ reader: document.querySelector("#reader").scrollTop, win: window.scrollY }));
   const tapOn = async (page, sel) => { const b = await page.locator(sel).first().boundingBox(); await page.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2); };
+  const tapVerse = async (page, n) => { await page.evaluate((n) => document.querySelector(`#reader .doc #p${n}`).scrollIntoView({ block: "center" }), n); await page.waitForTimeout(120); const b = await page.locator(`#reader .doc #p${n}`).boundingBox(); await page.touchscreen.tap(b.x + 70, b.y + 12); await page.waitForTimeout(150); };
   const step = (name, fn) => STEPS.push([name, fn]);
   STEPS.length = 0;
 
@@ -187,6 +188,47 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#reader .doc .verse", { timeout: 10000 }); await page.waitForTimeout(600);
     const seen = await page.evaluate(() => { const r = document.querySelector("#reader .doc #p16").getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; });
     check(seen, "Continue should open the chapter with that verse on screen");
+    await ctx.close();
+  });
+
+  step("4", async () => {
+    const { ctx, page } = await open({ width: 393, height: 852 });
+    await read(page, "Alma 32:1");
+    // the reader's Aa menu, closed by a tap on a verse: the verse is not selected
+    await tapOn(page, "#reader .reader-bar .size-pop-btn");
+    await page.waitForSelector("#reader .reader-bar .size-menu:not([hidden])");
+    await page.screenshot({ path: `${SHOTS}fix-a-menu-phone.png` });
+    const spot = await page.evaluate(() => { const m = document.querySelector("#reader .size-menu").getBoundingClientRect(); const v = [...document.querySelectorAll("#reader .doc .verse")].find((n) => n.getBoundingClientRect().top > m.bottom + 10); const r = v.getBoundingClientRect(); return { x: r.left + 60, y: r.top + 12, id: v.id }; });
+    await page.touchscreen.tap(spot.x, spot.y); await page.waitForTimeout(300);
+    let got = await page.evaluate(() => ({ menu: !document.querySelector("#reader .size-menu").hidden, sel: document.querySelectorAll("#reader .doc .sel").length }));
+    check(!got.menu && got.sel === 0, `a tap outside the Aa menu should only close it: ${JSON.stringify(got)}`);
+    // the next tap is an ordinary one
+    await page.touchscreen.tap(spot.x, spot.y); await page.waitForTimeout(300);
+    check((await page.locator("#reader .doc .sel").count()) === 1, "the tap after the menu closed should select the verse");
+    // the selection's more menu, closed by a tap on another verse: the selection is unchanged
+    await tapOn(page, "#reader .select-bar .sel-more-btn");
+    await page.waitForSelector("#reader .select-bar .size-menu:not([hidden])");
+    const other = await page.evaluate((id) => { const v = [...document.querySelectorAll("#reader .doc .verse")].find((n) => n.id !== id && n.getBoundingClientRect().top > 140 && !n.classList.contains("sel")); const r = v.getBoundingClientRect(); return { x: r.left + 60, y: r.top + 12 }; }, spot.id);
+    await page.touchscreen.tap(other.x, other.y); await page.waitForTimeout(300);
+    got = await page.evaluate(() => ({ menu: !document.querySelector("#reader .select-bar .size-menu").hidden, sel: document.querySelectorAll("#reader .doc .sel").length }));
+    check(!got.menu && got.sel === 1, `a tap outside the selection's menu should only close it: ${JSON.stringify(got)}`);
+    // a deck card's menu, closed by a tap on another card's Remove: nothing is removed
+    await page.evaluate(() => { for (const n of document.querySelectorAll("#reader .doc .sel")) n.click(); });
+    for (const n of [3, 9, 15]) await tapVerse(page, n);
+    await tapOn(page, "#reader .select-bar .add-deck"); await page.waitForTimeout(250);
+    await tapOn(page, "#deckBtn"); await page.waitForTimeout(700);
+    const cards = await page.locator(".bcard").count();
+    if (cards >= 2) {
+      await tapOn(page, ".bcard >> nth=0 >> .bc-more");
+      await page.waitForSelector(".bcard .bc-menu", { timeout: 3000 });
+      const under = await page.evaluate(() => { const m = document.querySelector(".bcard .bc-menu").getBoundingClientRect(); const c = [...document.querySelectorAll(".bcard .bc-text, .bcard .bc-body, .bcard p")].find((n) => { const r = n.getBoundingClientRect(); return r.top > m.bottom + 8 && r.top < innerHeight - 120; }); if (!c) return null; const r = c.getBoundingClientRect(); return { x: r.left + 30, y: r.top + 10 }; });
+      if (under) {
+        const before = await page.evaluate(() => JSON.stringify(window.Deck.state));
+        await page.touchscreen.tap(under.x, under.y); await page.waitForTimeout(400);
+        const after = await page.evaluate(() => ({ menu: !!document.querySelector(".bcard .bc-menu"), same: null, st: JSON.stringify(window.Deck.state), picking: !!document.querySelector(".bcard .picking, .board.linking, .w.picked, .w.sel") }));
+        check(!after.menu && after.st === before && !after.picking, `a tap outside a card's menu should only close it: menu ${after.menu}, deck changed ${after.st !== before}, picking ${after.picking}`);
+      } else errors.push("deck: no card text under the open menu to tap");
+    } else errors.push(`deck: expected cards to test the menu on, found ${cards}`);
     await ctx.close();
   });
 

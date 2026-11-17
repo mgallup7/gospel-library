@@ -2691,12 +2691,26 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   const ICON_MORE = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>';
   const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a1 1 0 0 1 1-1h9"/></svg>';
   const ICON_CLEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  // A tap outside an open menu only closes it. The menus close on the pointer going down; the
+  // click that follows would still land on whatever is under the finger (closing Aa over the
+  // text selected a verse), so that one click is dropped. A drag still scrolls the page.
+  function swallowTap(e) {
+    e.stopPropagation();
+    let timer = 0;
+    const done = () => { clearTimeout(timer); document.removeEventListener("click", stop, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("pointercancel", done, true); };
+    const stop = (c) => { c.preventDefault(); c.stopPropagation(); done(); };
+    const up = () => { clearTimeout(timer); timer = setTimeout(done, 400); }; // the click comes right after the finger lifts, or not at all
+    document.addEventListener("click", stop, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", done, true);
+    timer = setTimeout(done, 5000);
+  }
   function popMenu(btnAttrs, items, cls) {
     const menu = el("div", { class: "size-menu", role: "menu", hidden: true }, items.map(([label, icon, act]) =>
       el("button", { type: "button", role: "menuitem", onclick: () => { shut(); act(); } }, [el("span", { class: "g", html: icon }), label])));
     const btn = el("button", { type: "button", "aria-haspopup": "menu", "aria-expanded": "false", ...btnAttrs, onclick: (e) => { e.stopPropagation(); if (menu.hidden) open(); else shut(); } });
     const wrap = el("span", { class: cls }, [btn, menu]);
-    const away = (e) => { if (!wrap.contains(e.target)) shut(); };
+    const away = (e) => { if (!wrap.contains(e.target)) { shut(); swallowTap(e); } };
     menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } });
     function open() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.querySelector("button")?.focus({ preventScroll: true }); }
     function shut() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); }
@@ -3118,7 +3132,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ].filter(Boolean));
     // "Aa" always, since the sizes are always in it; three dots beside it once Present and the rest have folded in
     const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size and more", title: "Text size and more", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } }, [el("span", { class: "aa", text: "Aa" }), el("span", { class: "dots", html: ICON_MORE })]);
-    const away = (e) => { if (!wrap.contains(e.target)) shut(); };
+    const away = (e) => { if (!wrap.contains(e.target)) { shut(); swallowTap(e); } };
     const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
     function openMenu() {
       const ob = wrap.closest(".reader-bar")?.querySelector(".orig-btn"), item = menu.querySelector(".menu-orig");
@@ -3937,6 +3951,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ask: askQuestion,
     api, el, esc, store, openDoc, followLink, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
+    swallowTap, // deck.js: a tap outside a card's menu only closes it
     get ready() { return state.ready; },
     passphrase: () => store.get("passphrase") || "", // sync.js seals the synced file with it
     get skills() { return store.get("skills")?.data || null; },

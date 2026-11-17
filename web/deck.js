@@ -1229,7 +1229,8 @@ import { database } from "./lib/idb.js";
     ui.cards.querySelector(`.bcard[data-id="${id}"] .bc-menu`)?.scrollIntoView?.({ block: "nearest" }); // the whole menu, when its card is at the foot of the pane
     refocus(id, ".bc-menu button:not(:disabled)");
     if (!menuOutside) {
-      menuOutside = (e) => { if (menuFor && !(e.target.closest && e.target.closest(".bc-menu, .bc-more"))) closeMenu(false); };
+      // (the tap that closes it does nothing else: it used to act on the card or button under it)
+      menuOutside = (e) => { if (menuFor && !(e.target.closest && e.target.closest(".bc-menu, .bc-more"))) { closeMenu(false); GL().swallowTap?.(e); } };
       document.addEventListener("pointerdown", menuOutside, true);
     }
   }
