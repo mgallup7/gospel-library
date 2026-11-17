@@ -3222,10 +3222,33 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (!currentDoc) return;
     const units = presentUnits(currentDoc);
     if (!units.length) return;
-    const pid = fromPid || state.pid || $(".doc .is-target", readerPane)?.id || null;
+    // Where to begin: the verse asked for, else the first one selected, else the first one on
+    // screen (the verse he came for when it is still in view), so Present opens on what he is
+    // reading and not on slide 1.
+    const pid = fromPid || $(".doc .sel", readerPane)?.id || topUnit({ preferTarget: true })?.id || null;
     let i = pid ? units.findIndex((u) => u.pid === pid) : 0;
     if (i < 0) i = 0;
-    openStage({ units, i, doc: currentDoc });
+    openStage({ units, i, doc: currentDoc, from: { i, reader: readerPane.scrollTop, win: window.scrollY } });
+  }
+
+  // The first verse or paragraph showing under the reader's bar; null at the top of a page,
+  // where the title is still in view. preferTarget: the verse the address names, when it is on
+  // screen, stands for the place.
+  function topUnit({ preferTarget = false } = {}) {
+    const body = $(".doc", readerPane);
+    if (!body || readerPane.hidden) return null;
+    const bar = $(".reader-bar", readerPane);
+    const edge = Math.max(bar ? bar.getBoundingClientRect().bottom : 0, readerPane.getBoundingClientRect().top, 0);
+    const floor = Math.min(window.innerHeight, readerPane.getBoundingClientRect().bottom);
+    const h1 = body.querySelector("h1");
+    if (h1 && h1.getBoundingClientRect().bottom > edge) return null;
+    if (preferTarget) {
+      const t = body.querySelector(".is-target");
+      const r = t && t.id ? t.getBoundingClientRect() : null;
+      if (r && r.bottom > edge + 20 && r.top < floor - 20) return t;
+    }
+    for (const n of body.querySelectorAll(UNIT_SEL)) { if (n.id && n.getBoundingClientRect().bottom > edge + 20) return n; }
+    return null;
   }
 
   // A hand-picked list of passages (from Ask or the deck), each with its own
@@ -3245,11 +3268,24 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // A mouse moving wakes the controls; a touch wakes them only in the top-right corner, where
   // they live, so taps that turn the page leave the room looking at the words alone.
   stage.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse") wakeControls(); }, { passive: true });
+  // While faded the controls take no touches (app.css), and the touch that wakes them does
+  // nothing else: its click is dropped, so it neither presses the button that appears under the
+  // finger nor turns the slide.
+  let wakingTouch = 0;
   stage.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse") { wakeControls(); return; }
     const r = stage.getBoundingClientRect();
-    if (e.clientY - r.top < 120 && r.right - e.clientX < 220) wakeControls();
+    if (e.clientY - r.top < 120 && r.right - e.clientX < 220) {
+      if (!stage.classList.contains("show-controls")) wakingTouch = Date.now();
+      wakeControls();
+    }
   }, { passive: true });
+  stage.addEventListener("click", (e) => {
+    if (!wakingTouch) return;
+    const fresh = Date.now() - wakingTouch < 1500;
+    wakingTouch = 0;
+    if (fresh) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
   // The elapsed time since Present began, for the speaker only: it sits in the controls and
   // keeps counting while the screen is blanked. Tapping it starts it again from 0:00.
   let stageClock = null, stageT0 = 0;
@@ -3314,7 +3350,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
 
   function stopPresenting() {
     if (!show) return;
-    const atPid = show.doc ? show.units[show.i]?.pid : null;
+    // Closed on the slide it opened on, the chapter goes back to exactly where it was; after
+    // moving through slides, to the verse reached.
+    const from = show.from && show.from.i === show.i ? show.from : null;
+    const atPid = show.doc && !from ? show.units[show.i]?.pid : null;
     show.lock?.release?.();
     show = null;
     clearInterval(stageClock); stageClock = null;
@@ -3327,7 +3366,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     // focus goes back to what opened the stage, once the screen is out of full-screen (nothing outside it can take focus before)
     const back = stageOpener && stageOpener.isConnected ? stageOpener : (atPid ? readerPane.querySelector(`#${CSS.escape(atPid)}`) : null);
     stageOpener = null;
-    const restore = () => { if (back && back.isConnected) { try { back.focus({ preventScroll: true }); } catch (_) {} } };
+    const restore = () => {
+      if (back && back.isConnected) { try { back.focus({ preventScroll: true }); } catch (_) {} }
+      if (from) { readerPane.scrollTop = from.reader; if (window.scrollY !== from.win) window.scrollTo(0, from.win); }
+    };
     if (document.fullscreenElement) { const p = document.exitFullscreen?.(); if (p && p.then) p.then(restore, restore); else restore(); }
     else restore();
     dropOverlay("stage"); // closed by hand: its marker goes too (Back closing it has already cleared overlay)

@@ -843,11 +843,11 @@ body.first-run .bar, body.first-run #filters { display: none; }
 .stage-text mark { background: transparent; color: inherit; }
 .stage-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; font-family: var(--sans); font-size: 2.6vmin; opacity: .7; padding-top: 2vmin; }
 .stage-count { font-variant-numeric: tabular-nums; }
-.stage-controls { position: absolute; top: calc(var(--safe-top) + 8px); right: calc(8px + var(--safe-right)); display: flex; gap: 2px; opacity: 0; transition: opacity .2s; }
+.stage-controls { position: absolute; top: calc(var(--safe-top) + 8px); right: calc(8px + var(--safe-right)); display: flex; gap: 2px; opacity: 0; pointer-events: none; transition: opacity .2s; } /* faded, they take no taps: an unseen Close ended the talk */
 /* The controls show when woken (a tap in the top-right corner, a mouse move, a key) and when a
    control itself has focus; never just because the stage is under the pointer or holds focus,
    or a mirrored screen would show the room the timer and what comes next. */
-.stage.show-controls .stage-controls, .stage-controls:focus-within { opacity: 1; }
+.stage.show-controls .stage-controls, .stage-controls:focus-within { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .stage.show-controls .stage-controls { opacity: .8; } }
 .stage-controls button { width: 44px; height: 44px; border-radius: var(--r-ctl); font: 20px var(--sans); color: inherit; background: rgba(127,127,127,.12); }
 .stage-controls button:disabled { opacity: .3; }
