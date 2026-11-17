@@ -154,6 +154,42 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     }
   });
 
+  step("3", async () => {
+    const { ctx, page } = await open({ width: 393, height: 852 });
+    await tapOn(page, "#searchTab");
+    await page.fill("#q", "alma 32 21"); await page.press("#q", "Enter");
+    await page.waitForSelector("#reader .doc .verse", { timeout: 15000 });
+    await page.waitForTimeout(400);
+    // back on Search the box holds the last search and has lost the cursor
+    await page.goBack(); await page.waitForTimeout(700);
+    await page.evaluate(() => document.querySelector("#q").blur());
+    await tapOn(page, "#q"); await page.waitForTimeout(200);
+    const sel = await page.evaluate(() => { const q = document.querySelector("#q"); return { v: q.value, a: q.selectionStart, b: q.selectionEnd, focused: document.activeElement === q }; });
+    check(sel.focused && sel.v.length > 0 && sel.a === 0 && sel.b === sel.v.length, `a tap in the box should select the last search: ${JSON.stringify(sel)}`);
+    await page.keyboard.type("d&c 4 2");
+    check((await page.inputValue("#q")) === "d&c 4 2", `typing should replace the last search, the box reads "${await page.inputValue("#q")}"`);
+    // a second tap in a box that has the cursor leaves the text unselected
+    await tapOn(page, "#q"); await page.waitForTimeout(200);
+    const again = await page.evaluate(() => { const q = document.querySelector("#q"); return q.selectionEnd - q.selectionStart; });
+    check(again < 7, "a tap in a box that already has the cursor should not select it all again");
+    // Continue: the verse reached by scrolling
+    await read(page, "Alma 5:1");
+    await scrollToVerse(page, 16);
+    await page.waitForTimeout(1400);
+    const last = await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.lastRead")));
+    check(last && last.verse === 16 && last.pid === "p16", `Continue should remember the verse reached by scrolling: ${JSON.stringify(last)}`);
+    await tapOn(page, "#homeBtn"); await page.waitForTimeout(700);
+    if (!(await page.isVisible(".sec-continue"))) { await tapOn(page, "#homeBtn"); await page.waitForTimeout(700); }
+    const card = await page.textContent(".sec-continue .home-card").catch(() => "");
+    check(/Alma 5/.test(card) && /at verse 16/.test(card), `the Continue card should say the verse: "${card}"`);
+    await page.screenshot({ path: `${SHOTS}fix-a-continue-phone.png` });
+    await tapOn(page, ".sec-continue .home-card");
+    await page.waitForSelector("#reader .doc .verse", { timeout: 10000 }); await page.waitForTimeout(600);
+    const seen = await page.evaluate(() => { const r = document.querySelector("#reader .doc #p16").getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; });
+    check(seen, "Continue should open the chapter with that verse on screen");
+    await ctx.close();
+  });
+
   for (const [name, fn] of STEPS) {
     if (only && !only.includes(name)) continue;
     try { await fn(); } catch (err) { errors.push(`item ${name} aborted: ${String(err.message).split("\n")[0]}`); }

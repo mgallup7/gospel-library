@@ -1509,6 +1509,21 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(state.pid || "") ? Number(state.pid.slice(1)) : null;
     store.set("lastRead", { id: currentDoc.id, title: currentDoc.title, where: crumbFor(currentDoc), pid: state.pid || null, verse });
   }
+  // Continue also remembers the place reached by reading: as the page scrolls, the first verse
+  // on screen is written into lastRead (at most once a second). iOS starts a home-screen app
+  // again at the shelves, so that card is the way back to the verse, not only to the chapter.
+  let readTimer = 0;
+  function noteReading() {
+    readTimer = 0;
+    if (!state.ready || !currentDoc || state.docId !== currentDoc.id || readerPane.hidden || document.body.classList.contains("presenting")) return;
+    const last = store.get("lastRead");
+    if (!last || last.id !== currentDoc.id) return;
+    const pid = topUnit({ preferTarget: true })?.id || null;
+    if (pid === (last.pid || null)) return;
+    const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(pid || "") ? Number(pid.slice(1)) : null;
+    store.set("lastRead", { ...last, pid, verse });
+  }
+  document.addEventListener("scroll", () => { if (!readTimer) readTimer = setTimeout(noteReading, 1000); }, { capture: true, passive: true });
 
   function renderDoc(doc) {
     const bar = el("div", { class: "reader-bar" }, [
@@ -3245,13 +3260,13 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const bar = $(".reader-bar", readerPane);
     const edge = Math.max(bar ? bar.getBoundingClientRect().bottom : 0, readerPane.getBoundingClientRect().top, 0);
     const floor = Math.min(window.innerHeight, readerPane.getBoundingClientRect().bottom);
-    const h1 = body.querySelector("h1");
-    if (h1 && h1.getBoundingClientRect().bottom > edge) return null;
     if (preferTarget) {
       const t = body.querySelector(".is-target");
       const r = t && t.id ? t.getBoundingClientRect() : null;
       if (r && r.bottom > edge + 20 && r.top < floor - 20) return t;
     }
+    const h1 = body.querySelector("h1");
+    if (h1 && h1.getBoundingClientRect().bottom > edge) return null;
     for (const n of body.querySelectorAll(UNIT_SEL)) { if (n.id && n.getBoundingClientRect().bottom > edge + 20) return n; }
     return null;
   }
@@ -3662,6 +3677,18 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) b.addEventListener("click", () => switchTab(b.dataset.tab));
   $("#settingsBtn").addEventListener("click", () => { if (state.ready) openSettings(); });
   function focusBox() { try { input.focus({ preventScroll: true }); input.select(); } catch (_) {} }
+  // A tap into the box while it holds the last search selects that text, so the next thing
+  // typed replaces it ("alma 32 21" then "d&c 4 2" used to run together). A tap in a box that
+  // already has the cursor places the cursor, as usual. The selection is made on the click,
+  // after the browser has put its own cursor down, so it is not undone.
+  let boxHad = false;
+  const noteBox = () => { boxHad = document.activeElement === input; };
+  input.addEventListener("touchstart", noteBox, { passive: true });
+  input.addEventListener("mousedown", noteBox);
+  input.addEventListener("click", () => {
+    if (!boxHad && input.value) { try { input.setSelectionRange(0, input.value.length); } catch (_) {} }
+    boxHad = true;
+  });
   // The search box from the keyboard ("/", Cmd+F): where it is not on the screen (the Deck, Ask,
   // a page on a phone) Search comes up first.
   function focusSearch() {
