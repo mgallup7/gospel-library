@@ -232,6 +232,77 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await ctx.close();
   });
 
+  step("5", async () => {
+    // the edge swipe lives in the home-screen app: the test says it is one
+    const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, deviceScaleFactor: 1, hasTouch: true });
+    await ctx.addInitScript(() => { try { Object.defineProperty(Navigator.prototype, "standalone", { get: () => true, configurable: true }); } catch (_) {} });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => errors.push(`pageerror: ${e}`));
+    await page.goto(BASE);
+    await page.fill("div.setup input", PASS);
+    await page.press("div.setup input", "Enter");
+    await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
+    const cdp = await ctx.newCDPSession(page);
+    const swipe = async (x0, y, x1, { ms = 120, rest = 0 } = {}) => {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x0, y }] });
+      if (rest) await page.waitForTimeout(rest);
+      const steps = 4;
+      for (let k = 1; k <= steps; k++) { await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x0 + ((x1 - x0) * k) / steps, y }] }); await page.waitForTimeout(ms / steps); }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await page.waitForTimeout(500);
+    };
+    const at = () => page.evaluate(() => location.hash);
+    // Library, Scriptures (the book chips), Alma (the chapter grid), Alma 32
+    await page.locator("#homeBody .shelf-tile:has-text('Scriptures')").tap(); await page.waitForSelector("#homeBody .shelf .chip", { timeout: 5000 });
+    const books = await at();
+    await page.locator("#homeBody .shelf .chip", { hasText: /^Alma$/ }).tap(); await page.waitForSelector("#homeBody .chapters button", { timeout: 5000 });
+    const grid = await at();
+    await page.locator("#homeBody .chapters button", { hasText: /^32$/ }).tap();
+    await page.waitForSelector("#reader .doc .verse", { timeout: 10000 }); await page.waitForTimeout(300);
+    const chapter = await at();
+    // from 24pt in: not the edge any more
+    await swipe(24, 400, 200);
+    check((await at()) === chapter, "a swipe that starts 24pt in should not go back");
+    // a press that rests, then drags (selecting a phrase): not a swipe
+    await swipe(8, 400, 200, { rest: 500 });
+    check((await at()) === chapter, "a long press dragged right should not go back");
+    // a slow drag: over 400 ms
+    await swipe(8, 400, 200, { ms: 700 });
+    check((await at()) === chapter, "a slow drag from the edge should not go back");
+    // words selected: no swipe
+    await page.evaluate(() => { const v = document.querySelector("#reader .doc .verse"); const r = document.createRange(); r.selectNodeContents(v); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
+    await swipe(8, 400, 200);
+    check((await at()) === chapter, "a swipe while words are selected should not go back");
+    await page.evaluate(() => getSelection().removeAllRanges()); await page.waitForTimeout(700);
+    // a quick one from the edge goes back: to the chapter grid, then the book chips, then the shelf
+    await swipe(8, 400, 200);
+    check((await at()) === grid, `a quick swipe from the edge should go back to the chapter grid: ${await at()}`);
+    const y = await page.evaluate(() => { const r = document.querySelector("#homeBody .chapters").getBoundingClientRect(); return r.top + 30; });
+    await swipe(6, y, 200);
+    check((await at()) === books, `the edge swipe should work on the chapter grid: ${await at()}`);
+    await page.waitForSelector("#homeBody .shelf .chip", { timeout: 5000 });
+    const y2 = await page.evaluate(() => { const r = document.querySelector("#homeBody .shelf").getBoundingClientRect(); return r.top + 20; });
+    await swipe(6, y2, 200);
+    check((await at()) !== books && !!(await page.$("#homeBody .shelf-grid")), `the edge swipe should work on the book chips: ${await at()}`);
+    // the Deck: a page opened from a card, then the Deck again by its Back; a swipe from the board's edge goes back to the page
+    await read(page, "Alma 32:1");
+    await tapVerse(page, 3);
+    await tapOn(page, "#reader .select-bar .add-deck"); await page.waitForTimeout(300);
+    await tapOn(page, "#deckBtn"); await page.waitForSelector(".board .bcard", { timeout: 5000 });
+    await page.locator(".board .bcard .bc-cite").first().tap(); await page.waitForTimeout(700);
+    const fromDeck = await at();
+    if (/doc=/.test(fromDeck)) {
+      await page.goBack(); await page.waitForSelector(".board .bcard", { timeout: 5000 }); await page.waitForTimeout(300);
+      const onDeck = await at();
+      await page.goForward(); await page.waitForTimeout(600);
+      await page.goBack(); await page.waitForSelector(".board .bcard", { timeout: 5000 }); await page.waitForTimeout(300);
+      const yb = await page.evaluate(() => { const r = document.querySelector(".board .bcard").getBoundingClientRect(); return r.top + 40; });
+      await swipe(387, yb, 200); // in from the right edge: forward, to the page again
+      check((await at()) === fromDeck, `the edge swipe should work on the Deck (forward from its right edge): ${await at()} (deck ${onDeck})`);
+    } else errors.push(`deck: a card's citation should open its page: ${fromDeck}`);
+    await ctx.close();
+  });
+
   for (const [name, fn] of STEPS) {
     if (only && !only.includes(name)) continue;
     try { await fn(); } catch (err) { errors.push(`item ${name} aborted: ${String(err.message).split("\n")[0]}`); }

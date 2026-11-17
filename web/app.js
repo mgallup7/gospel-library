@@ -415,21 +415,35 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // this already, so the app stays out of its way there.
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   if (standalone) {
-    const EDGE = 28, NEED = 80;
+    // It begins within 16pt of the edge (the verses begin at 20, so a finger on a line's first
+    // word is not on the edge), is over within 400 ms, and never happens while words are
+    // selected or after a press that rested before it moved: a long press on the first word of
+    // a line, dragged right to select a phrase, used to go Back. The book chips, the chapter
+    // grid and the Deck take it too (their edge is padding); what stays out is what the finger
+    // drags or scrolls sideways itself: a card's grip and the link dots, a board mid-drag, the
+    // scope row, a text field, the stage and the sheets.
+    const EDGE = 16, NEED = 80, QUICK = 400, REST = 250;
     let swipe = null;
+    const wordsSelected = () => { try { const s = window.getSelection ? window.getSelection() : null; return !!(s && s.rangeCount && !s.isCollapsed && String(s).trim()); } catch (_) { return false; } };
     document.addEventListener("touchstart", (e) => {
       swipe = null;
       if (e.touches.length !== 1 || show || !state.ready) return;
       const t = e.touches[0];
-      if (e.target.closest(".board, .port, .scopes, .shelf, .chapters, input, textarea, .stage, .sheet, .dsheet")) return;
-      if (t.clientX <= EDGE) swipe = { dir: -1, x: t.clientX, y: t.clientY };
-      else if (t.clientX >= window.innerWidth - EDGE) swipe = { dir: 1, x: t.clientX, y: t.clientY };
+      if (e.target.closest(".bc-grip, .port, .board.dragging, .board.reordering, .scopes, input, textarea, .stage, .sheet, .dsheet")) return;
+      if (wordsSelected()) return;
+      if (t.clientX <= EDGE) swipe = { dir: -1, x: t.clientX, y: t.clientY, at: Date.now(), moved: false };
+      else if (t.clientX >= window.innerWidth - EDGE) swipe = { dir: 1, x: t.clientX, y: t.clientY, at: Date.now(), moved: false };
     }, { passive: true });
     document.addEventListener("touchmove", (e) => {
       if (!swipe) return;
       const t = e.touches[0];
-      if (Math.abs(t.clientY - swipe.y) > 50) swipe = null; // a scroll, not a swipe
+      if (Math.abs(t.clientY - swipe.y) > 50) { swipe = null; return; } // a scroll, not a swipe
+      if (!swipe.moved && Math.abs(t.clientX - swipe.x) > 10) {
+        if (Date.now() - swipe.at > REST) swipe = null; // the finger rested first: a long press, not a swipe
+        else swipe.moved = true;
+      }
     }, { passive: true });
+    document.addEventListener("touchcancel", () => { swipe = null; }, { passive: true });
     document.addEventListener("touchend", (e) => {
       if (!swipe) return;
       const t = e.changedTouches[0];
@@ -437,6 +451,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const go = swipe;
       swipe = null;
       if (Math.abs(t.clientY - go.y) > 50) return;
+      if (Date.now() - go.at > QUICK || wordsSelected()) return;
       if (go.dir < 0 && dx >= NEED) { goBack(); }
       else if (go.dir > 0 && dx <= -NEED) { history.forward(); }
     }, { passive: true });
