@@ -671,6 +671,16 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
   .conc-books { flex-wrap: nowrap; max-height: none; overflow-x: auto; overflow-y: hidden; margin-left: -16px; margin-right: -16px; padding: 0 16px 4px; scrollbar-width: none; }
   .conc-books::-webkit-scrollbar { display: none; }
 }
+/* under their volumes: a small label, then that volume's books (each volume its own sideways row on a phone) */
+.conc-books.by-volume { display: block; max-height: 190px; }
+.conc-vol + .conc-vol { margin-top: 6px; }
+.conc-vol-name { font-size: var(--ui-11); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 3px; }
+.conc-vol-row { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 759px), (max-height: 499px) {
+  .conc-books.by-volume { max-height: none; overflow: visible; margin-left: 0; margin-right: 0; padding: 0; }
+  .conc-vol-row { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; margin: 0 -16px; padding: 0 16px 4px; scrollbar-width: none; }
+  .conc-vol-row::-webkit-scrollbar { display: none; }
+}
 .conc-line { display: flex; align-items: stretch; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
 .conc-line .conc-row { flex: 1; min-width: 0; border-bottom: 0; }
 .conc-line .add { width: 44px; flex: none; color: var(--accent); font-size: 20px; }

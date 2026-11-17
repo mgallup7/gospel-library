@@ -570,7 +570,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   async function render({ restore = null, boot = false } = {}) {
     const paneWas = boot ? history.state?.pane || null : null; // read before anything is drawn: drawing writes it again
     const searching = state.q.trim().length >= 2;
-    if (searching && !state.terms.length) state.terms = termsFrom(state.q);
+    // (a reference is a place, not words to mark on the page: "alma 32 21" painted "Alma" yellow)
+    if (searching && !state.terms.length && !refLike(state.q)) state.terms = termsFrom(state.q);
     const listWork = searching ? runSearch({ typeahead: false, silent: true, restore }) : (state.lastSearch = null, renderHome());
     // (at the start, a page that was showing over the board when the app was left shows again)
     const boardFirst = wide() && !searching && state.browse?.tab === "deck" && !(paneWas === "page" && (state.docId || state.studyId));
@@ -902,7 +903,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         data.jump = prev.jump;
       }
       state.lastSearch = data;
-      state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
+      // a search that is a reference is a place: the page it opens shows no match strip and no painted hits
+      state.terms = data.jump?.doc_id ? [] : data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
       if (state.view === "all" && !typeahead) await renderConcordance(data, { restore }); else renderResults(data);
       // an empty board has nothing to offer fresh results: the right pane goes back to the page (or rests empty)
       if (wide() && paneView === "board" && !window.Deck?.count?.()) panel.page();
@@ -963,6 +965,33 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (!wide() && readerPane.hidden && window.scrollY !== at.win) window.scrollTo(0, at.win);
   }
 
+  // Does the box hold a reference ("alma 32 21", "D&C 4:2", "1 Nephi 3:7-9")? Only a guess from
+  // its shape, for the moment before the search answers (a reload on a page opened by reference).
+  function refLike(q) { return /^\s*(\d\s*)?[A-Za-z&.' ]*[A-Za-z&.]\s*\d+(\s*[:.\s]\s*\d+(\s*[-–,]\s*\d+)*)?\s*$/.test(q || ""); }
+  // "Only exact words": the words in quotes, and nothing else. Filters typed as filters stay as
+  // typed; a book or a shelf the search read out of the sentence ("faith in Alma") becomes a
+  // filter, so the quotes hold "faith" and the search is still kept to Alma.
+  const FILTER_WORDS = /\b(speaker|by|year|book|in|scope):("[^"]*"|\S+)/gi;
+  function exactQuery(data) {
+    const sm = data.smart || {};
+    const raw = data.query.trim();
+    const keep = raw.match(FILTER_WORDS) || [];
+    const typed = (k) => keep.some((f) => new RegExp(`^(${k}):`, "i").test(f));
+    let words = raw.replace(FILTER_WORDS, " ").replace(/"/g, " ").replace(/\s+/g, " ").trim();
+    if (sm.natural) {
+      const tail = /^(.*\S)\s+(?:in|from)\s+(?:the\s+)?(?:book\s+of\s+)?(\S+(?:\s+\S+){0,3})$/i.exec(words);
+      const names = (name) => !!tail && tail[2].toLowerCase().split(/\s+/).some((w) => w.replace(/[^a-z0-9]/g, "").length > 2 && name.toLowerCase().includes(w.replace(/[^a-z0-9]/g, "")));
+      if (sm.book && !typed("book")) {
+        const name = sm.book === "sections" ? "d&c" : sm.book.replace(/-/g, " ");
+        keep.push(/\s/.test(name) ? `book:"${name}"` : `book:${name}`);
+        if (names(name) || (sm.book === "sections" && tail && /d&c|doctrine/i.test(tail[2]))) words = tail[1];
+      } else if (sm.scope && sm.scope !== state.scope && !typed("in|scope")) {
+        keep.push(`scope:${sm.scope}`);
+        if (names(SCOPE_NAME[sm.scope] || sm.scope) || names(sm.scope)) words = tail[1];
+      }
+    }
+    return [`"${words}"`, ...keep].join(" ");
+  }
   function termsFrom(q) {
     return q.replace(/\b(speaker|by|year|book|in|scope):("[^"]*"|\S+)/gi, " ")
       .replace(/[^\w\s'’-]/g, " ")
@@ -1000,7 +1029,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const how = `${sm.exact ? "Exact phrase found, then " : ""}${sm.semantic ? "by words and meaning" : "by words"}`;
       const line = el("div", { class: "smart-line" }, [
         el("span", { text: `${how.charAt(0).toUpperCase() + how.slice(1)}: ${bits.join(" · ") || data.query}` }),
-        /^".*"$/.test(data.query.trim()) ? null : el("button", { type: "button", class: "text-btn small", text: "Only exact words", onclick: () => { state.q = `"${data.query.trim().replace(/"/g, "")}"`; syncControls(); runSearch({ typeahead: false }); } }),
+        /^".*"$/.test(data.query.replace(FILTER_WORDS, " ").trim()) ? null : el("button", { type: "button", class: "text-btn small exact-words", text: "Only exact words", onclick: () => { state.q = exactQuery(data); syncControls(); runSearch({ typeahead: false }); } }),
         asTypedBtn,
       ]);
       if (data.widened) line.append(el("span", { class: "widened", text: ` · Claude also searched: ${data.widened.join("; ")}` }));
@@ -1016,9 +1045,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     }
     const total = data.total || 0;
     if (data.hits.length || data.documents.length) {
-      const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents" && !data.typeahead;
+      // (typed results too: they are a sample, and nothing else on them said that more exist; the
+      // count is known only after a full search, so the typed line leaves the number out)
+      const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents";
       const line = el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}` });
-      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small see-all", text: data.lexical_total === 1 ? "See the 1 with these words, in its book" : `See all ${data.lexical_total.toLocaleString()}, book by book \u203a`, title: "Every passage with these words, in the order of the books", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
+      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small see-all", text: data.typeahead ? "See all, book by book ›" : data.lexical_total === 1 ? "See the 1 with these words, in its book" : `See all ${data.lexical_total.toLocaleString()}, book by book \u203a`, title: "Every passage with these words, in the order of the books", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
       // the results as a whole, handed to Claude (the floating pill's other job)
       if (data.hits.length && window.Ask) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline think-these", text: "Think these through", title: "Think these through with Claude", onclick: () => thinkHere() }));
       frag.append(line);
@@ -1131,6 +1162,20 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const redo = () => { push(true); renderConcordance(data); };
     const books = all.by_book || [];
     const chipBook = books.find((b) => b.key === state.cbook);
+    // the chips sit under their volumes, in the order of the shelf, so Alma is a few chips into
+    // the Book of Mormon and not the 44th in one long row; what is not scripture comes last
+    let volOf = new Map(), volNames = [];
+    if (books.length > 1) {
+      try { const shelf = await api("scriptures"); for (const v of shelf.volumes) { volNames.push(v.name); for (const b of v.books) volOf.set(b.slug, v.name); } } catch (_) { volOf = new Map(); volNames = []; }
+      if (state.view !== "all") return;
+    }
+    const bookGroups = [];
+    for (const name of [...volNames, "Other books"]) {
+      const inVol = books.filter((b) => (volOf.get(b.key) || "Other books") === name);
+      if (inVol.length) bookGroups.push({ name, books: inVol });
+    }
+    const bookChip = (b) => el("button", { type: "button", class: "chip small" + (b.key === state.cbook ? " on" : ""), "data-book": b.key, "aria-pressed": String(b.key === state.cbook),
+      onclick: () => { state.cbook = b.key === state.cbook ? "" : b.key; redo(); } }, [bookChipName(b.name), el("b", { text: ` ${b.n.toLocaleString()}` })]);
     const frag = document.createDocumentFragment();
     const t = listTrail(); if (t) frag.append(t);
     frag.append(el("div", { class: "conc-head" }, [
@@ -1144,9 +1189,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
           onclick: () => { if ((k === "exact") === state.exact) return; state.exact = k === "exact"; redo(); } }))),
       ]) : null,
       // how many in each book, as filters on the list: tap one to see that book, again to see them all
-      books.length > 1 || chipBook ? el("div", { class: "conc-books", role: "group", "aria-label": "Matches by book" }, books.map((b) =>
-        el("button", { type: "button", class: "chip small" + (b.key === state.cbook ? " on" : ""), "data-book": b.key, "aria-pressed": String(b.key === state.cbook),
-          onclick: () => { state.cbook = b.key === state.cbook ? "" : b.key; redo(); } }, [bookChipName(b.name), el("b", { text: ` ${b.n.toLocaleString()}` })]))) : null,
+      books.length > 1 || chipBook ? el("div", { class: "conc-books" + (bookGroups.length > 1 ? " by-volume" : ""), role: "group", "aria-label": "Matches by book" },
+        bookGroups.length > 1
+          ? bookGroups.map((g) => el("div", { class: "conc-vol", role: "group", "aria-label": g.name }, [el("div", { class: "conc-vol-name", text: g.name }), el("div", { class: "conc-vol-row" }, g.books.map(bookChip))]))
+          : books.map(bookChip)) : null,
     ].filter(Boolean)));
     if (all.exact === false && state.exact && data.lexical_match) frag.append(el("div", { class: "status", text: "This search cannot be narrowed to the exact words; showing each word with its family." }));
     // the words the match holds (a natural question brings its synonyms), marked whole or with their endings
@@ -1179,7 +1225,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     listPane.replaceChildren(frag);
     // the chip that is on stays in sight in its own row (sideways on a phone, down on the iPad)
     const onChip = $(".conc-books .chip.on", listPane);
-    if (onChip) { const row = onChip.parentElement; row.scrollLeft = onChip.offsetLeft - 16; row.scrollTop = onChip.offsetTop - 4; }
+    if (onChip) {
+      const row = onChip.parentElement, box = onChip.closest(".conc-books");
+      row.scrollLeft = onChip.offsetLeft - row.offsetLeft - 16;
+      box.scrollTop = onChip.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 24;
+    }
     listPane.scrollTop = restore ? restore.list || 0 : 0;
     if (restore) window.scrollTo(0, restore.win || 0);
     markActive();

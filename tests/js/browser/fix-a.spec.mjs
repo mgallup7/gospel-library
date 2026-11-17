@@ -303,6 +303,72 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await ctx.close();
   });
 
+  step("6", async () => {
+    const { ctx, page } = await open({ width: 393, height: 852 });
+    await tapOn(page, "#searchTab");
+    // typed, not entered: the results say that all of them can be seen
+    await page.locator("#q").pressSequentially("faith", { delay: 30 });
+    await page.waitForSelector("#list .hit", { timeout: 20000 }); await page.waitForTimeout(500);
+    const typed = await page.evaluate(() => document.querySelector("#list .group-title .see-all")?.textContent || "");
+    check(/^See all, book by book/.test(typed), `typed results should offer "See all, book by book": "${typed}"`);
+    await page.screenshot({ path: `${SHOTS}fix-a-typed-phone.png` });
+    await tapOn(page, "#list .group-title .see-all");
+    await page.waitForSelector("#list .conc-books .chip", { timeout: 30000 });
+    // the concordance's books under their volumes, in the shelf's order, each still one tap
+    const vols = await page.evaluate(() => [...document.querySelectorAll("#list .conc-books .conc-vol")].map((v) => ({ name: v.querySelector(".conc-vol-name").textContent, books: [...v.querySelectorAll(".chip")].map((c) => c.dataset.book) })));
+    const names = vols.map((v) => v.name);
+    check(names.join("|") === ["Old Testament", "New Testament", "Book of Mormon", "Doctrine and Covenants", "Pearl of Great Price"].filter((n) => names.includes(n)).join("|") + (names.includes("Other books") ? "|Other books" : "") && names.length >= 4, `the book chips should sit under their volumes in order: ${JSON.stringify(names)}`);
+    const bom = vols.find((v) => v.name === "Book of Mormon");
+    check(!!bom && bom.books.includes("alma") && bom.books.indexOf("alma") < 12, `Alma should be a few chips into the Book of Mormon: ${JSON.stringify(bom?.books)}`);
+    await page.screenshot({ path: `${SHOTS}fix-a-volumes-phone.png` });
+    await page.evaluate(() => document.querySelector("#list .conc-books .chip[data-book=alma]").scrollIntoView({ inline: "center", block: "center" }));
+    await page.waitForTimeout(200);
+    await tapOn(page, "#list .conc-books .chip[data-book=alma]");
+    await page.waitForSelector("#list .conc-books .chip.on[data-book=alma]", { timeout: 15000 });
+    const seen = await page.evaluate(() => { const r = document.querySelector("#list .conc-books .chip.on").getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; });
+    check(seen, "the chip that is on should be in sight in its row");
+    // "Only exact words" on a search with its scope in the sentence
+    await page.fill("#q", "faith in Alma"); await page.press("#q", "Enter");
+    await page.waitForSelector("#list .exact-words", { timeout: 20000 });
+    const family = await page.evaluate(async () => (await GL.api("search", { q: "faith in Alma", limit: 5 })).smart);
+    await tapOn(page, "#list .exact-words");
+    await page.waitForFunction(() => /^"/.test(document.querySelector("#q").value), null, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    const exact = await page.evaluate(() => ({ q: document.querySelector("#q").value, hits: document.querySelectorAll("#list .hit").length, empty: document.querySelector("#list .empty")?.textContent || "", line: document.querySelector("#list .smart-line")?.textContent || "", again: !!document.querySelector("#list .exact-words") }));
+    check(exact.q === '"faith" book:alma', `"Only exact words" should quote only the words and keep Alma: ${exact.q} (the search read ${JSON.stringify(family?.book)})`);
+    check(exact.hits > 0 && !exact.empty && /in Alma/.test(exact.line), `the exact search should find passages in Alma: ${JSON.stringify(exact)}`);
+    check(!exact.again, "a search already in exact words should not offer it again");
+    const outside = await page.evaluate(() => [...document.querySelectorAll("#list .hit")].map((h) => h.textContent).filter((t) => !/Alma \d/.test(t)).length);
+    check(outside === 0, `${outside} results of the exact search are not in Alma`);
+    // a reference is a place: the page it opens shows no match strip and no painted hits
+    await page.fill("#q", "alma 32 21"); await page.press("#q", "Enter");
+    await page.waitForSelector("#reader .doc .verse", { timeout: 15000 }); await page.waitForTimeout(700);
+    let paint = await page.evaluate(() => ({ marks: document.querySelectorAll("#reader .doc mark.hl").length, strip: !!document.querySelector("#reader .match-strip, #reader .matchnav"), target: document.querySelector("#reader .doc .is-target")?.id }));
+    check(paint.marks === 0 && !paint.strip && paint.target === "p21", `a reference should open its verse with no hits painted: ${JSON.stringify(paint)}`);
+    await page.screenshot({ path: `${SHOTS}fix-a-reference-phone.png` });
+    await page.reload();
+    await page.waitForSelector("#reader .doc .verse", { timeout: 60000 }); await page.waitForTimeout(1200);
+    paint = await page.evaluate(() => ({ marks: document.querySelectorAll("#reader .doc mark.hl").length, strip: !!document.querySelector("#reader .match-strip, #reader .matchnav") }));
+    check(paint.marks === 0 && !paint.strip, `after a reload the reference should still paint nothing: ${JSON.stringify(paint)}`);
+    // and a search for words still paints them
+    await page.goBack(); await page.waitForTimeout(600);
+    if (!(await page.isVisible("#q"))) { await tapOn(page, "#searchTab"); await page.waitForTimeout(500); }
+    await page.fill("#q", "charity never faileth"); await page.press("#q", "Enter");
+    await page.waitForSelector("#list .hit", { timeout: 20000 });
+    await tapOn(page, "#list .hit"); await page.waitForSelector("#reader .doc .verse", { timeout: 10000 }); await page.waitForTimeout(600);
+    check((await page.locator("#reader .doc mark.hl").count()) > 0, "a search for words should still mark them on the page");
+    await ctx.close();
+    // the iPad's concordance: the same groups, wrapped
+    const pad = await open({ width: 1180, height: 820 });
+    await tapOn(pad.page, "#searchTab");
+    await pad.page.fill("#q", "faith"); await pad.page.press("#q", "Enter");
+    await pad.page.waitForSelector("#list .group-title .see-all", { timeout: 20000 });
+    await tapOn(pad.page, "#list .group-title .see-all");
+    await pad.page.waitForSelector("#list .conc-books .conc-vol .chip", { timeout: 30000 });
+    await pad.page.screenshot({ path: `${SHOTS}fix-a-volumes-ipad.png` });
+    await pad.ctx.close();
+  });
+
   for (const [name, fn] of STEPS) {
     if (only && !only.includes(name)) continue;
     try { await fn(); } catch (err) { errors.push(`item ${name} aborted: ${String(err.message).split("\n")[0]}`); }
