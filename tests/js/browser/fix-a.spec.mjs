@@ -19,23 +19,27 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const only = process.env.FIXA ? process.env.FIXA.split(",") : null;
   const open = async (viewport, { key = false } = {}) => {
     const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, hasTouch: true });
-    const calls = { n: 0 };
+
+    // a stand-in for api.anthropic.com: plan requests (not streamed) are counted apart from answers
+    const calls = { plan: 0, answer: 0 };
     await ctx.route("https://api.anthropic.com/**", async (route) => {
-      calls.n++;
-      const body = JSON.parse(route.request().postData() || "{}");
-      const text = body.stream ? "Faith here leans on hearing the word [1]." : JSON.stringify({ words: ["belief", "trust"], verses: [] });
-      if (body.stream) {
-        const ev = (o) => `event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`;
-        await route.fulfill({ status: 200, contentType: "text/event-stream", body: ev({ type: "message_start", message: { usage: { input_tokens: 1 } } }) + ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }) + ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }) + ev({ type: "content_block_stop", index: 0 }) + ev({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }) + ev({ type: "message_stop" }) });
-      } else await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }) });
+      const req = route.request();
+      const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "POST, OPTIONS" };
+      if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+      const body = JSON.parse(req.postData() || "{}");
+      if (!body.stream) { calls.plan++; return route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify({ content: [{ type: "text", text: '{"queries":[{"q":"hope charity","scope":"all"}],"references":[]}' }], stop_reason: "end_turn" }) }); }
+      calls.answer++;
+      const events = [{ type: "message_start" }, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }, { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ANSWER-MARK the word leans on trust." } }, { type: "content_block_stop", index: 0 }, { type: "message_delta", delta: { stop_reason: "end_turn" } }, { type: "message_stop" }];
+      return route.fulfill({ status: 200, headers: { ...cors, "content-type": "text/event-stream" }, body: events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("") });
     });
+    if (key) await ctx.addInitScript(() => { try { localStorage.setItem("gospel.apiKey", JSON.stringify("sk-ant-test-not-a-key")); } catch (_) {} });
     const page = await ctx.newPage();
     page.on("pageerror", (e) => errors.push(`pageerror: ${e}`));
     await page.goto(BASE);
     await page.fill("div.setup input", PASS);
     await page.press("div.setup input", "Enter");
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
-    if (key) await page.evaluate(() => localStorage.setItem("gospel.apiKey", JSON.stringify("sk-ant-test")));
+
     return { ctx, page, calls };
   };
   const docOf = (page, ref) => page.evaluate(async (r) => (await GL.api("search", { q: r, limit: 1 })).jump.doc_id, ref);
@@ -94,6 +98,58 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       const sel = await page.textContent("#stage .stage-ref");
       check(/32:20$/.test(sel), `${tag}: Present should open on the selected verse, opened on "${sel}"`);
       await page.keyboard.press("Escape");
+      await ctx.close();
+    }
+  });
+
+  step("2", async () => {
+    // iPad: one paid request for the search he made, none for the returns to it
+    {
+      const { ctx, page, calls } = await open({ width: 1180, height: 820 }, { key: true });
+      await tapOn(page, "#searchTab");
+      await page.fill("#q", "faith and works"); await page.press("#q", "Enter");
+      await page.waitForSelector("#list .hit", { timeout: 20000 });
+      await page.waitForFunction(() => !!document.querySelector("#list .widened") || !document.querySelector("#list .widening"), null, { timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(600);
+      check(calls.plan === 1, `a search just made should ask Claude once for more, asked ${calls.plan} times`);
+      await page.evaluate(() => { document.querySelector("#list").scrollTop = 700; });
+      await page.waitForTimeout(700); // the place is written a moment after the scroll rests
+      await tapOn(page, "#deckBtn"); await page.waitForTimeout(500);
+      await tapOn(page, "#searchTab");
+      await page.waitForSelector("#list .hit", { timeout: 20000 }); await page.waitForTimeout(900);
+      const back = await page.evaluate(() => document.querySelector("#list").scrollTop);
+      check(calls.plan === 1, `a tab return to results should not ask Claude again (${calls.plan} requests)`);
+      check(Math.abs(back - 700) < 5, `the list should keep its place through a tab return, at ${back}`);
+      await page.reload();
+      await page.waitForSelector("#list .hit", { timeout: 60000 }); await page.waitForTimeout(1200);
+      const reloaded = await page.evaluate(() => document.querySelector("#list").scrollTop);
+      check(calls.plan === 1, `a reload on results should not ask Claude again (${calls.plan} requests)`);
+      check(Math.abs(reloaded - 700) < 5, `the list should keep its place through a reload, at ${reloaded}`);
+      // into a hit and Back: still one
+      await page.evaluate(() => { document.querySelector("#list").scrollTop = 0; });
+      await tapOn(page, "#list .hit"); await page.waitForTimeout(600);
+      await page.goBack(); await page.waitForTimeout(900);
+      check(calls.plan === 1, `Back to results should not ask Claude again (${calls.plan} requests)`);
+      await ctx.close();
+    }
+    // iPhone: a question handed to Ask from a page keeps its answer
+    {
+      const { ctx, page, calls } = await open({ width: 393, height: 852 }, { key: true });
+      await read(page, "John 1:1");
+      await page.evaluate(() => GL.ask("What else can logos mean here?"));
+      await page.waitForFunction(() => /ANSWER-MARK/.test(document.querySelector(".ask-log")?.textContent || ""), null, { timeout: 15000 }).catch(() => errors.push("phone: the handed question got no answer"));
+      check(!/doc=/.test(await page.evaluate(() => location.hash)), `phone: the page should leave the address when a question goes to Ask: ${await page.evaluate(() => location.hash)}`);
+      const shows = () => page.evaluate(() => { const log = document.querySelector(".ask-log"); const r = log?.getBoundingClientRect(); return { answer: /ANSWER-MARK/.test(log?.textContent || "") && !!r && r.height > 0, page: !document.querySelector("#reader").hidden }; });
+      await tapOn(page, "#homeBtn"); await page.waitForTimeout(500);
+      await tapOn(page, "#askBtn"); await page.waitForTimeout(900);
+      let s = await shows();
+      check(s.answer && !s.page, `phone: leaving Ask and returning should show the answer, not the page: ${JSON.stringify(s)}`);
+      await page.reload();
+      await page.waitForSelector(".ask-log", { timeout: 60000 }); await page.waitForTimeout(900);
+      s = await shows();
+      check(s.answer && !s.page, `phone: a reload on Ask should show the answer, not the page: ${JSON.stringify(s)}`);
+      check(calls.answer === 1, `phone: the question should be asked once, asked ${calls.answer} times`);
+      await page.screenshot({ path: `${SHOTS}fix-a-ask-phone.png` });
       await ctx.close();
     }
   });

@@ -261,6 +261,10 @@ main {
 }
 .pane { min-width: 0; }
 #list { padding-bottom: calc(40px + max(0px, var(--safe-bottom) - var(--tabs-h))); }
+/* The list is put back at a place by number (render's restore). A browser that shifts the
+   scroll when a line fills in above (Chromium; Safari on his devices does not) moved the
+   place a little further down on every return to results: here it keeps to the number. */
+#list { overflow-anchor: none; }
 #reader, #panel { background: var(--paper); }
 /* Page | Deck: which of the two mounted panes fills the right side on a wide screen */
 .pane-switch-slot:empty { display: none; }

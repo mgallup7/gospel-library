@@ -903,7 +903,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         openDoc(h.doc_id, h.pid, { replace: true });
       }
       // the concordance is every match already: Claude's extra searches belong to the ranked list, and would redraw it over this one
-      if (!typeahead && !more && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
+      // (and only for a search he just made: a redraw on Back, a tab return or a reload is silent, and must not send a paid request again)
+      if (!typeahead && !more && !silent && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
       if (mySeq !== searchSeq) return;
       listPane.replaceChildren(el("div", { class: "status error", text: `Search failed: ${e.message}` }));
@@ -940,7 +941,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     data.extra = added.length;
     data.widened = (plan.queries || []).map((x) => x.q);
     state.lastSearch = data;
+    // the extra rows go under the ones he may already be reading: the list stays where it is
+    const at = { list: listPane.scrollTop, win: window.scrollY };
     renderResults(data);
+    listPane.scrollTop = at.list;
+    if (!wide() && readerPane.hidden && window.scrollY !== at.win) window.scrollTo(0, at.win);
   }
 
   function termsFrom(q) {
@@ -3895,6 +3900,9 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // A question handed to Ask from elsewhere (the word sheet's "Ask Claude what else it can mean")
   function askQuestion(question) {
     rememberScroll(); hideNote();
+    // on a phone the page gives way to the answer, as it does for Think it through: left in the
+    // address, the page came back over the answer on a tab return or a reload
+    if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
     state.browse = { tab: "ask", question }; state.q = "";
     syncControls(); renderHome(); showList(); push();
   }
