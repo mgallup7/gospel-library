@@ -1861,17 +1861,25 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     return lines.filter(Boolean).join("\n\n");
   }
   // Where a run of words sits in a passage, by matching the words themselves (case and punctuation aside).
-  function findPhrase(it, text) {
+  // near: a word index to prefer when the words come more than once (the reader's phrase bar
+  // knows about where they sit); then the first and last word may be part of a longer one
+  // ("yea" out of "blessed-yea"), since a selection can begin and end inside a word.
+  function findPhrase(it, text, near = null) {
     const norm = (w) => w.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[^a-z0-9']/g, "");
     const target = String(text || "").split(/\s+/).map(norm).filter(Boolean);
     const words = wordsOf(it).map((x) => norm(x.w));
     if (!target.length) return null;
+    const last = target.length - 1;
+    const fits = (w, j) => w === target[j] || (near !== null && (last === 0 ? w.includes(target[j]) : j === 0 ? w.endsWith(target[j]) : j === last ? w.startsWith(target[j]) : false));
+    let best = null;
     for (let i = 0; i + target.length <= words.length; i++) {
       let ok = true;
-      for (let j = 0; j < target.length; j++) if (words[i + j] !== target[j]) { ok = false; break; }
-      if (ok) return { s: i, e: i + target.length - 1 };
+      for (let j = 0; j < target.length; j++) if (!fits(words[i + j], j)) { ok = false; break; }
+      if (!ok) continue;
+      if (near === null) return { s: i, e: i + last };
+      if (!best || Math.abs(i - near) < Math.abs(best.s - near)) best = { s: i, e: i + last };
     }
-    return null;
+    return best;
   }
   async function thinkChain() {
     const Ask = window.Ask;
@@ -2937,6 +2945,19 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     reset: async () => { await ready; deck = blank(); pending = active = linking = null; naming = false; save(); forgetPast(); await writeCurrent(); },
     // for tests and scripts
     get state() { return deck; }, markdown: markdownOf, setHighlight: (id, a, b) => { const it = byId(id); if (!it) return null; const h = setHighlight(it, a, b); save(); return h; }, link: (from, to, label) => { const l = addLink(from, to, label); if (l) save(); return l; }, sequence,
+    // The reader's phrase bar (+ Deck): the words chosen on the page become the highlight of the
+    // card their verse is on, in the deck's own model (word indexes on the card), so the phrase
+    // is not marked a second time on the board. near: about where the words sit in that verse.
+    highlightPhrase: (doc_id, pid, text, near = 0) => {
+      const it = find(doc_id, pid);
+      const at = it ? findPhrase(it, text, near) : null;
+      if (!at) return null;
+      const same = (it.hl || []).find((h) => h.s === at.s && h.e === at.e);
+      if (same) return same;
+      const h = setHighlight(it, at.s, at.e);
+      save();
+      return h;
+    },
     // a question card with its words written (Ask's Think it through)
     addQuestion,
     // a note card with its words already written (a Hebrew or Greek word from its sheet); Undo takes it off by its id

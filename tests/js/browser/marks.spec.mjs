@@ -61,7 +61,7 @@ async function phrases(page, { name, viewport, check, shot }) {
   await page.waitForTimeout(500);
   check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["g:a perfect knowledge of things"]), `exactly those words are green: ${JSON.stringify(await marked(page, "p21"))}`);
   check(await page.evaluate(() => { const p = document.querySelector("#reader .doc #p21"); return p.classList.contains("hl-y") && !!p.querySelector(".note-mark"); }), "the verse keeps its own yellow and its note");
-  check(!(await page.$("#reader .phrase-bar")) && (await page.evaluate(() => window.getSelection().isCollapsed)), "the bar and the selection go once the words are marked");
+  check((await page.getAttribute("#reader .phrase-bar .hl-dot.hl-g", "aria-pressed").catch(() => null)) === "true" && !!(await page.$("#reader .phrase-bar .ph-remove")) && (await page.evaluate(() => window.getSelection().isCollapsed)), "once the words are marked the selection goes and the bar stays on them, for a note or the deck");
   const rec = await page.evaluate(async () => (await window.Marks.phrases(window.GL.reading.doc.uri))[0]);
   check(rec && rec.kind === "phrase" && rec.id === `${rec.uri}#p21~${rec.start}-${rec.end}` && rec.end - rec.start === 4 && rec.color === "g" && rec.text === "a perfect knowledge of things" && rec.citation === "Alma 32:21", `the record: ${JSON.stringify(rec)}`);
   check((await page.evaluate(async () => (await window.Marks.forDoc(window.GL.reading.doc.uri)).some((m) => m.kind === "phrase"))) === false, "forDoc still returns verse and paragraph marks only");

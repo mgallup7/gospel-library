@@ -407,6 +407,53 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await pad.ctx.close();
   });
 
+  step("8", async () => {
+    const selectWords = (page, pid, words) => page.evaluate(([pid, words]) => {
+      const unit = document.querySelector(`#reader .doc #${pid}`);
+      const walker = document.createTreeWalker(unit, NodeFilter.SHOW_TEXT);
+      let node, text = "";
+      const nodes = [];
+      while ((node = walker.nextNode())) { if (node.parentElement.closest(".verse-number, sup")) continue; nodes.push({ node, at: text.length }); text += node.nodeValue; }
+      const a = text.indexOf(words), b = a + words.length;
+      const find = (off) => { const n = [...nodes].reverse().find((x) => x.at <= off); return [n.node, off - n.at]; };
+      const r = document.createRange(); r.setStart(...find(a)); r.setEnd(...find(b));
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    }, [pid, words]);
+    for (const viewport of [{ width: 393, height: 852 }, { width: 1180, height: 820 }]) {
+      const tag = viewport.width < 700 ? "phone" : "ipad";
+      const { ctx, page } = await open(viewport);
+      const id = await read(page, "Alma 32:21", "p21");
+      await selectWords(page, "p21", "hope for things which are not seen");
+      await page.waitForSelector("#reader .phrase-bar", { timeout: 5000 });
+      const bar = await page.evaluate(() => { const b = document.querySelector("#reader .phrase-bar"); const n = b.querySelector(".n"); const shown = n.offsetParent !== null && n.getBoundingClientRect().width > 0; return { fits: b.scrollWidth <= b.clientWidth + 1, label: shown ? n.textContent : null, cut: shown && n.scrollWidth > n.clientWidth + 1 && n.clientWidth < 100, deck: !!b.querySelector(".ph-deck")?.offsetParent, deckH: b.querySelector(".ph-deck")?.getBoundingClientRect().height }; });
+      check(bar.fits && bar.deck && bar.deckH >= 44, `${tag}: the phrase bar should fit on one row with + Deck in it: ${JSON.stringify(bar)}`);
+      check(!bar.cut, `${tag}: the bar's words should be readable or absent, never a stub: ${JSON.stringify(bar)}`);
+      if (tag === "ipad") check(/hope for things which are not seen/.test(bar.label || ""), `ipad: the bar should name the words: ${JSON.stringify(bar)}`);
+      await page.screenshot({ path: `${SHOTS}fix-a-phrase-${tag}.png` });
+      // a color: the words are marked and the bar stays, on them
+      await tapOn(page, "#reader .phrase-bar .hl-dot.hl-g"); await page.waitForTimeout(500);
+      const after = await page.evaluate(() => { const b = document.querySelector("#reader .phrase-bar"); return { bar: !!b, pressed: b?.querySelector(".hl-dot.hl-g")?.getAttribute("aria-pressed"), remove: !!b?.querySelector(".ph-remove"), fits: !!b && b.scrollWidth <= b.clientWidth + 1, mark: document.querySelector("#reader .doc #p21 mark.hlp.hl-g")?.textContent }; });
+      check(after.bar && after.pressed === "true" && after.remove && after.fits && /hope for things which are not seen/.test(after.mark || ""), `${tag}: after a color the bar should stay on the marked words and still fit: ${JSON.stringify(after)}`);
+      await page.screenshot({ path: `${SHOTS}fix-a-phrase-kept-${tag}.png` });
+      // + Deck: the verse goes on with the phrase as its card's highlight, once
+      await tapOn(page, "#reader .phrase-bar .ph-deck"); await page.waitForTimeout(400);
+      const card = await page.evaluate((id) => { const it = window.Deck.state.items.find((i) => i.doc_id === id && i.pid === "p21"); const words = it ? (it.verses ? it.verses.flatMap((v) => v.text.split(/\s+/)) : it.text.split(/\s+/)).filter(Boolean) : []; return { n: window.Deck.count(), hl: (it?.hl || []).map((h) => words.slice(h.s, h.e + 1).join(" ")), toast: document.querySelector("#toast span")?.textContent, undo: !!document.querySelector("#toast .toast-action"), bar: !!document.querySelector("#reader .phrase-bar") }; }, id);
+      check(card.n === 1 && card.hl.length === 1 && /^hope for things which are not seen/.test(card.hl[0]) && /words marked/.test(card.toast || "") && card.undo && !card.bar, `${tag}: + Deck should add the verse with the phrase highlighted on its card: ${JSON.stringify(card)}`);
+      // again on the same words: no second card and no second highlight
+      const spot = await page.evaluate(() => { const r = document.querySelector("#reader .doc #p21 mark.hlp").getClientRects()[0]; return { x: r.left + Math.min(20, r.width / 2), y: r.top + r.height / 2 }; }); // a mark can wrap: its first line, not the middle of its box
+      await page.touchscreen.tap(spot.x, spot.y); await page.waitForSelector("#reader .phrase-bar .ph-deck", { timeout: 3000 });
+      await tapOn(page, "#reader .phrase-bar .ph-deck"); await page.waitForTimeout(400);
+      const twice = await page.evaluate((id) => ({ n: window.Deck.count(), hl: (window.Deck.state.items.find((i) => i.doc_id === id && i.pid === "p21")?.hl || []).length, toast: document.querySelector("#toast span")?.textContent }), id);
+      check(twice.n === 1 && twice.hl === 1 && /Already on the deck/.test(twice.toast || ""), `${tag}: the same words added again should not be marked twice: ${JSON.stringify(twice)}`);
+      // the board shows the highlight on the card
+      await tapOn(page, "#deckBtn"); await page.waitForSelector(".board .bcard", { timeout: 5000 }); await page.waitForTimeout(300);
+      const onCard = await page.evaluate(() => [...document.querySelectorAll(".board .bcard .w.hl, .board .bcard mark, .board .bcard .hl")].map((n) => n.textContent.trim()).join(" "));
+      check(/hope/.test(onCard) && /seen/.test(onCard), `${tag}: the card on the board should show the phrase highlighted: "${onCard.slice(0, 80)}"`);
+      await page.screenshot({ path: `${SHOTS}fix-a-phrase-card-${tag}.png` });
+      await ctx.close();
+    }
+  });
+
   for (const [name, fn] of STEPS) {
     if (only && !only.includes(name)) continue;
     try { await fn(); } catch (err) { errors.push(`item ${name} aborted: ${String(err.message).split("\n")[0]}`); }

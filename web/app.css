@@ -721,7 +721,18 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
    its place while both would show), clear of the iPad's own callout, which sits by the words. */
 .phrase-bar { position: sticky; bottom: 0; order: 2; display: flex; align-items: center; gap: 6px; padding: 10px calc(14px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(14px + var(--safe-left)); background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); z-index: 4; }
 @media (max-width: 759px), (max-height: 499px) { #reader .phrase-bar { bottom: var(--tabs-h); padding-bottom: 10px; } }
-.phrase-bar .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-13); color: var(--ink-2); }
+/* the words: shown when there is room for a readable run of them (9em), and otherwise not at
+   all (the bar folds to snug): cut to "God i..." they said nothing, and they are lit on the page */
+.phrase-bar .n { flex: 1; min-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-13); color: var(--ink-2); }
+.phrase-bar .primary { flex: none; height: 44px; padding: 0 14px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
+.phrase-bar .ph-x { display: none; flex: none; width: 44px; height: 44px; margin-left: -6px; border-radius: var(--r-ctl); align-items: center; justify-content: center; color: var(--ink-2); }
+.phrase-bar .ph-x svg { width: 20px; height: 20px; }
+.phrase-bar .ph-x:active { background: var(--chrome-2); }
+@media (max-width: 759px), (max-height: 499px) {
+  .phrase-bar { padding-left: calc(10px + var(--safe-left)); padding-right: calc(10px + var(--safe-right)); }
+  .phrase-bar .ph-x { display: inline-flex; }
+  .phrase-bar .ph-clear { display: none; }
+}
 .phrase-bar .text-btn { white-space: nowrap; height: 44px; flex: none; }
 .phrase-bar .hl-dots { flex: none; }
 /* too full for one row (a phone, with Remove in it): the words give way, then the controls close up (app.js showPhraseBar) */
@@ -730,6 +741,8 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .phrase-bar.close { gap: 2px; }
 .phrase-bar.close .hl-dots { gap: 10px; margin: 0 2px; }
 .phrase-bar.close .text-btn { padding: 0 6px; }
+.phrase-bar.close .primary { padding: 0 10px; }
+.phrase-bar.close .ph-x { width: 38px; margin-left: -4px; }
 #reader.phrasing > .select-bar { display: none; }
 .hl-dots { display: inline-flex; gap: 6px; align-items: center; }
 .hl-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0,0,0,.08); }

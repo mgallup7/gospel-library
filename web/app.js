@@ -2193,7 +2193,14 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (got) { clearTimeout(phraseHide); phraseSel = got; showPhraseBar(); return; }
     if (phraseSel && phraseSel.mode !== "edit") { clearTimeout(phraseHide); phraseHide = setTimeout(hidePhraseBar, 700); }
   }
-  document.addEventListener("selectionchange", () => { clearTimeout(phraseTimer); phraseTimer = setTimeout(onTextSelection, 220); });
+  document.addEventListener("selectionchange", () => {
+    // a bar left up on marked words goes the moment other words begin to be selected, so a
+    // color tapped next can never land on the phrase it was showing before
+    if (phraseSel && phraseSel.mode === "edit") {
+      try { const s = window.getSelection ? window.getSelection() : null; if (s && s.rangeCount && !s.isCollapsed && readerPane.contains(s.anchorNode)) hidePhraseBar(); } catch (_) {}
+    }
+    clearTimeout(phraseTimer); phraseTimer = setTimeout(onTextSelection, 220);
+  });
   function hidePhraseBar() {
     clearTimeout(phraseHide);
     phraseSel = null;
@@ -2210,12 +2217,16 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const words = s.mode === "edit" ? rec.text : s.text;
     const label = s.mode === "verses" ? `${s.pids.length} passages` : `“${words.length > 60 ? words.slice(0, 58) + "…" : words}”`;
     const name = (c) => window.Marks.COLOR_NAME[c];
+    const shut = () => { if (s.mode !== "edit") dropTextSelection(); hidePhraseBar(); };
     const bar = el("div", { class: "phrase-bar", role: "group", "aria-label": s.mode === "verses" ? "The selected passages" : "The selected words" }, [
+      // a phone: the way out is an x at the start, as on the selection bar (app.css shows one or the other)
+      el("button", { type: "button", class: "ph-x", "aria-label": s.mode === "edit" ? "Done" : "Clear the selection", title: s.mode === "edit" ? "Done" : "Clear", html: ICON_CLEAR, onclick: shut }),
       el("span", { class: "n", text: label }),
       el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": String(!!rec && rec.color === c), "aria-label": `Highlight ${name(c)}`, title: `Highlight ${name(c)}`, onclick: () => phraseColor(c) }))),
       el("button", { type: "button", class: "text-btn ph-note", text: "Note", title: s.mode === "verses" ? "A note on these passages, first to last" : "A note on the verse or paragraph these words are in", onclick: phraseNote }),
+      window.Deck ? el("button", { type: "button", class: "primary ph-deck", "aria-label": "Add to deck", title: s.mode === "verses" ? "Add these passages to the deck" : "Add this verse to the deck, with these words marked on its card", text: "+ Deck", onclick: phraseDeck }) : null,
       s.mode === "edit" ? el("button", { type: "button", class: "text-btn danger ph-remove", text: "Remove", title: "Take this highlight off", onclick: () => phraseRemove(rec) }) : null,
-      el("button", { type: "button", class: "text-btn ph-clear", text: s.mode === "edit" ? "Done" : "Clear", onclick: () => { if (s.mode !== "edit") dropTextSelection(); hidePhraseBar(); } }),
+      el("button", { type: "button", class: "text-btn ph-clear", text: s.mode === "edit" ? "Done" : "Clear", onclick: shut }),
     ].filter(Boolean));
     // A mouse press on the bar leaves the page's selection as it is, so the words stay lit while a
     // color is chosen. Only a real mouse: a finger's press is never touched.
@@ -2258,10 +2269,14 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       // an older phrase that lies wholly under the new one would show none of its words: it goes
       const under = old ? [] : [...docPhrases.values()].filter((m) => m.pid === pid && m.id !== rec.id && m.start >= rec.start && m.end <= rec.end);
       for (const m of under) { await window.Marks.removeId(m.id); docPhrases.delete(m.id); }
-      dropTextSelection(); hidePhraseBar();
-      if (currentDoc !== page) return;
+      dropTextSelection();
+      if (currentDoc !== page) { hidePhraseBar(); return; }
       docPhrases.set(rec.id, rec);
       drawPhrases($(".doc", readerPane), pid);
+      // the bar stays, now on the marked words, so a note or + Deck can follow the color (Done closes it)
+      clearTimeout(phraseHide);
+      phraseSel = { mode: "edit", id: rec.id };
+      showPhraseBar();
       if (old) toast("Color changed.", { action: "Undo", onAction: () => restorePhrase(page, old, "Color put back.") });
       else toast("Highlighted.");
     } catch (_) { toast("Could not save that mark."); }
@@ -2280,9 +2295,33 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   async function restorePhrase(page, rec, said) {
     try {
       const back = await window.Marks.save(rec);
-      if (currentDoc === page) { docPhrases.set(back.id, back); drawPhrases($(".doc", readerPane), back.pid); }
+      if (currentDoc === page) {
+        docPhrases.set(back.id, back); drawPhrases($(".doc", readerPane), back.pid);
+        if (phraseSel && phraseSel.mode === "edit" && phraseSel.id === back.id) showPhraseBar(); // the bar still up shows the color that came back
+      }
       toast(said);
     } catch (_) { toast("Could not put that back."); }
+  }
+  // + Deck: the verse the words are in goes on the deck, and the words are its card's highlight
+  // (the deck's own, by word indexes on the card), so the phrase need not be marked again on
+  // the board. A verse already on the deck gets the highlight on the card it has. Several
+  // passages go on as the selection bar would put them.
+  function phraseDeck() {
+    const s = phraseSel, page = currentDoc, body = $(".doc", readerPane);
+    if (!s || !page || !body || !window.Deck) return;
+    const rec = s.mode === "edit" ? docPhrases.get(s.id) : null;
+    const pids = s.mode === "verses" ? s.pids : [rec ? rec.pid : s.pid];
+    const units = pids.map((pid) => (pid ? body.querySelector(`#${CSS.escape(pid)}`) : null)).filter(Boolean).map(unitInfo);
+    if (!units.length) return;
+    const words = s.mode === "verses" ? "" : rec ? rec.text : s.text;
+    const near = rec ? rec.start : s.start;
+    const added = window.Deck.addFromDoc(page, units);
+    const ids = added ? window.Deck.lastAdded?.() || [] : [];
+    const marked = !!(words && window.Deck.highlightPhrase?.(page.id, units[0].pid, words, near || 0));
+    dropTextSelection(); hidePhraseBar();
+    if (!added) { toast(marked ? "Already on the deck. These words are marked on its card." : "Already on the deck."); return; }
+    if (window.Deck.saysWhere?.()) return; // the deck says where it went, with an Undo of its own
+    toast(marked ? "On the deck, with these words marked." : added === 1 ? "On the deck." : `${added} passages on the deck.`, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); } });
   }
   // Note: the note is the verse's (or the paragraph's) own, as from the selection bar
   function phraseNote() {
