@@ -912,5 +912,5 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   window.addEventListener("pagehide", () => { if (cur) save(); });
   document.addEventListener("visibilitychange", () => { if (cur && document.visibilityState === "hidden") save(); });
 
-  window.Beside = { can, button, jumpButton, open, restore, close: () => close(), swap, pick: () => openPicker(), get isOpen() { return up(); }, get doc() { return cur ? cur.doc : null; } };
+  window.Beside = { can, button, jumpButton, open, restore, step: (dir) => { if (cur) step(dir > 0 ? cur.doc.next : cur.doc.prev); }, close: () => close(), swap, pick: () => openPicker(), get isOpen() { return up(); }, get doc() { return cur ? cur.doc : null; } };
 })();

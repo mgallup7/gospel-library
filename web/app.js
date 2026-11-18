@@ -2603,7 +2603,9 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     sec("reading", "Reading", [
       el("p", { class: "set-sample", text: "For behold, this life is the time for men to prepare to meet God." }),
       el("p", { class: "set-note", text: "The text size above changes this sample and every page. The reader's Aa does the same while you read." }),
-    ]);
+      "ontouchstart" in window ? el("label", { class: "set-check" }, [el("input", { type: "checkbox", class: "set-gestures", checked: store.get("gestures") !== false, onchange: (e) => store.set("gestures", e.currentTarget.checked) }), el("span", { text: "Touch gestures" })]) : null,
+      "ontouchstart" in window ? el("p", { class: "set-note", text: "Flick a page left or right to turn the chapter. Spread or pinch two fingers on a page to change the text size. On an iPhone the bar at the top steps aside while you read down. Every one has a button that does the same; turn this off if a gesture gets in your way." }) : null,
+    ].filter(Boolean));
     // Library: filled in as the answers come
     const libRows = el("div", { class: "set-rows" }, [row("On this device", "Counting…")]);
     const checkBtn = el("button", { type: "button", class: "text-btn", text: "Check for an update", onclick: async () => {
@@ -4151,6 +4153,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   }
   window.GL = {
     ask: askQuestion,
+    resize, // touch.js: two fingers step the text size
+    step: (dir) => { const d = currentDoc; if (!d || state.docId !== d.id) return; const to = dir > 0 ? d.next : d.prev; if (to) stepChapter(to); }, // touch.js: a flick turns the chapter
     api, el, esc, store, sanitize, openDoc, followLink, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
     swallowTap, // deck.js: a tap outside a card's menu only closes it

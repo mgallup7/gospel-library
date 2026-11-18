@@ -67,6 +67,13 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   library passphrase, so GitHub holds it and cannot read it; each device
   merges, newest wins, and never overwrites. Set up once in Settings (the
   steps are written out there).
+- Two pages side by side on an iPad: Split (in the reader's bar and the rail)
+  opens a second page beside the first, from a reference, Recent or the shelves.
+  Drag the divider, Swap the sides, close with the X; upright, the two stack. A
+  verse tapped on either side can be colored, noted or sent to the deck.
+- Touch gestures: flick a page left or right to turn the chapter, spread or pinch
+  two fingers to change the text size, and on an iPhone the top bar steps aside
+  while you read down. One switch in Settings turns them off.
 - A Back that says where it leads. Every place has an address (a shelf and
   how far into it you are, a search, a page, Ask, Deck), so "‹ Alma 32" or
   "‹ Results" in the reader bar, and at the top of every list on a phone,

@@ -1735,3 +1735,15 @@ a.toast-action { display: inline-flex; align-items: center; }
   .bs-coach::before { content: ""; position: absolute; top: -6px; right: var(--bs-tip, 30px); width: 13px; height: 13px; background: var(--accent); transform: rotate(45deg); border-radius: 2px; }
   .bs-coach.side::before { top: 15px; right: auto; left: -6px; }
 }
+
+/* touch.js: on a phone the reader's bar steps aside while the page is read downward. What stays
+   is the strip under the clock, so the words never run under it. */
+.set-check { display: flex; align-items: center; gap: 10px; min-height: 44px; font: var(--ui-15) var(--sans); color: var(--ink); }
+.set-check input { width: 22px; height: 22px; accent-color: var(--accent); }
+@media (max-width: 759px), (max-height: 499px) {
+  #reader > .reader-bar, #reader > .match-strip { transition: transform .22s ease; }
+  body.bar-away #reader > .reader-bar { transform: translateY(calc(-100% + var(--safe-top))); }
+  body.bar-away #reader > .match-strip { transform: translateY(-200%); }
+}
+@media (prefers-reduced-motion: reduce) { #reader > .reader-bar, #reader > .match-strip { transition: none; } }
+body.gest #reader .doc, body.gest #beside .doc { touch-action: pan-y; } /* two fingers on a page set the text size (touch.js); the page itself does not zoom */
