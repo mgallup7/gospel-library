@@ -2,12 +2,15 @@
 // that chapter in a pane of its own to the right of the reader (under it in portrait), with a
 // divider to drag between them. The pane is a reading copy: it shows the page and the reader's
 // highlights and notes, and marks nothing itself; Swap brings its page to the reader in one tap.
+// "Split" in the reader's bar opens the pane with a picker in place of a page: a reference or
+// words, the places read lately, and the shelves.
 //
 // This file keeps to itself on purpose. The reader (openDoc, renderDoc, placePanes) knows nothing
 // of it: the pane is a section made on demand at the end of <main>, laid out by one body class
 // (app.css, "the second pane"), and it is outside the app's history. app.js gives it three
 // things: the button in the passage sheet, a call once the library is open (the saved pair comes
-// back), and its sanitizer. Only flexbox, pointer events, matchMedia and storage are used.
+// back), and its sanitizer. The Split button is put in the reader's bar from here, by watching
+// the reader for a new bar, so the reader's own code has no line for it. Only flexbox, pointer events, matchMedia and storage are used.
 import { chapterOf } from "./lib/cite.js";
 import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./lib/phrase.js";
 
@@ -26,6 +29,9 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>',
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h14M14 4l4 4-4 4"/><path d="M20 16H6M10 12l-4 4 4 4"/></svg>',
     prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+    out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.4"/><path d="M15 12H7.5M10.5 9l-3 3 3 3"/></svg>',
+    find: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
     next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>',
     note: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v12H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   };
@@ -44,6 +50,12 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   let stepping = false; // the last move was an arrow: a run of chapters is one step back
   let seq = 0, paintSeq = 0;
   let listKey = null;   // which list the hidden column holds; when it changes the pane gives way
+  let pick = null;      // the picker's own element, made once
+  let picking = false;  // the picker is up: in place of a page, or over the one that is there
+  let level = [];       // how far into the shelves the picker has gone
+  let pickSeq = 0;
+  let origOn = false;   // the Hebrew or Greek tiles show under this pane's Bible chapters
+  const up = () => !!(cur || picking); // the pane is in the layout
 
   const saved = () => GL.store.get("beside");
   let saveTimer = null;
@@ -51,7 +63,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     clearTimeout(saveTimer);
     if (!cur) return;
     const at = topUnit(scroller, cur.body, 0);
-    GL.store.set("beside", { id: cur.doc.id, url: cur.doc.source_url || null, title: nameOf(cur.doc), pid: at ? at.pid : null, off: at ? at.off : 0, ratio });
+    GL.store.set("beside", { id: cur.doc.id, url: cur.doc.source_url || null, title: nameOf(cur.doc), pid: at ? at.pid : null, off: at ? at.off : 0, ratio, orig: origOn });
   }
   const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); };
 
@@ -92,10 +104,15 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   }
 
   function drawBar() {
+    if (!cur) {
+      // no page yet: the picker is all there is, and the bar says what it is for
+      bar.replaceChildren(el("div", { class: "bs-title bs-title-plain" }, [el("span", { text: "Open a second page" })]), el("div", { class: "bs-spacer" }),
+        el("button", { type: "button", class: "bs-close", "aria-label": "Close the second pane", title: "Close this side", html: I.close, onclick: () => close() }));
+      return;
+    }
     const doc = cur.doc;
     const back = trail.length ? el("button", { type: "button", class: "bs-back", "aria-label": `Back to ${trail[trail.length - 1].title || "the page before"}`, title: "Back in this pane", html: I.prev, onclick: goBack }) : null;
-    const can = doc.collection === "scriptures" ? !!doc.book_slug : !!(doc.book && doc.book.uri);
-    const title = el("button", { type: "button", class: "bs-title", disabled: !can, "aria-haspopup": "true", "aria-expanded": "false", "aria-label": can ? `${nameOf(doc)}. Choose another chapter for this side` : nameOf(doc), onclick: toggleMenu }, [el("span", { text: nameOf(doc) })]);
+    const title = el("button", { type: "button", class: "bs-title", "aria-haspopup": "true", "aria-expanded": "false", "aria-label": `${nameOf(doc)}. Choose another chapter or page for this side`, onclick: toggleMenu }, [el("span", { text: nameOf(doc) }), el("span", { class: "bs-caret", html: I.down })]);
     const arrow = (to, word, icon) => el("button", { type: "button", class: "bs-chap", disabled: !to, "aria-label": to ? `${word}: ${to.title}` : word, title: to ? to.title : word, html: icon, onclick: () => step(to) });
     bar.replaceChildren(...[
       back, title,
@@ -118,7 +135,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     try { doc = await api("doc", { id }); } catch (_) { doc = null; }
     if (my !== seq) return false;
     if (!doc) {
-      if (!cur) { unmount(); GL.store.set("beside", null); }
+      if (!up()) { unmount(); GL.store.set("beside", null); }
       GL.toast("That page is not in the library.");
       return false;
     }
@@ -129,6 +146,8 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     // the same cleaning the reader gives a page: nothing from the library is put in unsanitized
     const body = el("article", { class: "doc" }, [GL.sanitize(doc.body_html || "")]);
     cur = { doc, body };
+    if (picking) shutPicker();
+    remember(doc);
     drawBar();
     hint.hidden = true;
     scroller.replaceChildren(body);
@@ -137,7 +156,28 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     place(pid, off);
     paintMarks();
     save();
+    if (origOn) tilesIn(doc, body, pid, off);
     return true;
+  }
+  // The Hebrew or Greek under this pane's verses (original.js draws them; the reader's own
+  // switch is left as it is). The tiles push the verses down, so the place is found again.
+  const langOf = (doc) => (doc && window.Original && window.Original.tiles && window.Original.isBible(doc) ? (doc.volume === "Old Testament" ? "Hebrew" : "Greek") : null);
+  async function tilesIn(doc, body, pid, off) {
+    if (!langOf(doc)) return;
+    try { await window.Original.tiles(doc, body); } catch (err) { window.GLLog?.note("beside.tiles", err); return; }
+    if (cur && cur.body === body && pid) place(pid, off);
+  }
+  function setOrig(on) {
+    origOn = on;
+    if (!cur) return;
+    const at = topUnit(scroller, cur.body, 0);
+    if (on) tilesIn(cur.doc, cur.body, at ? at.pid : null, at ? at.off : null);
+    else {
+      cur.body.classList.remove("with-orig");
+      for (const n of cur.body.querySelectorAll(".orig, .orig-credit")) n.remove();
+      if (at) place(at.pid, at.off);
+    }
+    save();
   }
   // The verse asked for, a little under the bar (and marked, when it was named by a link); or
   // the saved place, to the pixel.
@@ -279,11 +319,22 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   async function toggleMenu() {
     if (menu) { shutMenu(); return; }
     const doc = cur.doc, my = seq;
-    const box = el("div", { class: "bs-menu", role: "dialog", "aria-label": "Chapters for this side" }, [el("div", { class: "status", text: "Opening…" })]);
+    // what this side can do comes first, then the chapters of the book it is in
+    const act = (icon, text, fn) => el("button", { type: "button", class: "bs-act", onclick: () => { shutMenu(); fn(); } }, [el("span", { class: "g", html: icon }), text]);
+    const lang = langOf(doc);
+    const acts = el("div", { class: "bs-acts" }, [
+      act(I.find, "Open something else", openPicker),
+      // this page in the reader, by the app's own open (so Back returns from it); the pane stays
+      act(I.out, "Open in the main page", () => { const at = topUnit(scroller, cur.body, 0); GL.openDoc(cur.doc.id, at ? at.pid : null); }),
+      lang ? act(`<b>${lang === "Greek" ? "α" : "א"}</b>`, cur.body.classList.contains("with-orig") ? `Hide the ${lang} here` : `Show the ${lang} here`, () => setOrig(!cur.body.classList.contains("with-orig"))) : null,
+    ]);
+    const can = doc.collection === "scriptures" ? !!doc.book_slug : !!(doc.book && doc.book.uri);
+    const box = el("div", { class: "bs-menu", role: "dialog", "aria-label": "This side: open something else, or another chapter" }, [acts, can ? el("div", { class: "status", text: "Opening…" }) : null]);
     menu = box;
     under.append(box);
     bar.querySelector(".bs-title")?.setAttribute("aria-expanded", "true");
     const jump = (id) => { shutMenu(); if (id !== cur.doc.id) show(id, { how: "push" }); };
+    if (!can) return;
     try {
       if (doc.collection === "scriptures") {
         const shelf = await api("scriptures");
@@ -291,17 +342,17 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
         if (my !== seq || menu !== box) return;
         const grid = el("div", { class: "chapters" });
         for (const c of bk.chapters) grid.append(el("button", { type: "button", class: c.doc_id === doc.id ? "on" : "", text: String(c.n), disabled: !c.doc_id, "aria-label": `${bk.name} ${c.n}`, "aria-current": c.doc_id === doc.id ? "true" : null, onclick: () => jump(c.doc_id) }));
-        box.replaceChildren(el("div", { class: "bs-menu-h", text: bk.name.replace("JST, ", "") }), grid);
+        box.replaceChildren(acts, el("div", { class: "bs-menu-h", text: bk.name.replace("JST, ", "") }), grid);
       } else {
         const book = await api("book", { uri: doc.book.uri });
         if (my !== seq || menu !== box) return;
         const rows = (book.nodes || []).map((n) => n.kind === "section"
           ? el("div", { class: "toc-row section" }, [el("div", { class: "t", text: n.title })])
           : el("button", { type: "button", class: "toc-row" + (n.depth > 1 ? " sub" : "") + (n.doc_id === doc.id ? " on" : ""), disabled: !n.doc_id, onclick: () => n.doc_id && jump(n.doc_id) }, [el("div", { class: "t", text: n.title })]));
-        box.replaceChildren(el("div", { class: "bs-menu-h", text: book.title }), ...rows);
+        box.replaceChildren(acts, el("div", { class: "bs-menu-h", text: book.title }), ...rows);
       }
       box.querySelector(".on")?.scrollIntoView({ block: "center" });
-    } catch (_) { if (menu === box) box.replaceChildren(el("div", { class: "status error", text: "The chapters could not be listed." })); }
+    } catch (_) { if (menu === box) box.replaceChildren(acts, el("div", { class: "status error", text: "The chapters could not be listed." })); }
   }
   document.addEventListener("pointerdown", (e) => { if (menu && !e.target.closest?.(".bs-menu, .bs-title")) shutMenu(); }, true);
 
@@ -317,6 +368,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     if (pane.isConnected) return;
     main.append(divider, pane, track);
     document.body.classList.add("beside-open");
+    pressSplit();
     listKey = keyNow();
     applyRatio();
     poll = setInterval(watchList, 500);
@@ -330,12 +382,14 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     document.body.classList.remove("beside-open", "bs-dragging");
     main.style.removeProperty("--bs-a"); main.style.removeProperty("--bs-b");
     cur = null; trail = []; stepping = false; seq++;
+    picking = false; pickSeq++; if (pick) pick.remove();
+    pressSplit();
     refit();
   }
   // Closing is one tap and forgets the pair. When the pane went without being asked to (a tab
   // of the rail, the divider run to the edge), the toast offers it back.
   function close({ offer = false } = {}) {
-    if (!cur) return;
+    if (!up()) return;
     save();
     const was = saved();
     unmount();
@@ -354,23 +408,23 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   }
   // under a third of an iPad the bar keeps the title, the arrows, Swap as its sign alone, and close
   function fold() { if (pane && pane.isConnected) pane.classList.toggle("narrow", pane.clientWidth < 430); }
-  window.addEventListener("resize", () => { if (refitting || !cur) return; fold(); track.hidden = true; });
+  window.addEventListener("resize", () => { if (refitting || !up()) return; fold(); track.hidden = true; });
 
   // The list's column is hidden while two pages share the width. Whatever asks for the list
   // (a tab of the rail, the title of the reader's page, Think, a book's contents) changes the
   // address in something other than the page; the pane then gives way, so the list is never
   // asked for and not shown. While no page is open at all the list is showing, and may change.
   function watchList() {
-    if (!cur) return;
+    if (!up()) return;
     const k = keyNow();
     if (k === listKey) return;
     listKey = k;
     if (wide() && !document.body.classList.contains("list-only")) close({ offer: true });
   }
-  document.addEventListener("click", () => { if (cur) { setTimeout(watchList, 0); setTimeout(watchList, 250); } }, true);
-  window.addEventListener("popstate", () => { if (cur) setTimeout(watchList, 0); });
+  document.addEventListener("click", () => { if (up()) { setTimeout(watchList, 0); setTimeout(watchList, 250); } }, true);
+  window.addEventListener("popstate", () => { if (up()) setTimeout(watchList, 0); });
   document.querySelector("#tabs")?.addEventListener("click", (e) => {
-    if (cur && wide() && e.target.closest(".tab[data-tab]")) setTimeout(() => { if (cur && !document.body.classList.contains("list-only")) close({ offer: true }); }, 0);
+    if (up() && wide() && e.target.closest(".tab[data-tab]")) setTimeout(() => { if (up() && !document.body.classList.contains("list-only")) close({ offer: true }); }, 0);
   });
 
   // ---- Swap ------------------------------------------------------------------
@@ -401,7 +455,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     track.className = "bs-track" + (stacked() ? " stack" : "");
     track.replaceChildren(
       ...STOPS.map(([s, name]) => el("span", { class: "bs-stop" + (!closing && s === at ? " at" : ""), style: `${side}:${(s * 100).toFixed(3)}%` }, [el("i"), el("b", { text: name })])),
-      el("span", { class: "bs-stop end" + (closing ? " at" : ""), style: `${side}:${stacked() ? 96 : 93}%` }, [el("b", { text: `Close ${nameOf(cur.doc)}` })]),
+      el("span", { class: "bs-stop end" + (closing ? " at" : ""), style: `${side}:${stacked() ? 96 : 93}%` }, [el("b", { text: cur ? `Close ${nameOf(cur.doc)}` : "Close this side" })]),
     );
     track.hidden = false;
   }
@@ -419,7 +473,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
       return { r: Math.max(least, Math.min(1 - least, at / size)), closing: size - at < CLOSE_PX };
     };
     grab.addEventListener("pointerdown", (e) => {
-      if (e.button > 0 || !cur) return;
+      if (e.button > 0 || !up()) return;
       e.preventDefault(); // no text selection begins under the finger
       try { grab.setPointerCapture(e.pointerId); } catch (_) {}
       drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, r: ratio, closing: false };
@@ -476,6 +530,267 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     refit();
   }
 
+  // ---- the places read lately ---------------------------------------------------
+  // The app keeps one place for Continue, and its trail lasts only as long as the tab. So a
+  // short list is kept here: each page as it opens, in the reader or in this pane.
+  const whereOf = (doc) => (doc.collection === "scriptures" ? doc.volume : doc.book && doc.book.title) || "";
+  const recents = () => { const r = GL.store.get("besideRecent", []); return Array.isArray(r) ? r : []; };
+  function remember(doc) {
+    if (!doc || !doc.id) return;
+    const was = recents();
+    if (was[0] && was[0].id === doc.id) return;
+    const item = { id: doc.id, url: doc.source_url || null, title: nameOf(doc), where: whereOf(doc) };
+    GL.store.set("besideRecent", [item, ...was.filter((x) => x.id !== item.id && (!item.url || x.url !== item.url))].slice(0, 9));
+  }
+  // A library rebuilt since may have numbered its pages afresh: the page is found by its address.
+  async function sure(item) {
+    try {
+      const doc = await api("doc", { id: item.id });
+      if (!item.url || (doc && doc.source_url === item.url)) return doc ? item.id : null;
+      const res = await api("resolve", { href: item.url });
+      return res && res.found && res.doc_id ? res.doc_id : null;
+    } catch (_) { return null; }
+  }
+
+  // ---- the picker: what to open on this side -------------------------------------
+  // Split opens the pane with this in place of a page. It is one scrolling column inside the
+  // pane: a level of it at a time, each row one tap, a chevron at the top to go back up.
+  function openPicker() {
+    if (!can()) return false;
+    build();
+    shutMenu();
+    if (!cur) { ratio = 0.5; origOn = false; }
+    if (!pick) pick = el("div", { class: "bs-pick" });
+    picking = true; level = [];
+    under.append(pick);
+    if (!cur) drawBar();
+    mount();
+    drawPick();
+    return true;
+  }
+  function shutPicker() {
+    picking = false; pickSeq++;
+    if (pick) pick.remove();
+  }
+  const choose = (id, pid = null) => { if (id) show(id, { pid, how: cur ? "push" : "fresh" }); };
+  const rowBtn = (t, s, fn, more) => el("button", { type: "button", class: "bs-row", onclick: fn }, [el("span", { class: "t", text: t }), s ? el("span", { class: "s", text: s }) : null, more ? el("span", { class: "go", html: I.next }) : null]);
+  const into = (lv) => { level.push(lv); drawPick(); };
+  // A level of the shelves: the Scriptures' books, a book's chapters, a shelf's books, a book's
+  // contents, through the calls the Library makes.
+  async function drawPick() {
+    const my = ++pickSeq;
+    const at = level[level.length - 1] || null;
+    if (!at) { drawPickHome(my); return; }
+    const body = el("div", {}, [el("div", { class: "status", text: "Opening…" })]);
+    pick.replaceChildren(
+      el("button", { type: "button", class: "bs-up", onclick: () => { level.pop(); drawPick(); } }, [el("span", { class: "g", html: I.prev }), level.length > 1 ? level[level.length - 2].title : "All shelves"]),
+      el("h2", { class: "bs-pick-h", text: at.title }), body);
+    pick.scrollTop = 0;
+    let out = [];
+    try {
+      if (at.kind === "scriptures") {
+        for (const vol of (await api("scriptures")).volumes) {
+          const chips = el("div", { class: "shelf" });
+          for (const bk of vol.books) { const name = bk.name.replace("JST, ", ""); chips.append(el("button", { type: "button", class: "chip", text: name, onclick: () => into({ kind: "chapters", slug: bk.slug, title: name }) })); }
+          out.push(el("h3", { class: "bs-sub", text: vol.name }), chips);
+        }
+      } else if (at.kind === "chapters") {
+        const bk = (await api("scriptures")).volumes.flatMap((v) => v.books).find((x) => x.slug === at.slug);
+        const grid = el("div", { class: "chapters" });
+        for (const c of bk.chapters) grid.append(el("button", { type: "button", text: String(c.n), disabled: !c.doc_id, "aria-label": `${bk.name} ${c.n}`, onclick: () => choose(c.doc_id) }));
+        out.push(grid);
+      } else if (at.kind === "shelf") {
+        const books = (await api("browse", { collection: at.slug })).books.filter((x) => x.docs > 0);
+        // a shelf of one book is that book's contents
+        if (books.length === 1) { if (my === pickSeq) { level[level.length - 1] = { kind: "book", uri: books[0].uri, title: at.title }; drawPick(); } return; }
+        for (const bk of books) out.push(rowBtn(bk.title, `${bk.docs} ${bk.docs === 1 ? "page" : "pages"}`, () => into({ kind: "book", uri: bk.uri, title: bk.title }), true));
+        if (!books.length) out.push(el("div", { class: "status", text: "Nothing on this shelf yet." }));
+      } else {
+        const book = await api("book", { uri: at.uri });
+        for (const n of book.nodes || []) out.push(n.kind === "section" ? el("h3", { class: "bs-sub", text: n.title })
+          : el("button", { type: "button", class: "bs-row" + (n.depth > 1 ? " sub" : ""), disabled: !n.doc_id, onclick: () => choose(n.doc_id) }, [el("span", { class: "t", text: n.title }), n.subtitle ? el("span", { class: "s", text: n.subtitle }) : null]));
+      }
+    } catch (_) { out = [el("div", { class: "status error", text: "That could not be listed." })]; }
+    if (my === pickSeq && picking) body.replaceChildren(...out);
+  }
+  // The first level: the box, then (until something is typed) this chapter in its own language,
+  // the places read lately and the shelves.
+  async function drawPickHome(my) {
+    const input = el("input", { type: "search", class: "bs-q", placeholder: "A reference or words, e.g. Hebrews 11", "aria-label": "Open beside: a reference or words", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false", enterkeyhint: "search" });
+    const found = el("div", { class: "bs-found", hidden: true });
+    const home = el("div", { class: "bs-home" });
+    pick.replaceChildren(...[
+      cur ? el("button", { type: "button", class: "bs-up", onclick: shutPicker }, [el("span", { class: "g", html: I.prev }), `Back to ${nameOf(cur.doc)}`]) : null,
+      el("div", { class: "bs-qrow" }, [el("span", { class: "g", html: I.find }), input]), found, home,
+    ].filter(Boolean));
+    pick.scrollTop = 0;
+    // The box asks the engine what the app's search asks it: a reference gives the card that
+    // jumps there, words give the first few passages. Return opens a reference outright.
+    let timer = null, qSeq = 0, jump = null;
+    async function run(full) {
+      const q = input.value.trim(), mine = ++qSeq;
+      jump = null;
+      if (!q) { found.hidden = true; home.hidden = false; return; }
+      let data = null;
+      try { data = await api("search", { q, typeahead: !full, light: true, limit: 6 }); } catch (_) { data = null; }
+      if (mine !== qSeq || !input.isConnected) return;
+      const rows = [];
+      const j = data && data.jump;
+      if (j) {
+        if (j.doc_id) jump = j;
+        rows.push(el("button", { type: "button", class: "bs-jump", disabled: !j.doc_id, onclick: () => choose(j.doc_id, j.pid || null) }, [el("b", { text: j.label }), el("span", { text: j.doc_id ? "Open beside" : "Not in the library yet" })]));
+      }
+      for (const h of ((data && data.hits) || []).slice(0, 5)) {
+        if (!h.doc_id) continue;
+        rows.push(el("button", { type: "button", class: "bs-hit", onclick: () => choose(h.doc_id, h.pid || null) }, [el("div", { class: "cite", text: h.citation || h.title || "" }), el("div", { class: "snip" }, [GL.sanitize(h.snippet || GL.esc(h.text || ""))])]));
+      }
+      for (const d of ((data && data.titles) || []).slice(0, 4)) if (d.doc_id) rows.push(rowBtn(d.title, d.label || d.author || "", () => choose(d.doc_id)));
+      if (!rows.length) rows.push(el("div", { class: "status", text: data ? "Nothing found. Try a reference such as Alma 32:21, or fewer words." : "The search could not be run." }));
+      found.replaceChildren(...rows);
+      found.hidden = false; home.hidden = true;
+    }
+    input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => run(false), 220); });
+    input.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault(); e.stopPropagation();
+      clearTimeout(timer);
+      await run(true);
+      if (jump && input.isConnected) { try { input.blur(); } catch (_) {} choose(jump.doc_id, jump.pid || null); }
+    });
+    // this chapter in its own language, when the reader has a Bible chapter open
+    const rd = GL.reading, lang = rd && rd.open ? langOf(rd.doc) : null;
+    const slot = el("div");
+    home.append(slot);
+    if (lang) window.Original.check().then((ok) => {
+      if (!ok || my !== pickSeq) return;
+      const main = document.querySelector("#reader");
+      slot.append(el("button", { type: "button", class: "bs-row bs-lang", onclick: () => { const at = topUnit(main, main.querySelector(".doc"), main.querySelector(".reader-bar")?.offsetHeight || 0); origOn = true; choose(rd.doc.id, at ? at.pid : null); } }, [
+        el("span", { class: "g", html: `<b>${lang === "Greek" ? "α" : "א"}</b>` }), el("span", { class: "t", text: `This chapter in ${lang}` }), el("span", { class: "s", text: nameOf(rd.doc) })]));
+    }).catch(() => {});
+    // the places read lately, the page in the reader left out: it is already on the screen
+    const r = GL.reading, here = r && r.open ? r.doc.id : null;
+    let list = recents();
+    const last = GL.store.get("lastRead");
+    if (!list.length && last && last.id) list = [{ id: last.id, url: null, title: last.title, where: last.where || "" }];
+    list = list.filter((x) => x.id !== here).slice(0, 8);
+    if (list.length) {
+      home.append(el("h3", { class: "bs-sub", text: "Recent" }));
+      for (const item of list) home.append(rowBtn(item.title, item.where, async () => { const id = await sure(item); if (id) choose(id); else GL.toast("That page is not in the library."); }));
+    }
+    // the shelves that hold something
+    const lib = el("div");
+    home.append(lib);
+    try {
+      const shelves = (await api("browse", {})).collections.filter((c) => c.docs > 0);
+      if (my !== pickSeq) return;
+      if (shelves.length) lib.append(el("h3", { class: "bs-sub", text: "Library" }));
+      for (const c of shelves) lib.append(rowBtn(c.title, c.slug === "scriptures" ? "" : `${c.docs} ${c.docs === 1 ? "page" : "pages"}`, () => into(c.slug === "scriptures" ? { kind: "scriptures", title: "Scriptures" } : { kind: "shelf", slug: c.slug, title: c.title }), true));
+    } catch (_) {}
+  }
+
+  // ---- Split, in the reader's bar ------------------------------------------------
+  // The reader draws a new bar with every page. Each one is given the button as it appears
+  // (before the text sizes, or at the end of a study's bar). On a phone the button is there
+  // and not shown (app.css).
+  //
+  // The app folds its bar by measuring what the bar needs (fitReaderBar). The button is left
+  // out of that measure (app.css), so the bar folds exactly as it did before there was a
+  // button; then, each time the app has fitted the bar, the button takes what room is left:
+  // the sign with its word, or the sign alone. With no room for that either it leaves the bar,
+  // and a bar that has folded its sizes into the Aa menu has a row for it there. (Squeezing it
+  // in was tried: the bar's other buttons shrink under 44pt with it.)
+  //
+  // A full bar is common (a Bible chapter with its Greek switch beside the list), so the same
+  // button is also in the rail, under Ask, where there is always room: that one never moves.
+  const readerEl = document.querySelector("#reader");
+  const toggleSplit = () => { if (up()) close(); else openPicker(); };
+  function splitButton() {
+    return el("span", { class: "bs-split-wrap" }, [el("button", { type: "button", class: "icon-btn bs-split", "aria-pressed": String(up()), "aria-label": "Split: a second page beside this one", title: "Read two pages side by side", onclick: toggleSplit }, [el("span", { class: "g", html: I.split }), el("span", { class: "w", text: "Split" })])]);
+  }
+  function pressSplit() {
+    for (const b of document.querySelectorAll(".bs-split, .bs-rail")) b.setAttribute("aria-pressed", String(up()));
+    for (const t of document.querySelectorAll(".menu-split .bs-mw")) t.textContent = up() ? "Close the second page" : "Split: two pages side by side";
+  }
+  // as the app measures: where the bar's last piece ends, against its own padding
+  function barOver(rb) {
+    const edge = rb.getBoundingClientRect().right - (parseFloat(getComputedStyle(rb).paddingRight) || 0);
+    let right = -Infinity;
+    for (const c of rb.children) { const r = c.getBoundingClientRect(); if (r.width > 0) right = Math.max(right, r.right); }
+    return right > edge + 0.5;
+  }
+  let fitWatch = null;
+  function fitSplit(rb) {
+    const wrap = rb.querySelector(".bs-split-wrap");
+    if (!wrap || !rb.isConnected || rb.offsetParent === null) return;
+    rb.classList.remove("bs-icon", "bs-away");
+    if (getComputedStyle(wrap).display === "none") { if (fitWatch) fitWatch.takeRecords(); return; } // a phone: no button to fit
+    rb.classList.add("measuring", "bs-fit");
+    if (barOver(rb)) {
+      rb.classList.add("bs-icon");
+      if (barOver(rb)) rb.classList.add("bs-away");
+    }
+    rb.classList.remove("measuring", "bs-fit");
+    if (fitWatch) fitWatch.takeRecords(); // these changes of class are this code's own
+    placeCoach();
+  }
+  try { fitWatch = new MutationObserver((all) => { for (const rb of new Set(all.map((r) => r.target))) fitSplit(rb); }); } catch (_) {}
+  function onReader() {
+    const r = GL.reading;
+    if (r && r.open) remember(r.doc);
+    const rb = [...readerEl.children].find((n) => n.classList.contains("reader-bar"));
+    if (!rb || rb.querySelector(".bs-split")) return;
+    const before = rb.querySelector(".size-btns") || rb.querySelector(".pane-switch-slot");
+    const wrap = splitButton();
+    if (before && before.parentNode === rb) before.before(wrap); else rb.append(wrap);
+    // the row in the Aa menu, for a bar with no room left at all
+    const menuEl = rb.querySelector(".size-menu");
+    if (menuEl) menuEl.prepend(el("button", { type: "button", role: "menuitem", class: "menu-split", onclick: () => { menuEl.hidden = true; rb.querySelector(".size-pop-btn")?.setAttribute("aria-expanded", "false"); toggleSplit(); } }, [el("span", { class: "g", html: I.split }), el("span", { class: "bs-mw", text: up() ? "Close the second page" : "Split: two pages side by side" })]));
+    if (fitWatch) fitWatch.observe(rb, { attributes: true, attributeFilter: ["class"] });
+    requestAnimationFrame(() => { fitSplit(rb); coach(wrap); });
+  }
+  // The first time the button is there to be seen, one line under it says what it is for. Any
+  // tap takes the line away for good (the tap still does what it was for). The line is on the
+  // body, not in the bar, so its coming and going is nothing the bar has to be refitted for.
+  // It hangs under the bar's button while that one is showing, and otherwise points at the rail's.
+  let coachEl = null, coachFor = null;
+  function placeCoach() {
+    if (!coachEl) return;
+    const seen = (n) => (n && n.offsetParent !== null ? n : null);
+    const b = seen(coachFor && coachFor.isConnected ? coachFor.querySelector(".bs-split") : null), rail = b ? null : seen(document.querySelector(".bs-rail"));
+    const r = (b || rail || { getBoundingClientRect: () => null }).getBoundingClientRect();
+    coachEl.hidden = !r || !coachFor || !coachFor.isConnected || readerEl.hidden || readerEl.offsetParent === null;
+    if (coachEl.hidden) return;
+    coachEl.classList.toggle("side", !b);
+    coachEl.style.top = b ? `${Math.round(r.bottom + 10)}px` : `${Math.round(r.top + r.height / 2 - 22)}px`;
+    coachEl.style.right = b ? `${Math.max(8, Math.round(window.innerWidth - r.right - 8))}px` : "auto";
+    coachEl.style.left = b ? "auto" : `${Math.round(r.right + 4)}px`;
+    coachEl.style.setProperty("--bs-tip", `${Math.round(r.width / 2 + 2)}px`);
+  }
+  function coach(wrap) {
+    if (!can() || up() || GL.store.get("besideCoach") || !wrap.isConnected) return;
+    coachFor = wrap;
+    if (coachEl) { placeCoach(); return; }
+    coachEl = el("div", { class: "bs-coach", role: "status", text: "New: tap Split to read two books side by side" });
+    document.body.append(coachEl);
+    placeCoach();
+    const done = () => {
+      if (!coachEl || coachEl.hidden) return; // not seen yet: it waits
+      coachEl.remove(); coachEl = null; coachFor = null;
+      GL.store.set("besideCoach", 1);
+      document.removeEventListener("pointerdown", done, true);
+      window.removeEventListener("resize", placeCoach);
+    };
+    document.addEventListener("pointerdown", done, true);
+    window.addEventListener("resize", placeCoach);
+  }
+  // the rail's own Split, under Ask: made once, shown from an iPad up (app.css)
+  const railGap = document.querySelector("#tabs .tabs-gap");
+  if (railGap) railGap.before(el("button", { type: "button", class: "bs-rail", "aria-pressed": "false", "aria-label": "Split: a second page beside this one", title: "Read two pages side by side", onclick: toggleSplit }, [el("span", { class: "tab-ic", html: I.split }), el("span", { class: "tab-lb", text: "Split" })]));
+  if (readerEl) {
+    try { new MutationObserver(onReader).observe(readerEl, { childList: true }); } catch (_) {}
+    onReader();
+  }
+
   // ---- the way in --------------------------------------------------------------
   const can = () => wide();
   // For the passage sheet's row of buttons: "Open beside", on an iPad
@@ -483,28 +798,34 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     if (!can() || !res || !res.doc_id) return null;
     return el("button", { type: "button", class: "beside-btn", onclick: () => { GL.closeSheet(); open(res.doc_id, res.pid || null); } }, [el("span", { class: "g", html: I.split }), "Open beside"]);
   }
+  // For the reference card in the search results: "Open beside" under it, on an iPad
+  function jumpButton(j) {
+    if (!can() || !j || !j.doc_id) return null;
+    return el("button", { type: "button", class: "beside-btn bs-jump-beside", "aria-label": `Open ${j.label || "this"} beside`, onclick: () => open(j.doc_id, j.pid || null) }, [el("span", { class: "g", html: I.split }), "Open beside"]);
+  }
   async function open(id, pid = null) {
     if (!can()) return false;
-    if (!cur) ratio = 0.5;
+    if (!cur) { ratio = 0.5; origOn = false; }
     return show(id, { pid, how: cur ? "push" : "fresh" });
   }
   // The pair that was open when the app was last used comes back: the page, its place, the widths.
   // A library rebuilt since may have numbered its pages afresh, so the page is found by its address.
   async function restore() {
     const s = saved();
-    if (!s || !s.id || cur || !can()) return false;
+    if (!s || !s.id || up() || !can()) return false;
     ratio = STOPS.some(([x]) => x === s.ratio) ? s.ratio : 0.5;
+    origOn = !!s.orig;
     let id = s.id;
     try {
       const doc = await api("doc", { id });
       if (s.url && (!doc || doc.source_url !== s.url)) { const res = await api("resolve", { href: s.url }); id = res && res.found && res.doc_id ? res.doc_id : null; }
     } catch (_) { id = null; }
-    if (!id || cur) { if (!id) GL.store.set("beside", null); return false; }
+    if (!id || up()) { if (!id) GL.store.set("beside", null); return false; }
     return show(id, { pid: s.pid, off: s.pid ? s.off || 0 : null });
   }
   // the place is kept as the app goes to the back, where a timer may never fire
   window.addEventListener("pagehide", () => { if (cur) save(); });
   document.addEventListener("visibilitychange", () => { if (cur && document.visibilityState === "hidden") save(); });
 
-  window.Beside = { can, button, open, restore, close: () => close(), swap, get isOpen() { return !!cur; }, get doc() { return cur ? cur.doc : null; } };
+  window.Beside = { can, button, jumpButton, open, restore, close: () => close(), swap, pick: () => openPicker(), get isOpen() { return up(); }, get doc() { return cur ? cur.doc : null; } };
 })();

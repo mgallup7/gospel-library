@@ -960,6 +960,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         el("div", {}, [el("b", { text: j.label }), " ", el("span", { text: !j.doc_id ? "Not in the library yet" : j.missing ? `Open · it has no verse ${j.missing}` : "Open" })]),
         el("span", { text: j.doc_id ? "›" : "" }),
       ]));
+      { const bj = window.Beside?.jumpButton?.(j); if (bj) frag.append(bj); } // beside.js: "Open beside" under the reference card, on an iPad
     }
     // a book: filter (typed, or in Filters) that names no book is said, since the search went on without it
     const askedBook = (/\bbook:("[^"]*"|\S+)/i.exec(data.query || "") || [])[1]?.replace(/"/g, "") || state.book;
