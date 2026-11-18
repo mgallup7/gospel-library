@@ -2,12 +2,15 @@
 // that chapter in a pane of its own to the right of the reader (under it in portrait), with a
 // divider to drag between them. The pane is a reading copy: it shows the page and the reader's
 // highlights and notes, and marks nothing itself; Swap brings its page to the reader in one tap.
+// "Split" in the reader's bar opens the pane with a picker in place of a page: a reference or
+// words, the places read lately, and the shelves.
 //
 // This file keeps to itself on purpose. The reader (openDoc, renderDoc, placePanes) knows nothing
 // of it: the pane is a section made on demand at the end of <main>, laid out by one body class
 // (app.css, "the second pane"), and it is outside the app's history. app.js gives it three
 // things: the button in the passage sheet, a call once the library is open (the saved pair comes
-// back), and its sanitizer. Only flexbox, pointer events, matchMedia and storage are used.
+// back), and its sanitizer. The Split button is put in the reader's bar from here, by watching
+// the reader for a new bar, so the reader's own code has no line for it. Only flexbox, pointer events, matchMedia and storage are used.
 import { chapterOf } from "./lib/cite.js";
 import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./lib/phrase.js";
 
@@ -44,6 +47,11 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   let stepping = false; // the last move was an arrow: a run of chapters is one step back
   let seq = 0, paintSeq = 0;
   let listKey = null;   // which list the hidden column holds; when it changes the pane gives way
+  let pick = null;      // the picker's own element, made once
+  let picking = false;  // the picker is up: in place of a page, or over the one that is there
+  let level = [];       // how far into the shelves the picker has gone
+  let pickSeq = 0;
+  const up = () => !!(cur || picking); // the pane is in the layout
 
   const saved = () => GL.store.get("beside");
   let saveTimer = null;
@@ -92,6 +100,12 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   }
 
   function drawBar() {
+    if (!cur) {
+      // no page yet: the picker is all there is, and the bar says what it is for
+      bar.replaceChildren(el("div", { class: "bs-title bs-title-plain" }, [el("span", { text: "Open a second page" })]), el("div", { class: "bs-spacer" }),
+        el("button", { type: "button", class: "bs-close", "aria-label": "Close the second pane", title: "Close this side", html: I.close, onclick: () => close() }));
+      return;
+    }
     const doc = cur.doc;
     const back = trail.length ? el("button", { type: "button", class: "bs-back", "aria-label": `Back to ${trail[trail.length - 1].title || "the page before"}`, title: "Back in this pane", html: I.prev, onclick: goBack }) : null;
     const can = doc.collection === "scriptures" ? !!doc.book_slug : !!(doc.book && doc.book.uri);
@@ -118,7 +132,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     try { doc = await api("doc", { id }); } catch (_) { doc = null; }
     if (my !== seq) return false;
     if (!doc) {
-      if (!cur) { unmount(); GL.store.set("beside", null); }
+      if (!up()) { unmount(); GL.store.set("beside", null); }
       GL.toast("That page is not in the library.");
       return false;
     }
@@ -129,6 +143,8 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     // the same cleaning the reader gives a page: nothing from the library is put in unsanitized
     const body = el("article", { class: "doc" }, [GL.sanitize(doc.body_html || "")]);
     cur = { doc, body };
+    if (picking) shutPicker();
+    remember(doc);
     drawBar();
     hint.hidden = true;
     scroller.replaceChildren(body);
@@ -317,6 +333,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     if (pane.isConnected) return;
     main.append(divider, pane, track);
     document.body.classList.add("beside-open");
+    pressSplit();
     listKey = keyNow();
     applyRatio();
     poll = setInterval(watchList, 500);
@@ -330,12 +347,14 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     document.body.classList.remove("beside-open", "bs-dragging");
     main.style.removeProperty("--bs-a"); main.style.removeProperty("--bs-b");
     cur = null; trail = []; stepping = false; seq++;
+    picking = false; pickSeq++; if (pick) pick.remove();
+    pressSplit();
     refit();
   }
   // Closing is one tap and forgets the pair. When the pane went without being asked to (a tab
   // of the rail, the divider run to the edge), the toast offers it back.
   function close({ offer = false } = {}) {
-    if (!cur) return;
+    if (!up()) return;
     save();
     const was = saved();
     unmount();
@@ -354,23 +373,23 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   }
   // under a third of an iPad the bar keeps the title, the arrows, Swap as its sign alone, and close
   function fold() { if (pane && pane.isConnected) pane.classList.toggle("narrow", pane.clientWidth < 430); }
-  window.addEventListener("resize", () => { if (refitting || !cur) return; fold(); track.hidden = true; });
+  window.addEventListener("resize", () => { if (refitting || !up()) return; fold(); track.hidden = true; });
 
   // The list's column is hidden while two pages share the width. Whatever asks for the list
   // (a tab of the rail, the title of the reader's page, Think, a book's contents) changes the
   // address in something other than the page; the pane then gives way, so the list is never
   // asked for and not shown. While no page is open at all the list is showing, and may change.
   function watchList() {
-    if (!cur) return;
+    if (!up()) return;
     const k = keyNow();
     if (k === listKey) return;
     listKey = k;
     if (wide() && !document.body.classList.contains("list-only")) close({ offer: true });
   }
-  document.addEventListener("click", () => { if (cur) { setTimeout(watchList, 0); setTimeout(watchList, 250); } }, true);
-  window.addEventListener("popstate", () => { if (cur) setTimeout(watchList, 0); });
+  document.addEventListener("click", () => { if (up()) { setTimeout(watchList, 0); setTimeout(watchList, 250); } }, true);
+  window.addEventListener("popstate", () => { if (up()) setTimeout(watchList, 0); });
   document.querySelector("#tabs")?.addEventListener("click", (e) => {
-    if (cur && wide() && e.target.closest(".tab[data-tab]")) setTimeout(() => { if (cur && !document.body.classList.contains("list-only")) close({ offer: true }); }, 0);
+    if (up() && wide() && e.target.closest(".tab[data-tab]")) setTimeout(() => { if (up() && !document.body.classList.contains("list-only")) close({ offer: true }); }, 0);
   });
 
   // ---- Swap ------------------------------------------------------------------
@@ -401,7 +420,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     track.className = "bs-track" + (stacked() ? " stack" : "");
     track.replaceChildren(
       ...STOPS.map(([s, name]) => el("span", { class: "bs-stop" + (!closing && s === at ? " at" : ""), style: `${side}:${(s * 100).toFixed(3)}%` }, [el("i"), el("b", { text: name })])),
-      el("span", { class: "bs-stop end" + (closing ? " at" : ""), style: `${side}:${stacked() ? 96 : 93}%` }, [el("b", { text: `Close ${nameOf(cur.doc)}` })]),
+      el("span", { class: "bs-stop end" + (closing ? " at" : ""), style: `${side}:${stacked() ? 96 : 93}%` }, [el("b", { text: cur ? `Close ${nameOf(cur.doc)}` : "Close this side" })]),
     );
     track.hidden = false;
   }
@@ -419,7 +438,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
       return { r: Math.max(least, Math.min(1 - least, at / size)), closing: size - at < CLOSE_PX };
     };
     grab.addEventListener("pointerdown", (e) => {
-      if (e.button > 0 || !cur) return;
+      if (e.button > 0 || !up()) return;
       e.preventDefault(); // no text selection begins under the finger
       try { grab.setPointerCapture(e.pointerId); } catch (_) {}
       drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, r: ratio, closing: false };
@@ -476,6 +495,92 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     refit();
   }
 
+  // ---- the places read lately ---------------------------------------------------
+  // The app keeps one place for Continue, and its trail lasts only as long as the tab. So a
+  // short list is kept here: each page as it opens, in the reader or in this pane.
+  const whereOf = (doc) => (doc.collection === "scriptures" ? doc.volume : doc.book && doc.book.title) || "";
+  const recents = () => { const r = GL.store.get("besideRecent", []); return Array.isArray(r) ? r : []; };
+  function remember(doc) {
+    if (!doc || !doc.id) return;
+    const was = recents();
+    if (was[0] && was[0].id === doc.id) return;
+    const item = { id: doc.id, url: doc.source_url || null, title: nameOf(doc), where: whereOf(doc) };
+    GL.store.set("besideRecent", [item, ...was.filter((x) => x.id !== item.id && (!item.url || x.url !== item.url))].slice(0, 9));
+  }
+  // A library rebuilt since may have numbered its pages afresh: the page is found by its address.
+  async function sure(item) {
+    try {
+      const doc = await api("doc", { id: item.id });
+      if (!item.url || (doc && doc.source_url === item.url)) return doc ? item.id : null;
+      const res = await api("resolve", { href: item.url });
+      return res && res.found && res.doc_id ? res.doc_id : null;
+    } catch (_) { return null; }
+  }
+
+  // ---- the picker: what to open on this side -------------------------------------
+  // Split opens the pane with this in place of a page. It is one scrolling column inside the
+  // pane: a level of it at a time, each row one tap, a chevron at the top to go back up.
+  function openPicker() {
+    if (!can()) return false;
+    build();
+    shutMenu();
+    if (!cur) ratio = 0.5;
+    if (!pick) pick = el("div", { class: "bs-pick" });
+    picking = true; level = [];
+    under.append(pick);
+    if (!cur) drawBar();
+    mount();
+    drawPick();
+    return true;
+  }
+  function shutPicker() {
+    picking = false; pickSeq++;
+    if (pick) pick.remove();
+  }
+  const choose = (id, pid = null) => { if (id) show(id, { pid, how: cur ? "push" : "fresh" }); };
+  const rowBtn = (t, s, fn, more) => el("button", { type: "button", class: "bs-row", onclick: fn }, [el("span", { class: "t", text: t }), s ? el("span", { class: "s", text: s }) : null, more ? el("span", { class: "go", html: I.next }) : null]);
+  function drawPick() {
+    const my = ++pickSeq;
+    drawPickHome(my);
+  }
+  async function drawPickHome(my) {
+    const home = el("div", { class: "bs-home" });
+    pick.replaceChildren(home);
+    pick.scrollTop = 0;
+    // the places read lately, the page in the reader left out: it is already on the screen
+    const r = GL.reading, here = r && r.open ? r.doc.id : null;
+    let list = recents();
+    const last = GL.store.get("lastRead");
+    if (!list.length && last && last.id) list = [{ id: last.id, url: null, title: last.title, where: last.where || "" }];
+    list = list.filter((x) => x.id !== here).slice(0, 8);
+    if (list.length) {
+      home.append(el("h3", { class: "bs-sub", text: "Recent" }));
+      for (const item of list) home.append(rowBtn(item.title, item.where, async () => { const id = await sure(item); if (id) choose(id); else GL.toast("That page is not in the library."); }));
+    }
+  }
+
+  // ---- Split, in the reader's bar ------------------------------------------------
+  // The reader draws a new bar with every page. Each one is given the button as it appears
+  // (before the text sizes, or at the end of a study's bar); the app's own watch of the bar
+  // then refits it. On a phone the button is there and not shown (app.css).
+  const readerEl = document.querySelector("#reader");
+  function splitButton() {
+    return el("span", { class: "bs-split-wrap" }, [el("button", { type: "button", class: "icon-btn bs-split", "aria-pressed": String(up()), "aria-label": "Split: a second page beside this one", title: "Read two pages side by side", onclick: () => { if (up()) close(); else openPicker(); } }, [el("span", { class: "g", html: I.split }), el("span", { class: "w", text: "Split" })])]);
+  }
+  function pressSplit() { for (const b of document.querySelectorAll(".bs-split")) b.setAttribute("aria-pressed", String(up())); }
+  function onReader() {
+    const r = GL.reading;
+    if (r && r.open) remember(r.doc);
+    const rb = [...readerEl.children].find((n) => n.classList.contains("reader-bar"));
+    if (!rb || rb.querySelector(".bs-split")) return;
+    const before = rb.querySelector(".size-btns") || rb.querySelector(".pane-switch-slot");
+    if (before && before.parentNode === rb) before.before(splitButton()); else rb.append(splitButton());
+  }
+  if (readerEl) {
+    try { new MutationObserver(onReader).observe(readerEl, { childList: true }); } catch (_) {}
+    onReader();
+  }
+
   // ---- the way in --------------------------------------------------------------
   const can = () => wide();
   // For the passage sheet's row of buttons: "Open beside", on an iPad
@@ -492,19 +597,19 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   // A library rebuilt since may have numbered its pages afresh, so the page is found by its address.
   async function restore() {
     const s = saved();
-    if (!s || !s.id || cur || !can()) return false;
+    if (!s || !s.id || up() || !can()) return false;
     ratio = STOPS.some(([x]) => x === s.ratio) ? s.ratio : 0.5;
     let id = s.id;
     try {
       const doc = await api("doc", { id });
       if (s.url && (!doc || doc.source_url !== s.url)) { const res = await api("resolve", { href: s.url }); id = res && res.found && res.doc_id ? res.doc_id : null; }
     } catch (_) { id = null; }
-    if (!id || cur) { if (!id) GL.store.set("beside", null); return false; }
+    if (!id || up()) { if (!id) GL.store.set("beside", null); return false; }
     return show(id, { pid: s.pid, off: s.pid ? s.off || 0 : null });
   }
   // the place is kept as the app goes to the back, where a timer may never fire
   window.addEventListener("pagehide", () => { if (cur) save(); });
   document.addEventListener("visibilitychange", () => { if (cur && document.visibilityState === "hidden") save(); });
 
-  window.Beside = { can, button, open, restore, close: () => close(), swap, get isOpen() { return !!cur; }, get doc() { return cur ? cur.doc : null; } };
+  window.Beside = { can, button, open, restore, close: () => close(), swap, pick: () => openPicker(), get isOpen() { return up(); }, get doc() { return cur ? cur.doc : null; } };
 })();
