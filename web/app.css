@@ -1649,6 +1649,19 @@ a.toast-action { display: inline-flex; align-items: center; }
   .reader-bar.bs-away:not(.measuring) .bs-split-wrap, .reader-bar.bs-away.bs-fit .bs-split-wrap { display: none; }
   .reader-bar.bs-away.compact .size-menu .menu-split { display: flex; }
 
+  /* Two pages open: the two bars read as a pair. The rail's button says the split is on and the
+     second bar's X ends it, so the reader's own Split would be a third control for one thing.
+     The reader's bar keeps what turns pages and what is used while reading (the Hebrew or Greek
+     switch, the lamp); the sizes, Present and the page on the web wait in the Aa menu, as they
+     already do on a narrow bar. */
+  body.beside-open .reader-bar .bs-split-wrap { display: none; }
+  body.beside-open #reader > .reader-bar .size-btns, body.beside-open #reader > .reader-bar .bar-extra { display: none; }
+  body.beside-open #reader > .reader-bar .size-pop { display: inline-flex; order: 2; }
+  body.beside-open #reader > .reader-bar .size-menu .menu-extra { display: flex; }
+  body.beside-open #reader > .reader-bar .size-pop-btn { width: auto; padding: 0 6px; }
+  body.beside-open #reader > .reader-bar .size-pop-btn .dots { display: inline-flex; margin-left: 1px; color: var(--accent); }
+  body.beside-open #reader > .reader-bar .size-pop-btn .dots svg { width: 16px; height: 16px; }
+  .bs-bar .bs-title { font-weight: 600; color: var(--ink); }
   .bs-bar .bs-title-plain { display: inline-flex; align-items: center; height: 36px; color: var(--ink); font-weight: 600; }
   .bs-pick { position: absolute; left: 0; right: 0; top: 0; bottom: 0; z-index: 5; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 calc(40px + var(--safe-bottom)); background: var(--paper); font-family: var(--sans); }
   .bs-pick .bs-sub { margin: 0; padding: 18px 18px 6px; font: 600 var(--ui-13) var(--sans); color: var(--ink-2); }
