@@ -1,0 +1,1272 @@
+[
+ {
+  "id": "a01",
+  "kind": "a",
+  "q": "great are the words of isaiah",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": "name+filler"
+ },
+ {
+  "id": "a02",
+  "kind": "a",
+  "q": "I will go and do the things",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a03",
+  "kind": "a",
+  "q": "I, Nephi, said unto my father",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a04",
+  "kind": "a",
+  "q": "faith is not to have a perfect knowledge",
+  "expect": [
+   "Alma 32:21"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a05",
+  "kind": "a",
+  "q": "we will compare the word unto a seed",
+  "expect": [
+   "Alma 32:28"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a06",
+  "kind": "a",
+  "q": "by small and simple things are great things",
+  "expect": [
+   "Alma 37:6"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a07",
+  "kind": "a",
+  "q": "learn wisdom in thy youth",
+  "expect": [
+   "Alma 37:35"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a08",
+  "kind": "a",
+  "q": "in the service of your God",
+  "expect": [
+   "Mosiah 2:17"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a09",
+  "kind": "a",
+  "q": "the natural man is an enemy to God",
+  "expect": [
+   "Mosiah 3:19"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a10",
+  "kind": "a",
+  "q": "we talk of Christ, we rejoice in Christ",
+  "expect": [
+   "2 Nephi 25:26"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a11",
+  "kind": "a",
+  "q": "the words of Christ will tell you",
+  "expect": [
+   "2 Nephi 32:3"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a12",
+  "kind": "a",
+  "q": "this life is the time for men to prepare",
+  "expect": [
+   "Alma 34:32"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a13",
+  "kind": "a",
+  "q": "wickedness never was happiness",
+  "expect": [
+   "Alma 41:10"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a14",
+  "kind": "a",
+  "q": "God is the same yesterday, today, and forever",
+  "expect": [
+   "Mormon 9:9"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a15",
+  "kind": "a",
+  "q": "I do not know the meaning of all things",
+  "expect": [
+   "1 Nephi 11:17"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a16",
+  "kind": "a",
+  "q": "what manner of men ought ye to be",
+  "expect": [
+   "3 Nephi 27:27"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a17",
+  "kind": "a",
+  "q": "I, Moroni, would speak somewhat",
+  "expect": [
+   "Ether 12:6"
+  ],
+  "note": "name+filler"
+ },
+ {
+  "id": "a18",
+  "kind": "a",
+  "q": "I did liken all scriptures unto us",
+  "expect": [
+   "1 Nephi 19:23"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a19",
+  "kind": "a",
+  "q": "written by the prophet Isaiah",
+  "expect": [
+   "1 Nephi 19:23"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a20",
+  "kind": "a",
+  "q": "six hundred years from the time that Lehi",
+  "expect": [
+   "3 Nephi 1:1"
+  ],
+  "note": "number+name+filler"
+ },
+ {
+  "id": "a21",
+  "kind": "a",
+  "q": "being fifteen years of age",
+  "expect": [
+   "Mormon 1:15"
+  ],
+  "note": "number"
+ },
+ {
+  "id": "a22",
+  "kind": "a",
+  "q": "four hundred years have passed away",
+  "expect": [
+   "Mormon 8:6"
+  ],
+  "note": "number"
+ },
+ {
+  "id": "a23",
+  "kind": "a",
+  "q": "knew of the goodness of Jesus",
+  "expect": [
+   "Mormon 1:15"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a24",
+  "kind": "a",
+  "q": "behold, Abraham saw of his coming",
+  "expect": [
+   "Helaman 8:17"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a25",
+  "kind": "a",
+  "q": "my father, Lehi, having dwelt at Jerusalem",
+  "expect": [
+   "1 Nephi 1:4"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a26",
+  "kind": "a",
+  "q": "thus ended the days of Alma",
+  "expect": [
+   "Mosiah 29:47"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a27",
+  "kind": "a",
+  "q": "would be, like unto Moroni",
+  "expect": [
+   "Alma 48:17"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a28",
+  "kind": "a",
+  "q": "Jacob 2 seek ye for the kingdom of God",
+  "expect": [
+   "Jacob 2:18"
+  ],
+  "note": "name+ref"
+ },
+ {
+  "id": "a29",
+  "kind": "a",
+  "q": "men are that they might have joy",
+  "expect": [
+   "2 Nephi 2:25"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a30",
+  "kind": "a",
+  "q": "Jesus increased in wisdom and stature",
+  "expect": [
+   "Luke 2:52"
+  ],
+  "note": "name"
+ },
+ {
+  "id": "a31",
+  "kind": "a",
+  "q": "the LORD looketh on the heart",
+  "expect": [
+   "1 Samuel 16:7"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a32",
+  "kind": "a",
+  "q": "a time to every purpose under the heaven",
+  "expect": [
+   "Ecclesiastes 3:1"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a33",
+  "kind": "a",
+  "q": "Abraham said, My son, God will provide",
+  "expect": [
+   "Genesis 22:8"
+  ],
+  "note": "name+filler"
+ },
+ {
+  "id": "a34",
+  "kind": "a",
+  "q": "nine hundred sixty and nine years",
+  "expect": [
+   "Genesis 5:27"
+  ],
+  "note": "number"
+ },
+ {
+  "id": "a35",
+  "kind": "a",
+  "q": "God said unto Moses, I AM THAT I AM",
+  "expect": [
+   "Exodus 3:14"
+  ],
+  "note": "name+filler"
+ },
+ {
+  "id": "a36",
+  "kind": "a",
+  "q": "as for me and my house",
+  "expect": [
+   "Joshua 24:15"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a37",
+  "kind": "a",
+  "q": "lean not unto thine own understanding",
+  "expect": [
+   "Proverbs 3:5"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a38",
+  "kind": "a",
+  "q": "over ninety and nine just persons",
+  "expect": [
+   "Luke 15:7"
+  ],
+  "note": "number"
+ },
+ {
+  "id": "a39",
+  "kind": "a",
+  "q": "for such a time as this",
+  "expect": [
+   "Esther 4:14"
+  ],
+  "note": "filler"
+ },
+ {
+  "id": "a40",
+  "kind": "a",
+  "q": "Here am I; send me",
+  "expect": [
+   "Isaiah 6:8",
+   "2 Nephi 16:8",
+   "Moses 4:1",
+   "Abraham 3:27"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "a41",
+  "kind": "a",
+  "q": "my thoughts are not your thoughts",
+  "expect": [
+   "Isaiah 55:8"
+  ],
+  "note": "think-ish"
+ },
+ {
+  "id": "a42",
+  "kind": "a",
+  "q": "they shall mount up with wings as eagles",
+  "expect": [
+   "Isaiah 40:31"
+  ],
+  "note": "common"
+ },
+ {
+  "id": "b01",
+  "kind": "b",
+  "q": "great is the words of isaiah",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": "wrong word"
+ },
+ {
+  "id": "b02",
+  "kind": "b",
+  "q": "great are the words of isiah",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": "typo"
+ },
+ {
+  "id": "b03",
+  "kind": "b",
+  "q": "I will go and do the things the Lord has commanded",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": "has/hath, word missing"
+ },
+ {
+  "id": "b04",
+  "kind": "b",
+  "q": "men are that they may have joy",
+  "expect": [
+   "2 Nephi 2:25"
+  ],
+  "note": "wrong word"
+ },
+ {
+  "id": "b05",
+  "kind": "b",
+  "q": "Adam fell that man might be",
+  "expect": [
+   "2 Nephi 2:25"
+  ],
+  "note": "wrong word"
+ },
+ {
+  "id": "b06",
+  "kind": "b",
+  "q": "by small and simple things great things are brought to pass",
+  "expect": [
+   "Alma 37:6"
+  ],
+  "note": "order"
+ },
+ {
+  "id": "b07",
+  "kind": "b",
+  "q": "when you are in the service of your fellow beings",
+  "expect": [
+   "Mosiah 2:17"
+  ],
+  "note": "you/ye"
+ },
+ {
+  "id": "b08",
+  "kind": "b",
+  "q": "faith is not having a perfect knowledge",
+  "expect": [
+   "Alma 32:21"
+  ],
+  "note": "modern form"
+ },
+ {
+  "id": "b09",
+  "kind": "b",
+  "q": "the natural man is an enemy of God",
+  "expect": [
+   "Mosiah 3:19"
+  ],
+  "note": "wrong word"
+ },
+ {
+  "id": "b10",
+  "kind": "b",
+  "q": "if any of you lack wisdom let him ask God",
+  "expect": [
+   "James 1:5"
+  ],
+  "note": "word missing"
+ },
+ {
+  "id": "b11",
+  "kind": "b",
+  "q": "my grace is sufficient for all men who humble themselves",
+  "expect": [
+   "Ether 12:27"
+  ],
+  "note": "who/that"
+ },
+ {
+  "id": "b12",
+  "kind": "b",
+  "q": "I give men weakness so they may be humble",
+  "expect": [
+   "Ether 12:27"
+  ],
+  "note": "missing+modern"
+ },
+ {
+  "id": "b13",
+  "kind": "b",
+  "q": "charity is the pure love of christ and it endures forever",
+  "expect": [
+   "Moroni 7:47"
+  ],
+  "note": "endures/endureth"
+ },
+ {
+  "id": "b14",
+  "kind": "b",
+  "q": "the lord knows all things which are to come",
+  "expect": [
+   "Words of Mormon 1:7"
+  ],
+  "note": "knows/knoweth"
+ },
+ {
+  "id": "b15",
+  "kind": "b",
+  "q": "thus says the lord I will give unto the children of men line upon line",
+  "expect": [
+   "2 Nephi 28:30"
+  ],
+  "note": "says/saith"
+ },
+ {
+  "id": "b16",
+  "kind": "b",
+  "q": "feast upon the words of christ for they will tell you all things",
+  "expect": [
+   "2 Nephi 32:3"
+  ],
+  "note": "changed words"
+ },
+ {
+  "id": "b17",
+  "kind": "b",
+  "q": "wickedness never was hapiness",
+  "expect": [
+   "Alma 41:10"
+  ],
+  "note": "typo"
+ },
+ {
+  "id": "b18",
+  "kind": "b",
+  "q": "seek first the kingdom of god and his righteousness",
+  "expect": [
+   "Matthew 6:33",
+   "3 Nephi 13:33"
+  ],
+  "note": "word missing"
+ },
+ {
+  "id": "b19",
+  "kind": "b",
+  "q": "trust in the lord with all your heart",
+  "expect": [
+   "Proverbs 3:5"
+  ],
+  "note": "your/thine"
+ },
+ {
+  "id": "b20",
+  "kind": "b",
+  "q": "come unto me all you that labor and are heavy laden",
+  "expect": [
+   "Matthew 11:28"
+  ],
+  "note": "you/ye, spelling"
+ },
+ {
+  "id": "b21",
+  "kind": "b",
+  "q": "though your sins are as scarlet they shall be white as snow",
+  "expect": [
+   "Isaiah 1:18"
+  ],
+  "note": "are/be, missing"
+ },
+ {
+  "id": "b22",
+  "kind": "b",
+  "q": "before you seek riches seek for the kingdom of god",
+  "expect": [
+   "Jacob 2:18"
+  ],
+  "note": "you/ye, missing"
+ },
+ {
+  "id": "b23",
+  "kind": "b",
+  "q": "god has not given us a spirit of fear",
+  "expect": [
+   "2 Timothy 1:7"
+  ],
+  "note": "has/hath, a/the"
+ },
+ {
+  "id": "b24",
+  "kind": "b",
+  "q": "the lord prepares a way for them to accomplish what he commands",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": "modern forms"
+ },
+ {
+  "id": "b25",
+  "kind": "b",
+  "q": "we beleive in christ and talk of christ",
+  "expect": [
+   "2 Nephi 25:26"
+  ],
+  "note": "typo+order"
+ },
+ {
+  "id": "c01",
+  "kind": "c",
+  "q": "the verse about a seed and faith",
+  "expect": [
+   "Alma 32:28",
+   "Alma 32:27",
+   "Alma 32:33",
+   "Alma 32:41"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c02",
+  "kind": "c",
+  "q": "god gives us weakness so we can be humble",
+  "expect": [
+   "Ether 12:27"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c03",
+  "kind": "c",
+  "q": "serving others is serving god",
+  "expect": [
+   "Mosiah 2:17"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c04",
+  "kind": "c",
+  "q": "build on the rock of christ so the devil has no power over you",
+  "expect": [
+   "Helaman 5:12"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c05",
+  "kind": "c",
+  "q": "small things bring about big things",
+  "expect": [
+   "Alma 37:6"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c06",
+  "kind": "c",
+  "q": "faith is hoping for things not seen that are true",
+  "expect": [
+   "Alma 32:21",
+   "Hebrews 11:1",
+   "Ether 12:6"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c07",
+  "kind": "c",
+  "q": "angels speak with the power of the holy ghost",
+  "expect": [
+   "2 Nephi 32:3"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c08",
+  "kind": "c",
+  "q": "ask god with a sincere heart if the book is true",
+  "expect": [
+   "Moroni 10:4"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c09",
+  "kind": "c",
+  "q": "mourn with those who mourn and comfort those who need comfort",
+  "expect": [
+   "Mosiah 18:9"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c10",
+  "kind": "c",
+  "q": "the spirits of all men are taken home to god when they die",
+  "expect": [
+   "Alma 40:11"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c11",
+  "kind": "c",
+  "q": "contention is of the devil",
+  "expect": [
+   "3 Nephi 11:29"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c12",
+  "kind": "c",
+  "q": "charity never fails, the pure love of christ",
+  "expect": [
+   "Moroni 7:47",
+   "Moroni 7:46",
+   "1 Corinthians 13:8"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c13",
+  "kind": "c",
+  "q": "pray with your family so your wife and children are blessed",
+  "expect": [
+   "3 Nephi 18:21"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c14",
+  "kind": "c",
+  "q": "the young warriors were taught by their mothers not to doubt",
+  "expect": [
+   "Alma 56:47"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c15",
+  "kind": "c",
+  "q": "the lord will prepare a way to keep his commandments",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c16",
+  "kind": "c",
+  "q": "god does not look at outward appearance but at the heart",
+  "expect": [
+   "1 Samuel 16:7"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c17",
+  "kind": "c",
+  "q": "the lord reveals his secrets to the prophets",
+  "expect": [
+   "Amos 3:7"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c18",
+  "kind": "c",
+  "q": "god loved the world so much he gave his son",
+  "expect": [
+   "John 3:16"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c19",
+  "kind": "c",
+  "q": "put on the armor of god",
+  "expect": [
+   "Ephesians 6:11"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c20",
+  "kind": "c",
+  "q": "I know my redeemer lives",
+  "expect": [
+   "Job 19:25"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c21",
+  "kind": "c",
+  "q": "wherever you go I will go",
+  "expect": [
+   "Ruth 1:16"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c22",
+  "kind": "c",
+  "q": "a tree with fruit that makes you happy",
+  "expect": [
+   "1 Nephi 8:10"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c23",
+  "kind": "c",
+  "q": "when people are learned they think they are wise",
+  "expect": [
+   "2 Nephi 9:28"
+  ],
+  "note": ""
+ },
+ {
+  "id": "c24",
+  "kind": "c",
+  "q": "search isaiah diligently",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d01",
+  "kind": "d",
+  "q": "where does it say great are the words of isaiah",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d02",
+  "kind": "d",
+  "q": "what did alma teach about faith",
+  "expect": [
+   "Alma 32:21",
+   "Alma 32:26",
+   "Alma 32:27",
+   "Alma 32:28"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d03",
+  "kind": "d",
+  "q": "who said I will go and do",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d04",
+  "kind": "d",
+  "q": "where does it say men are that they might have joy",
+  "expect": [
+   "2 Nephi 2:25"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d05",
+  "kind": "d",
+  "q": "what scripture says faith is the substance of things hoped for",
+  "expect": [
+   "Hebrews 11:1"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d06",
+  "kind": "d",
+  "q": "where is the verse about the natural man",
+  "expect": [
+   "Mosiah 3:19"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d07",
+  "kind": "d",
+  "q": "which verse says wickedness never was happiness",
+  "expect": [
+   "Alma 41:10"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d08",
+  "kind": "d",
+  "q": "what did king benjamin say about service",
+  "expect": [
+   "Mosiah 2:17"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d09",
+  "kind": "d",
+  "q": "where does moroni promise we can know the truth of all things",
+  "expect": [
+   "Moroni 10:5",
+   "Moroni 10:4"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d10",
+  "kind": "d",
+  "q": "what did lehi teach about opposition in all things",
+  "expect": [
+   "2 Nephi 2:11"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d11",
+  "kind": "d",
+  "q": "where does it talk about the rod of iron",
+  "expect": [
+   "1 Nephi 8:19",
+   "1 Nephi 11:25",
+   "1 Nephi 15:23",
+   "1 Nephi 15:24",
+   "1 Nephi 8:24",
+   "1 Nephi 8:30"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d12",
+  "kind": "d",
+  "q": "what does paul say about charity suffering long",
+  "expect": [
+   "1 Corinthians 13:4"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d13",
+  "kind": "d",
+  "q": "who said here am I send me",
+  "expect": [
+   "Isaiah 6:8",
+   "2 Nephi 16:8",
+   "Abraham 3:27"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d14",
+  "kind": "d",
+  "q": "what did nephi say about feasting on the words of christ",
+  "expect": [
+   "2 Nephi 32:3",
+   "2 Nephi 31:20"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d15",
+  "kind": "d",
+  "q": "where does it say ask and it shall be given you",
+  "expect": [
+   "Matthew 7:7",
+   "3 Nephi 14:7"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d16",
+  "kind": "d",
+  "q": "how does alma describe a mighty change in your heart",
+  "expect": [
+   "Alma 5:14",
+   "Alma 5:12",
+   "Alma 5:13",
+   "Alma 5:26"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d17",
+  "kind": "d",
+  "q": "what did jesus say about being perfect",
+  "expect": [
+   "3 Nephi 12:48",
+   "Matthew 5:48"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d18",
+  "kind": "d",
+  "q": "where does mormon say god is the same yesterday today and forever",
+  "expect": [
+   "Mormon 9:9"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d19",
+  "kind": "d",
+  "q": "what verse talks about the arm of flesh",
+  "expect": [
+   "2 Nephi 4:34"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d20",
+  "kind": "d",
+  "q": "where does the lord say my thoughts are not your thoughts",
+  "expect": [
+   "Isaiah 55:8"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d21",
+  "kind": "d",
+  "q": "who said as for me and my house we will serve the lord",
+  "expect": [
+   "Joshua 24:15"
+  ],
+  "note": ""
+ },
+ {
+  "id": "d22",
+  "kind": "d",
+  "q": "what did moroni say about weak things becoming strong",
+  "expect": [
+   "Ether 12:27"
+  ],
+  "note": ""
+ },
+ {
+  "id": "e01",
+  "kind": "e",
+  "q": "great are the words of isaiah ",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": "trailing space"
+ },
+ {
+  "id": "e02",
+  "kind": "e",
+  "q": "Great are the words of Isaiah.",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": "stray period"
+ },
+ {
+  "id": "e03",
+  "kind": "e",
+  "q": "i nephi said unto my father",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": "lower, no punct"
+ },
+ {
+  "id": "e04",
+  "kind": "e",
+  "q": "faith is not to have a perfect knowledge.",
+  "expect": [
+   "Alma 32:21"
+  ],
+  "note": "stray period"
+ },
+ {
+  "id": "e05",
+  "kind": "e",
+  "q": "men are that they might have joy ",
+  "expect": [
+   "2 Nephi 2:25"
+  ],
+  "note": "trailing space"
+ },
+ {
+  "id": "e06",
+  "kind": "e",
+  "q": "by small and simple things are great things brought to pass.",
+  "expect": [
+   "Alma 37:6"
+  ],
+  "note": "stray period"
+ },
+ {
+  "id": "e07",
+  "kind": "e",
+  "q": "the natural man is an enemy to god ",
+  "expect": [
+   "Mosiah 3:19"
+  ],
+  "note": "trailing space"
+ },
+ {
+  "id": "e08",
+  "kind": "e",
+  "q": "i dont know the meaning of all things",
+  "expect": [
+   "1 Nephi 11:17"
+  ],
+  "note": "dont"
+ },
+ {
+  "id": "e09",
+  "kind": "e",
+  "q": "i don’t know the meaning of all things",
+  "expect": [
+   "1 Nephi 11:17"
+  ],
+  "note": "curly apostrophe"
+ },
+ {
+  "id": "e10",
+  "kind": "e",
+  "q": "thou and thy father’s house shall be destroyed",
+  "expect": [
+   "Esther 4:14"
+  ],
+  "note": "curly apostrophe"
+ },
+ {
+  "id": "e11",
+  "kind": "e",
+  "q": "what manner of men ought ye to be?",
+  "expect": [
+   "3 Nephi 27:27"
+  ],
+  "note": "question mark"
+ },
+ {
+  "id": "e12",
+  "kind": "e",
+  "q": "wickedness never was happiness.",
+  "expect": [
+   "Alma 41:10"
+  ],
+  "note": "stray period"
+ },
+ {
+  "id": "e13",
+  "kind": "e",
+  "q": "seek ye first the kingdom of god ",
+  "expect": [
+   "Matthew 6:33",
+   "3 Nephi 13:33"
+  ],
+  "note": "trailing space"
+ },
+ {
+  "id": "e14",
+  "kind": "e",
+  "q": "trust in the lord with all thine heart.",
+  "expect": [
+   "Proverbs 3:5"
+  ],
+  "note": "stray period"
+ },
+ {
+  "id": "e15",
+  "kind": "e",
+  "q": "here am i send me",
+  "expect": [
+   "Isaiah 6:8",
+   "2 Nephi 16:8",
+   "Abraham 3:27"
+  ],
+  "note": "lower, no punct"
+ },
+ {
+  "id": "e16",
+  "kind": "e",
+  "q": "line upon line precept upon precept ",
+  "expect": [
+   "2 Nephi 28:30",
+   "D&C 98:12",
+   "D&C 128:21"
+  ],
+  "note": "trailing space"
+ },
+ {
+  "id": "e17",
+  "kind": "e",
+  "q": "where does it say great are the words of isaiah?",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": "question mark"
+ },
+ {
+  "id": "e18",
+  "kind": "e",
+  "q": "adam fell that men might be;",
+  "expect": [
+   "2 Nephi 2:25"
+  ],
+  "note": "stray semicolon"
+ },
+ {
+  "id": "e19",
+  "kind": "e",
+  "q": "be still and know that i am god",
+  "expect": [
+   "Psalm 46:10",
+   "D&C 101:16"
+  ],
+  "note": "lower, no punct"
+ },
+ {
+  "id": "e20",
+  "kind": "e",
+  "q": "for such a time as this.",
+  "expect": [
+   "Esther 4:14"
+  ],
+  "note": "stray period"
+ },
+ {
+  "id": "e21",
+  "kind": "e",
+  "q": "i can do all things through christ ",
+  "expect": [
+   "Philippians 4:13"
+  ],
+  "note": "trailing space"
+ },
+ {
+  "id": "e22",
+  "kind": "e",
+  "q": "whats the verse about faith being like a seed",
+  "expect": [
+   "Alma 32:28",
+   "Alma 32:27",
+   "Alma 32:33",
+   "Alma 32:41"
+  ],
+  "note": "whats"
+ },
+ {
+  "id": "e23",
+  "kind": "e",
+  "q": "i will go and do the things which the lord hath commanded,",
+  "expect": [
+   "1 Nephi 3:7"
+  ],
+  "note": "stray comma"
+ },
+ {
+  "id": "e24",
+  "kind": "e",
+  "q": "Great are the words of Isaiah",
+  "expect": [
+   "3 Nephi 23:1"
+  ],
+  "note": "capitals, autocapitalized"
+ }
+]

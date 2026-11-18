@@ -1031,7 +1031,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       if (sm.corrected?.length) bits.push(sm.corrected.map((c) => `${c.from} → ${c.to}`).join(", "));
       if (!sm.scope && !sm.book && state.scope === "all") bits.push("all shelves");
       const asTypedBtn = sm.corrected?.length ? el("button", { type: "button", class: "text-btn small", text: `Search “${sm.corrected.map((c) => c.from).join(" ")}” as typed`, onclick: () => { state.asTyped = true; runSearch({ typeahead: false }); } }) : null;
-      const how = `${sm.exact ? "Exact phrase found, then " : ""}${sm.semantic ? "by words and meaning" : "by words"}`;
+      const how = sm.some ? "No passage has all of these words. These have some of them" : `${sm.exact ? "Exact phrase found, then " : ""}${sm.semantic ? "by words and meaning" : "by words"}`;
       const line = el("div", { class: "smart-line" }, [
         el("span", { text: `${how.charAt(0).toUpperCase() + how.slice(1)}: ${bits.join(" · ") || data.query}` }),
         /^".*"$/.test(data.query.replace(FILTER_WORDS, " ").trim()) ? null : el("button", { type: "button", class: "text-btn small exact-words", text: "Only exact words", onclick: () => { state.q = exactQuery(data); syncControls(); runSearch({ typeahead: false }); } }),
@@ -1072,8 +1072,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const first = data.hits[0];
       // a best match is one the words found (exact, or words and meaning together), never one found by
       // meaning alone, and not when the search was really a Hebrew or Greek word (the hint line leads then)
-      const strong = first && !data.original && !data.original_hint && (first.before || first.after || first.why === "exact")
-        && (first.why === "exact" || first.why === "both" || (first.why === "words" && !sm.natural));
+      const strong = first && !data.original && !data.original_hint && (first.before || first.after || first.why === "exact" || first.why === "close")
+        && (first.why === "exact" || first.why === "close" || first.why === "both" || (first.why === "words" && !sm.natural));
       if (first && !strong && sm.natural && window.Ask?.hasKey() && !data.typeahead) frag.append(el("div", { class: "ask-line" }, [
         el("span", { text: "A question: the passages below share its words; " }),
         el("button", { type: "button", class: "text-btn small", text: "ask Claude to answer it", onclick: () => { rememberScroll(); state.browse = { tab: "ask", question: data.query }; state.q = ""; syncControls(); renderHome(); showList(); push(); } }),
@@ -1094,7 +1094,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // The best hit, in its place: the passage before and after it, and what to do with it.
   function bestCard(h) {
     const card = el("div", { class: "best", "data-doc": h.doc_id }, [
-      el("div", { class: "best-head" }, [el("span", { class: "best-label", text: h.why === "exact" ? "Best match · the phrase as typed" : "Best match" }), el("span", { class: "best-where", text: whereOf(h) })]),
+      el("div", { class: "best-head" }, [el("span", { class: "best-label", text: h.why === "exact" ? "Best match · the phrase as typed" : h.why === "close" ? "Best match · close to what you typed" : "Best match" }), el("span", { class: "best-where", text: whereOf(h) })]),
       h.before ? el("div", { class: "ctx", text: `${h.before.verse ? h.before.verse + " " : ""}${h.before.text}` }) : null,
       el("div", { class: "best-text" }, [el("b", { class: "best-cite", text: h.citation }), el("span", { html: h.snippet })]),
       h.after ? el("div", { class: "ctx", text: `${h.after.verse ? h.after.verse + " " : ""}${h.after.text}` }) : null,

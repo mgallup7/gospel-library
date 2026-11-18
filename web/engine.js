@@ -3,7 +3,7 @@
 // server does: search, document, resolve, browse. Mirrors gospel_library/search.py.
 import sqlite3InitModule from "./vendor/sqlite3.mjs";
 import * as S from "./lib/scriptures.js";
-import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections } from "./lib/query.js";
+import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections, quoteWords, quoteScore, alsoSpelled, spellOut, TINY, QUESTION_WORDS } from "./lib/query.js";
 import { esc } from "./lib/format.js";
 // Search by meaning lives in its own module; if it fails to load (a broken
 // download, an old browser), search by words carries on without it. The
@@ -807,15 +807,23 @@ async function rankedSearch(q, opts) {
   // A transliterated Hebrew or Greek word ("hesed", "logos") is looked up before the typo
   // corrector can turn it into an English word it is not; the hint leads the results.
   const hint = !typeahead && !light ? transliterationHint(raw) : null;
-  const fixed = !explicit && !asTyped && !hint ? correctTypos(raw, { typeahead }) : { text: raw, changes: [] };
+  const fixed = !explicit && !asTyped && !hint ? correctTypos(spellOut(raw), { typeahead }) : { text: raw, changes: [] };
   const n = natural ? naturalQuery(fixed.text, speakersBySurname()) : null;
-  const cq = baseQuery(natural ? termsOnly(n) : fixed.text, opts);
+  // cqUser: only what he set himself (the scope, the Filters sheet, typed syntax). cq: that, and what
+  // the words of a question were read as (a speaker, a shelf, years, "in alma"). The reading is a
+  // guess: the phrase as typed is looked for outside it, and a guess that leaves nothing is dropped.
+  const cqUser = baseQuery(natural ? termsOnly(n) : fixed.text, opts);
+  const cq = { ...cqUser, collections: [...cqUser.collections] };
+  const guessed = [];
   if (n) {
-    if (n.scope) cq.collections = scopeCollections(n.scope);
-    if (!cq.speaker && n.speaker) cq.speaker = n.speaker;
-    if (!cq.yearFrom && n.yearFrom) { cq.yearFrom = n.yearFrom; cq.yearTo = n.yearTo; }
-    if (!cq.bookSlug && n.bookSlug) cq.bookSlug = n.bookSlug;
+    if (!opts.noGuess) {
+      if (n.scope) { cq.collections = scopeCollections(n.scope); guessed.push("scope"); }
+      if (!cq.speaker && n.speaker) { cq.speaker = n.speaker; guessed.push("speaker"); }
+      if (!cq.yearFrom && n.yearFrom) { cq.yearFrom = n.yearFrom; cq.yearTo = n.yearTo; guessed.push("years"); }
+      if (!cq.bookSlug && n.bookSlug) { cq.bookSlug = n.bookSlug; guessed.push("book"); }
+    }
     cq.terms = n.terms;
+    cqUser.terms = n.terms;
   }
   const scoped = cq.collections.length > 0;
   // a reference typed ("Alma 32:21", "d&c 76 22") opens the chapter
@@ -827,11 +835,21 @@ async function rankedSearch(q, opts) {
     }
   }
   const terms = (n ? n.terms : cq.terms) || [];
-  if (!cq.match && !terms.length) return out;
+  // The line as typed, word by word (the question around it taken off): what a passage is scored against.
+  const coreLine = n && n.core && n.core.split(" ").length >= 3 ? n.core : null; // a question's own words, when enough are left to be a line
+  // a question ("what did jesus say about being perfect") is scored on what it asks about, not on its own wording
+  const asked = !!n && !n.quote && /^(?:(?:what|where|who|which|how|why|when)\s+(?:did|does|do|is|are|was|were|can|could|should|would|will|verse|scripture|passage)|find|show|give|tell|list)\b/i.test(fixed.text.trim());
+  const line = (n && n.quote) || coreLine || (asked ? n.terms.join(" ") : null) || fixed.text.replace(/\b\w+:("[^"]*"|\S+)/g, " ");
+  const typed = explicit ? [] : quoteWords(line);
+  const quoteLike = typed.length >= 3 && typed.length <= 24 && !out.jump;
+  const partial = typeahead && !/\s$/.test(String(q || "")) && typed.length > 0 && typed[typed.length - 1].length >= 2;
+  // the words shown as found, and marked in the passages: for a typed line, every word of it that carries weight
+  const shownTerms = quoteLike && !asked ? [...new Set(typed.filter((w) => !TINY.has(w) && w.length > 1))] : (n ? n.terms : cq.terms);
+  const smartOf = (extra) => ({ terms: shownTerms, speaker: cq.speaker, scope: n && n.scope && guessed.includes("scope") ? n.scope : (scope && scope !== "all" ? scope : null), book: cq.bookSlug, years: cq.yearFrom || cq.yearTo ? [cq.yearFrom || null, cq.yearTo || null] : null, corrected: fixed.changes, natural: !!n, ...extra });
+  if (!cq.match && !terms.length && !quoteLike) { out.smart = smartOf({ exact: false, semantic: false }); return out; }
   if (typeahead && cq.match) cq.match = expandPrefix(cq.match);
-  const words = cq.terms && cq.terms.length ? expandTerms(cq.terms) : [];
+  const words = expandTerms(shownTerms && shownTerms.length ? shownTerms : typed.filter((w) => !TINY.has(w)));
 
-  // 1. The exact phrase as typed, when the query is plain words (no question around them).
   const ranked = new Map();  // paragraph_id -> {hit, lex, sem, exact}
   const take = (r, slot, rank) => {
     let e = ranked.get(r.paragraph_id);
@@ -841,29 +859,55 @@ async function rankedSearch(q, opts) {
     if (slot === "exact") { e.exact = true; if (e.lex === null) e.lex = rank; }
     return e;
   };
+  // 1. The exact phrase as typed, wherever it is: under his own filters, never under a guessed one.
   const phraseWords = raw.split(/\s+/).filter(Boolean);
-  const plain = !explicit && phraseWords.length >= 2 && phraseWords.length <= 14 && !/[?]/.test(raw);
+  const plain = !explicit && phraseWords.length >= 2 && phraseWords.length <= 24;
   let exactTotal = 0;
   if (plain) {
-    const phrase = ftsPhrase(fixed.text.replace(/[^\p{L}\p{N}\s'’]/gu, " "));
-    if (phrase) {
+    const tries = [...new Set([fixed.text, raw, n && n.quote, coreLine].filter(Boolean).map((t) => ftsPhrase(String(t).replace(/[^\p{L}\p{N}\s'’]/gu, " "))).filter(Boolean))];
+    for (const phrase of tries) {
       try {
-        const rs = passageRows(phrase, cq, 30, 0);
+        const rs = passageRows(partial ? phrase + "*" : phrase, cqUser, 30, 0);
         rs.forEach((r, i) => take(r, "exact", i));
         exactTotal = rs.length;
       } catch (_) { /* a phrase the index cannot take is simply not an exact match */ }
+      if (exactTotal) break;
     }
   }
   // 2. The words: the natural tiers (phrase of the ideas, all of them, any of them) or the compiled query.
-  let lexTotal = 0;
+  let lexTotal = 0, rank = exactTotal;
+  const gather = (match, limit) => {
+    let rs;
+    try { rs = passageRows(match, cq, limit, 0); } catch (_) { return 0; }
+    for (const r of rs) { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", rank++); }
+    return rs.length;
+  };
+  // 2a. A line half remembered: its words near one another, then all of them, then all but one,
+  //     then any three of them still standing together. Each is a tight search, so it finds the
+  //     verse with one word wrong without bringing in every passage that shares a word.
+  if (quoteLike && !exactTotal) {
+    const content = [...new Set(typed.filter((w) => !TINY.has(w) && w.length > 1))];
+    const one = (w, star) => { const alts = [w, ...alsoSpelled(w)].map((a) => ftsPhrase(a)).filter(Boolean); if (star) alts[0] += "*"; return alts.length > 1 ? `(${alts.join(" OR ")})` : alts[0]; };
+    const starred = (w) => partial && w === typed[typed.length - 1];
+    if (content.length >= 2 && content.length <= 8 && !partial) gather(`NEAR(${content.map((w) => ftsPhrase(w)).join(" ")}, ${typed.length + 4})`, 40);
+    if (content.length >= 2) gather(content.map((w) => one(w, starred(w))).join(" AND "), 60);
+    if (!typeahead) {
+      if (content.length >= 3) {
+        const rare = [...content].sort((a, b) => wordCount(a) - wordCount(b));
+        for (const anchor of rare.slice(0, 2)) gather(`${one(anchor)} AND (${content.filter((w) => w !== anchor).map((w) => one(w)).join(" OR ")})`, 60);
+      }
+      if (typed.length >= 4) {
+        const grams = [];
+        for (let i = 0; i + 3 <= typed.length && grams.length < 8; i++) { const g = typed.slice(i, i + 3); if (g.some((w) => !TINY.has(w))) grams.push(ftsPhrase(g.join(" "))); }
+        if (grams.length) gather(grams.join(" OR "), 60);
+      }
+    }
+  }
   if (n) {
     const tiers = [n.phrase, n.strict, n.loose].filter(Boolean).filter((m, i, arr) => arr.indexOf(m) === i);
-    let rank = exactTotal;
     for (const match of tiers) {
-      let rs;
-      try { rs = passageRows(match, cq, typeahead ? 40 : 80, 0); } catch (_) { continue; }
-      for (const r of rs) { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", rank++); }
-      if (rank >= (typeahead ? 40 : 120)) break;
+      gather(match, typeahead ? 40 : 80);
+      if (rank >= (typeahead ? 40 : 160)) break;
     }
     // "N with these words" means all of the words: the strict tier, which the concordance opens too
     const concord = n.strict || n.phrase || n.loose || null;
@@ -873,10 +917,16 @@ async function rankedSearch(q, opts) {
   } else if (cq.match) {
     try {
       const rs = passageRows(cq.match, cq, typeahead ? 40 : 100, 0);
-      rs.forEach((r, i) => { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", exactTotal + i); });
+      rs.forEach((r) => { if (!ranked.has(r.paragraph_id) || ranked.get(r.paragraph_id).lex === null) take(r, "lex", rank++); });
       lexTotal = typeahead ? rs.length : countRows(cq.match, cq);
       out.lexical_match = cq.match;
     } catch (err) { out.error = `could not run that query (${err.message})`; return out; }
+  }
+  // Nothing has all the words: the passages with some of them, rather than an empty page.
+  let some = false;
+  if (!ranked.size && !explicit && !typeahead) {
+    const any = [...new Set(typed.filter((w) => !TINY.has(w) && w.length > 1))];
+    if (any.length >= 2 && gather(any.map((w) => ftsPhrase(w)).join(" OR "), 40)) some = true;
   }
   // the filters the words were counted under, so the concordance can count them the same way
   out.filters = { collections: cq.collections || [], speaker: cq.speaker || null, yearFrom: cq.yearFrom || null, yearTo: cq.yearTo || null, bookSlug: cq.bookSlug || null, volume: cq.volume || null, edition: cq.edition || null, excludeEdition: cq.excludeEdition || null };
@@ -889,19 +939,33 @@ async function rankedSearch(q, opts) {
       if (cands) { semantic = true; cands.forEach((r, i) => take(r, "sem", i)); }
     } catch (err) { if (!db) throw err; console.warn("meaning search failed:", err?.message); }
   }
-  // 4. Fuse: reciprocal ranks, the exact phrase on top, then the shelf and length priors.
+  // 4. Score. A line of three words or more is judged first by how much each passage looks like it
+  //    (its words, in order, together, the rare ones counting most): the phrase itself on top, a
+  //    near quotation next, then passages with the words scattered, and what only the meaning found
+  //    last. Shorter searches keep the plain fusion of the word and meaning ranks.
   const K = 60;
-  const scored = [];
+  const weights = quoteLike ? typed.map(wordWeight) : null;
+  const boost = n && n.boostBook ? n.boostBook : null;
+  let scored = [];
   for (const e of ranked.values()) {
-    let s = 0;
-    if (e.lex !== null) s += 1 / (K + e.lex);
-    if (e.sem !== null) s += 1 / (K + e.sem);
-    if (e.exact) s += 1 / K;
+    let f = 0;
+    if (e.lex !== null) f += 1 / (K + e.lex);
+    if (e.sem !== null) f += 1 / (K + e.sem);
+    if (e.exact) f += 1 / K;
+    e.ql = quoteLike ? (e.exact ? 1 : quoteScore(typed, weights, e.hit.text, partial)) : 0;
+    let s = quoteLike ? (e.exact ? 1 : 0) + e.ql * e.ql + 0.5 * (f / (3 / K)) : f;
     s *= prior(e.hit, scoped);
-    e.hit.why = e.exact ? "exact" : e.lex !== null && e.sem !== null ? "both" : e.sem !== null ? "meaning" : "words";
+    if (boost && e.hit.book_slug && (e.hit.book_slug === boost || e.hit.book_slug.endsWith("-" + boost))) s *= 1.5;
+    e.hit.why = e.exact ? "exact" : e.ql >= 0.8 ? "close" : e.lex !== null && e.sem !== null ? "both" : e.sem !== null ? "meaning" : "words";
     scored.push({ s, e });
   }
   scored.sort((a, b) => b.s - a.s || a.e.hit.paragraph_id - b.e.hit.paragraph_id);
+  // When the line itself (or nearly it) was found, the rest is kept short: the passages that still
+  // look like it, and a handful of the others.
+  if (quoteLike && scored.length && (scored[0].e.exact || scored[0].e.ql >= 0.8)) {
+    let loose = 0;
+    scored = scored.filter(({ e }) => e.exact || e.ql >= 0.45 || loose++ < 5);
+  }
   // 5. Fold hits from one chapter or talk under its best one: the rest in reading order,
   //    and the label's count is the chapter's real count of matching passages, not the sample's.
   const heads = [], byDoc = new Map();
@@ -928,8 +992,16 @@ async function rankedSearch(q, opts) {
   out.hits = heads;
   out.total = heads.length;
   out.lexical_total = Math.max(lexTotal, exactTotal);
-  out.smart = { terms: n ? n.terms : cq.terms, speaker: cq.speaker, scope: n && n.scope ? n.scope : (scope && scope !== "all" ? scope : null), book: cq.bookSlug, years: cq.yearFrom || cq.yearTo ? [cq.yearFrom || null, cq.yearTo || null] : null, corrected: fixed.changes, exact: exactTotal > 0, semantic, natural: !!n };
-  if (terms.length) out.titles = titleMatches(terms, cq);
+  out.smart = smartOf({ exact: exactTotal > 0, semantic, some });
+  // A guess that left nothing (the speaker, shelf, years or book the words were read as) is dropped,
+  // and the search is run again on the words alone.
+  if (!heads.length && guessed.length && !opts.noGuess) {
+    const again = await rankedSearch(q, { ...opts, noGuess: true });
+    if (again.hits.length) return again;
+  }
+  // titles are offered unless the line itself was found: then the passage leads and nothing stands above it
+  const lineFound = quoteLike && heads.length && (heads[0].why === "exact" || heads[0].why === "close");
+  if (terms.length && !lineFound) out.titles = titleMatches(terms, cq);
   out.original_hint = hint;
   return out;
 }
@@ -1081,13 +1153,23 @@ function correctTypos(q, { typeahead = false } = {}) {
       let known = true;
       try { known = !!row("SELECT rowid FROM paragraphs WHERE paragraphs MATCH ? LIMIT 1", [`"${w}"`]); } catch (_) { return word; }
       if (!known) {
+        // one letter off; two only in a long word that keeps its first two letters ("covid" is not "coven")
         const sw = stem(w);
-        const limit = sw.length >= 6 ? 2 : 1;
+        const limit = sw.length >= 8 ? 2 : 1;
         let bestD = limit + 1, bestCnt = 0;
         for (const [term, cnt] of loadVocab()) {
           if (term[0] !== sw[0] || Math.abs(term.length - sw.length) > limit) continue;
           const d = editDistance(sw, term);
+          if (d > limit || (d === 2 && term[1] !== sw[1])) continue;
           if (d < bestD || (d === bestD && cnt > bestCnt)) { best = term; bestD = d; bestCnt = cnt; }
+        }
+        // the vocabulary holds stems ("chariti"): the word itself is read from a passage that has it
+        if (best) {
+          try {
+            const shown = value("SELECT highlight(paragraphs, 0, '\u0001', '\u0002') FROM paragraphs WHERE paragraphs MATCH ? LIMIT 1", [`"${best}"`]);
+            const m = shown && /\u0001([^\u0002]+)\u0002/.exec(shown);
+            if (m && /^[\p{L}]+$/u.test(m[1])) best = m[1].toLowerCase();
+          } catch (_) { /* the stem will do */ }
         }
       }
       if (typoCache.size > 2000) typoCache = new Map();
@@ -1098,6 +1180,21 @@ function correctTypos(q, { typeahead = false } = {}) {
     return best;
   });
   return { text, changes };
+}
+// How rare a typed word is in the library (its count in the index), for weighing a typed line:
+// from the vocabulary when it is in memory, and a fair guess (filler low, the rest high) until then.
+let stemCache = new Map(), vocabMap = null, vocabMapOf = null, vocabTop = 1;
+function stemOf(w) { let v = stemCache.get(w); if (v === undefined) { if (stemCache.size > 4000) stemCache = new Map(); v = stem(w); stemCache.set(w, v); } return v; }
+function wordCount(w) {
+  if (!vocab) { buildVocabulary(); return QUESTION_WORDS.has(w) ? 1e6 : 100; }
+  if (vocabMapOf !== vocab) { vocabMap = new Map(vocab); vocabMapOf = vocab; vocabTop = 1; for (const [, c] of vocab) if (c > vocabTop) vocabTop = c; }
+  return vocabMap.get(stemOf(w)) || (w.length < 3 ? vocabTop : 1);
+}
+function wordWeight(w) {
+  if (TINY.has(w) || w.length < 2) return 0.15;
+  if (!vocab) { buildVocabulary(); return QUESTION_WORDS.has(w) ? 0.5 : 1; }
+  const c = wordCount(w);
+  return Math.max(0.3, Math.min(1, 1 - Math.log(c) / Math.log(vocabTop + 1) * 0.8));
 }
 const QUESTION_WORDS_LOCAL = new Set("what when where which who whom whose why how does do did the and for with from that this these those have has had can could should would will shall may might must about all any some every each pull give show find list get bring tell say said".split(" "));
 function expandTerms(terms) {
