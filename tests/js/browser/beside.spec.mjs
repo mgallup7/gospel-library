@@ -4,6 +4,8 @@ import { readerTool } from "./helpers.mjs";
 // "Open beside" in the passage sheet, two scrollers that do not move each other, the pane's own
 // arrows and Back, the reader's marks drawn in it, the divider (snaps, the edge, the saved pair
 // across a reload), Swap, close, portrait stacked, and nothing of it on a phone.
+// Split in the reader's bar: its one-time line, the picker (a typed reference, words, Recent, a
+// walk down the shelves, this chapter in Greek), the pane's menu, the reference card in Search.
 // The test scriptures carry no footnotes, so a cross-reference is planted in a verse, as links.spec does.
 const HEB = "/study/scriptures/nt/heb/11?lang=eng&id=p1#p1";
 
@@ -37,6 +39,18 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const share = (l, axis) => (axis === "w" ? l.reader.w / (l.reader.w + l.beside.w) : l.reader.h / (l.reader.h + l.beside.h));
   const near = (a, b, by = 0.02) => Math.abs(a - b) <= by;
   const grip = (page) => page.evaluate(() => { const r = document.querySelector(".bs-grip").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  const shown = (page, sel) => page.evaluate((s) => { const n = document.querySelector(s); return !!n && n.offsetParent !== null; }, sel);
+  const pressed = (page) => page.evaluate(() => document.querySelector("#reader .bs-split")?.getAttribute("aria-pressed"));
+  const texts = (page, sel) => page.evaluate((s) => [...document.querySelectorAll(s)].filter((n) => n.offsetParent !== null).map((n) => n.textContent.trim()), sel);
+  // a row of the pane's title menu, by its words
+  async function menuRow(page, re) {
+    await page.tap("#beside .bs-title");
+    await page.waitForSelector("#beside .bs-menu .bs-act", { timeout: 5000 });
+    const i = (await texts(page, "#beside .bs-menu .bs-act")).findIndex((t) => re.test(t));
+    if (i < 0) return false;
+    await page.tap(`#beside .bs-menu .bs-act >> nth=${i}`);
+    return true;
+  }
   // a finger on the grip, through the browser's own touch input (so touch-action is honored)
   async function drag(page, to, { hold = null } = {}) {
     const cdp = await page.context().newCDPSession(page);
@@ -54,7 +68,69 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   // ---- the iPad, landscape ---------------------------------------------------
   {
     const { ctx, page, ids } = await boot({ width: 1180, height: 820 });
+    await openMain(page, ids.heb, null, /Hebrews 11/);
     await openMain(page, ids.alma, "p21", /Alma 32/);
+
+    // Split in the reader's bar: there to be seen, with its word and, once, a line that says what it is for
+    const sb = await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar .bs-split"); if (!b || b.offsetParent === null) return null; const r = b.getBoundingClientRect(), w = b.querySelector(".w"); const aa = document.querySelector("#reader .reader-bar .size-btns, #reader .reader-bar .size-pop"); return { w: r.width, h: r.height, word: w && w.offsetParent !== null ? w.textContent : "", beforeAa: !!aa && !!(b.compareDocumentPosition(aa) & Node.DOCUMENT_POSITION_FOLLOWING) }; });
+    check(sb && sb.word === "Split" && sb.w >= 40 && sb.h >= 40 && sb.beforeAa, `the Split button in the reader's bar: ${JSON.stringify(sb)}`);
+    check((await pressed(page)) === "false", "Split shows as pressed with no second pane");
+    check((await texts(page, ".bs-coach")).join("|") === "New: tap Split to read two books side by side", `the first-run line reads ${JSON.stringify(await texts(page, ".bs-coach"))}`);
+    await page.screenshot({ path: OUT + "00-split-button.png" });
+    // Split: the pane opens with the picker in place of a page; the line goes for good
+    await page.tap("#reader .bs-split");
+    await page.waitForSelector("#beside .bs-pick .bs-q", { timeout: 5000 }).catch(() => check(false, "Split did not open the picker"));
+    await page.waitForSelector("#beside .bs-pick .bs-row .go", { timeout: 5000 }).catch(() => check(false, "the picker did not list the shelves"));
+    let pl = await layout(page);
+    check(pl.open && pl.beside && pl.reader && !pl.list && !(await page.$("#beside .doc")), "Split: the pane with the picker and no page, beside the reader");
+    check((await pressed(page)) === "true", "Split does not show as pressed while the pane is open");
+    check(!(await page.$(".bs-coach")) && (await page.evaluate(() => GL.store.get("besideCoach"))) === 1, "the first-run line stayed after a tap");
+    check(/Alma 32/.test(await h1(page, "#reader")), "Split moved the reader");
+    // Recent: the places read, the page in the reader left out
+    const rec = await texts(page, "#beside .bs-home .bs-row .t");
+    check(rec.includes("Hebrews 11") && !rec.includes("Alma 32") && rec.includes("Scriptures"), `the picker's Recent and shelves read ${JSON.stringify(rec)}`);
+    check(!(await page.$("#beside .bs-lang")), "This chapter in Greek is offered for a chapter that is not in the Bible");
+    await page.screenshot({ path: OUT + "00b-picker.png" });
+    // a reference typed: the card, and the chapter beside at that verse
+    await page.fill("#beside .bs-q", "Hebrews 11:3");
+    await page.waitForSelector("#beside .bs-found .bs-jump", { timeout: 8000 }).catch(() => check(false, "a typed reference did not give its card"));
+    check(/Hebrews 11:3/.test((await texts(page, "#beside .bs-jump")).join("")), "the picker's card does not name the reference");
+    await page.tap("#beside .bs-found .bs-jump");
+    check(await waitTitle(page, "#beside", /Hebrews 11/), "the reference card did not open Hebrews 11 beside");
+    check(await page.evaluate(() => document.querySelector("#beside .doc #p3")?.classList.contains("is-target")), "the typed verse is not marked in the pane");
+    check(!(await page.$("#beside .bs-pick")) && /Alma 32/.test(await h1(page, "#reader")), "the picker stayed, or the reader moved, after a choice");
+    // Open something else, from the pane's title: the picker over the page, and a way back to it
+    check(await menuRow(page, /Open something else/), "the pane's menu has no Open something else");
+    await page.waitForSelector("#beside .bs-pick .bs-up", { timeout: 5000 }).catch(() => check(false, "Open something else did not raise the picker"));
+    check(/Back to Hebrews 11/.test((await texts(page, "#beside .bs-pick .bs-up")).join("")), "the picker over a page does not offer the way back to it");
+    await page.tap("#beside .bs-pick .bs-up");
+    check(!(await page.$("#beside .bs-pick")) && /Hebrews 11/.test(await h1(page, "#beside")), "Back in the picker did not return to the page");
+    // a walk down the shelves: Scriptures, a book, a chapter, each one tap
+    await menuRow(page, /Open something else/);
+    await page.waitForSelector("#beside .bs-home .bs-row .go", { timeout: 5000 });
+    const si = (await texts(page, "#beside .bs-home .bs-row .t")).indexOf("Scriptures");
+    await page.tap(`#beside .bs-home .bs-row >> nth=${si}`);
+    await page.waitForSelector("#beside .bs-pick .chip", { timeout: 5000 }).catch(() => check(false, "the Scriptures shelf did not list its books"));
+    const ei = (await texts(page, "#beside .bs-pick .chip")).indexOf("Ether");
+    await page.tap(`#beside .bs-pick .chip >> nth=${ei}`);
+    await page.waitForSelector("#beside .bs-pick .chapters button", { timeout: 5000 }).catch(() => check(false, "a book did not list its chapters"));
+    check(/Scriptures/.test((await texts(page, "#beside .bs-pick .bs-up")).join("")), "a book's chapters have no chevron back to the shelf");
+    await page.tap("#beside .bs-pick .chapters button >> nth=11");
+    check(await waitTitle(page, "#beside", /Ether 12/), "a chapter chosen from the shelves did not open beside");
+    check(!!(await page.$("#beside .bs-back")), "a page chosen over another left no Back in the pane");
+    await page.screenshot({ path: OUT + "00c-two-books.png" });
+    // Split again: one pane, the list back, nothing saved
+    await page.tap("#reader .bs-split");
+    await page.waitForTimeout(400);
+    pl = await layout(page);
+    check(!pl.open && !pl.beside && pl.list && pl.reader && pl.saved === null && (await pressed(page)) === "false", "Split with the pane open did not return to one pane");
+    // the page that was closed is first in Recent the next time
+    await page.tap("#reader .bs-split");
+    await page.waitForSelector("#beside .bs-home .bs-row .go", { timeout: 5000 });
+    check((await texts(page, "#beside .bs-home .bs-row .t"))[0] === "Ether 12", "the page closed is not first in Recent");
+    await page.tap("#beside .bs-close");
+    await page.waitForTimeout(400);
+
     const before = await layout(page);
     check(!before.open && before.list && !before.beside, "before: the list and the reader, no second pane");
     // the way in: a cross-reference, its sheet, Open beside
@@ -227,12 +303,53 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(700);
     l = await layout(page);
     check(!l.open && !l.beside && l.saved === null, "the Deck tab did not close the pane");
+    // Search: the reference card has Open beside under it
+    await page.tap("#searchTab");
+    await page.fill("#q", "Hebrews 11:1");
+    await page.waitForSelector("#list .jump + .bs-jump-beside", { timeout: 8000 }).catch(() => check(false, "the reference card in Search has no Open beside"));
+    await page.tap("#list .bs-jump-beside");
+    check(await waitTitle(page, "#beside", /Hebrews 11/), "Open beside under the reference card did not open the pane");
+    check(await page.evaluate(() => document.querySelector("#beside .doc #p1")?.classList.contains("is-target")), "the card's verse is not marked in the pane");
     await ctx.close();
   }
 
   // ---- the iPad, portrait: one over the other ----------------------------------
   {
     const { ctx, page, ids } = await boot({ width: 820, height: 1180 });
+    // Split, portrait: this chapter in Greek under the English one, words typed, the pane's page to the reader
+    await openMain(page, ids.heb, null, /Hebrews 11/);
+    check(await shown(page, "#reader .reader-bar .bs-split"), "portrait: no Split button in the reader's bar");
+    await page.tap("#reader .bs-split");
+    await page.waitForSelector("#beside .bs-lang", { timeout: 8000 }).catch(() => check(false, "portrait: the picker does not offer this chapter in Greek"));
+    check(/This chapter in Greek/.test((await texts(page, "#beside .bs-lang")).join("")), "portrait: the Greek row is misnamed");
+    let pl = await layout(page);
+    check(pl.open && pl.beside && pl.reader && pl.beside.y > pl.reader.y, "portrait: the picker's pane is not under the reader");
+    await page.tap("#beside .bs-lang");
+    check(await waitTitle(page, "#beside", /Hebrews 11/), "portrait: this chapter in Greek did not open the chapter beside");
+    await page.waitForSelector("#beside .doc .orig", { timeout: 8000 }).catch(() => check(false, "portrait: the Greek tiles did not show in the pane"));
+    check((await page.evaluate(() => document.querySelectorAll("#reader .doc .orig").length)) === 0 && (await page.evaluate(() => GL.store.get("orig"))) !== true, "the pane's Greek turned the reader's on");
+    await page.screenshot({ path: OUT + "06a-greek-beside.png" });
+    check(await menuRow(page, /Hide the Greek here/), "the pane's menu has no switch for the Greek");
+    await page.waitForFunction(() => !document.querySelector("#beside .doc .orig"), null, { timeout: 5000 }).catch(() => check(false, "Hide the Greek here left the tiles"));
+    // words: the first few passages, one of them opened beside
+    await menuRow(page, /Open something else/);
+    await page.fill("#beside .bs-q", "faith hope charity");
+    await page.waitForSelector("#beside .bs-found .bs-hit", { timeout: 8000 }).catch(() => check(false, "words typed in the picker found no passages"));
+    const nHits = await page.evaluate(() => document.querySelectorAll("#beside .bs-found .bs-hit").length);
+    check(nHits >= 1 && nHits <= 5, `the picker shows ${nHits} passages for words`);
+    const cite = (await texts(page, "#beside .bs-found .bs-hit .cite"))[0] || "";
+    await page.tap("#beside .bs-found .bs-hit >> nth=0");
+    const chap = cite.replace(/:\d+.*$/, "");
+    check(await waitTitle(page, "#beside", new RegExp(chap.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))), `a passage chosen (${cite}) did not open beside`);
+    // Open in the main page: the reader takes the pane's page, the pane stays
+    check(await menuRow(page, /Open in the main page/), "the pane's menu has no Open in the main page");
+    check(await waitTitle(page, "#reader", new RegExp(chap.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))), "Open in the main page did not bring the page to the reader");
+    check((await layout(page)).open, "Open in the main page closed the pane");
+    await page.tap("#reader .bs-split");
+    await page.waitForTimeout(400);
+    pl = await layout(page);
+    check(!pl.open && pl.saved === null, "portrait: Split did not close the pane");
+
     await openMain(page, ids.alma, "p21", /Alma 32/);
     await plant(page);
     await page.tap("#inj");
@@ -268,6 +385,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#sheet .peek-row .primary", { timeout: 8000 });
     check(!(await page.$("#sheet .beside-btn")), "the phone's passage sheet offers Open beside");
     check((await page.evaluate((id) => Beside.open(id, "p1"), ids.heb)) === false, "Beside.open should refuse on a phone");
+    check(!(await shown(page, ".bs-split")) && !(await shown(page, ".bs-split-wrap")) && !(await page.$(".bs-coach")), "the phone shows the Split button or its line");
+    check((await page.evaluate(() => Beside.pick())) === false && (await page.evaluate((id) => Beside.jumpButton({ doc_id: id, label: "Hebrews 11" }), ids.heb)) === null, "the picker or the card's Open beside is offered on a phone");
     await page.waitForTimeout(300);
     check(!(await page.$("#beside")) && !(await page.evaluate(() => document.body.classList.contains("beside-open"))), "something of the second pane shows on the phone");
     // a pair saved on this device at iPad size does not show at phone size either
