@@ -30,6 +30,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h14M14 4l4 4-4 4"/><path d="M20 16H6M10 12l-4 4 4 4"/></svg>',
     prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
     down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+    out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.4"/><path d="M15 12H7.5M10.5 9l-3 3 3 3"/></svg>',
     find: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
     next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>',
     note: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v12H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>',
@@ -323,6 +324,8 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     const lang = langOf(doc);
     const acts = el("div", { class: "bs-acts" }, [
       act(I.find, "Open something else", openPicker),
+      // this page in the reader, by the app's own open (so Back returns from it); the pane stays
+      act(I.out, "Open in the main page", () => { const at = topUnit(scroller, cur.body, 0); GL.openDoc(cur.doc.id, at ? at.pid : null); }),
       lang ? act(`<b>${lang === "Greek" ? "α" : "א"}</b>`, cur.body.classList.contains("with-orig") ? `Hide the ${lang} here` : `Show the ${lang} here`, () => setOrig(!cur.body.classList.contains("with-orig"))) : null,
     ]);
     const can = doc.collection === "scriptures" ? !!doc.book_slug : !!(doc.book && doc.book.uri);
@@ -714,6 +717,11 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     if (!can() || !res || !res.doc_id) return null;
     return el("button", { type: "button", class: "beside-btn", onclick: () => { GL.closeSheet(); open(res.doc_id, res.pid || null); } }, [el("span", { class: "g", html: I.split }), "Open beside"]);
   }
+  // For the reference card in the search results: "Open beside" under it, on an iPad
+  function jumpButton(j) {
+    if (!can() || !j || !j.doc_id) return null;
+    return el("button", { type: "button", class: "beside-btn bs-jump-beside", "aria-label": `Open ${j.label || "this"} beside`, onclick: () => open(j.doc_id, j.pid || null) }, [el("span", { class: "g", html: I.split }), "Open beside"]);
+  }
   async function open(id, pid = null) {
     if (!can()) return false;
     if (!cur) { ratio = 0.5; origOn = false; }
@@ -738,5 +746,5 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   window.addEventListener("pagehide", () => { if (cur) save(); });
   document.addEventListener("visibilitychange", () => { if (cur && document.visibilityState === "hidden") save(); });
 
-  window.Beside = { can, button, open, restore, close: () => close(), swap, pick: () => openPicker(), get isOpen() { return up(); }, get doc() { return cur ? cur.doc : null; } };
+  window.Beside = { can, button, jumpButton, open, restore, close: () => close(), swap, pick: () => openPicker(), get isOpen() { return up(); }, get doc() { return cur ? cur.doc : null; } };
 })();
