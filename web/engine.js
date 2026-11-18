@@ -950,9 +950,10 @@ async function rankedSearch(q, opts) {
       const cands = await semanticCandidates(fixed.text, cq, 150);
       if (!db) throw new Error("the library was replaced during the search");
       if (cands) { semantic = true; cands.forEach((r, i) => take(r, "sem", i)); }
-      // The verses nearest in meaning are ranked among themselves as well: beside half a million
+      // For a line or a question (not a word or two, where the words themselves should lead), the
+      // verses nearest in meaning are ranked among themselves as well: beside half a million
       // paragraphs of talks and manuals, the verse a paraphrase points at would rarely make the cut.
-      if (cands && !cq.collections.length && !cq.speaker && !cq.yearFrom && !cq.bookSlug && !cq.volume && !cq.edition) {
+      if (cands && quoteLike && !cq.collections.length && !cq.speaker && !cq.yearFrom && !cq.bookSlug && !cq.volume && !cq.edition) {
         const verses = await semanticCandidates(fixed.text, { ...cq, collections: ["scriptures"] }, 40);
         if (!db) throw new Error("the library was replaced during the search");
         if (verses) verses.forEach((r, i) => take(r, "sems", i));
