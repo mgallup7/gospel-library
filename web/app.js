@@ -2358,7 +2358,15 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
     const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
-    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? (marks.some((m) => m.kind === "phrase" || m.kind === "word") ? `${marks.length} ${marks.length === 1 ? "mark" : "marks"}` : `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked`) : "Nothing marked yet" }), allBtn]));
+    // Newest first under Today, This week and Earlier, each row with its date, so last week's
+    // mark is found by when it was made; the same rows under their books is one tap away.
+    let byBook = store.get("marksBy") === "book";
+    const byBtn = el("button", { type: "button", class: "text-btn small mk-by", hidden: true, onclick: () => { byBook = !byBook; store.set("marksBy", byBook ? "book" : "date"); draw(); } });
+    const stampOf = (m) => m.updated || m.created || 0;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const whenOf = (m) => { const t = stampOf(m); return !t ? "Earlier" : t >= today.getTime() ? "Today" : t >= today.getTime() - 6 * 86400000 ? "This week" : "Earlier"; };
+    const dateOf = (m) => { const t = stampOf(m); if (!t) return ""; const d = new Date(t); return d.toLocaleDateString([], d.getFullYear() === today.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" }); };
+    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? (marks.some((m) => m.kind === "phrase" || m.kind === "word") ? `${marks.length} ${marks.length === 1 ? "mark" : "marks"}` : `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked`) : "Nothing marked yet" }), el("span", { class: "mk-head-acts" }, [byBtn, allBtn])]));
     const list = el("div", { class: "mark-list" });
     // A phrase reads as its words in quotation marks under its verse; a Hebrew or Greek word as
     // its verse and the word with its meaning ("Revelation 3:16, χλιαρὸς lukewarm").
@@ -2381,7 +2389,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         if (d && b && !b.disabled && !b.classList.contains("on") && !d.classList.contains("with-orig")) b.click();
       }
     } }, [
-      el("span", { class: "mk-cite", text: where(m) }),
+      el("span", { class: "mk-top" }, [el("span", { class: "mk-cite", text: where(m) }), el("span", { class: "mk-date", text: dateOf(m) })]),
       el("span", { class: "mk-text", text: said(m) }),
       m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
     ].filter(Boolean));
@@ -2392,7 +2400,16 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const shown = hits.slice(0, allMarksShown ? hits.length : 10);
       allBtn.hidden = hits.length <= 10;
       allBtn.textContent = allMarksShown ? "Latest only" : `All ${hits.length}`;
+      byBtn.hidden = marks.length <= 3;
+      byBtn.textContent = byBook ? "By date" : "By book";
+      byBtn.title = byBook ? "Newest first, under Today, This week and Earlier" : "Under a heading for each book";
       if (!shown.length) { list.replaceChildren(el("p", { class: "studies-lede mk-none", text: "No highlight or note matches." })); return; }
+      if (!byBook) {
+        const whens = new Map();
+        for (const m of shown) { const w = whenOf(m); if (!whens.has(w)) whens.set(w, []); whens.get(w).push(m); }
+        list.replaceChildren(...[...whens].flatMap(([w, ms]) => [el("h3", { class: "mk-book mk-when", text: w }), ...ms.map(row)]));
+        return;
+      }
       const books = new Map();
       for (const m of shown) { const b = markBook(m); if (!books.has(b)) books.set(b, []); books.get(b).push(m); }
       if (books.size < 2) { list.replaceChildren(...shown.map(row)); return; }

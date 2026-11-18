@@ -793,6 +793,11 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .mark-row.hl-y { border-left-color: var(--hl-y-dot); } .mark-row.hl-g { border-left-color: var(--hl-g-dot); } .mark-row.hl-b { border-left-color: var(--hl-b-dot); } .mark-row.hl-p { border-left-color: var(--hl-p-dot); }
 .mark-row:active { background: var(--chrome); }
 .mk-cite { font: 600 var(--ui-13) var(--sans); color: var(--ink-2); }
+/* a row's first line: where it is, and at the end of the line the day it was made */
+.mk-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%; }
+.mk-top .mk-cite { min-width: 0; }
+.mk-date { flex: none; font: var(--ui-12) var(--sans); color: var(--ink-3); white-space: nowrap; }
+.mk-head-acts { display: inline-flex; align-items: center; gap: 4px; }
 .mk-text { font: calc(var(--reading-size) - 2px)/1.45 var(--serif); }
 /* a Hebrew or Greek word: the word itself leads, in the ink of a passage; what it is sits small under it */
 .mark-row.mk-word .mk-cite { font-size: var(--ui-15); color: var(--ink); }
@@ -1090,8 +1095,13 @@ body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
 .select-bar .sel-x svg { width: 20px; height: 20px; }
 .select-bar .sel-x:active { background: var(--chrome-2); }
 @media (max-width: 759px), (max-height: 499px) {
-  .select-bar .sel-x { display: inline-flex; }
+  .select-bar .sel-x { display: inline-flex; margin-left: -8px; }
   .select-bar .clear-sel { display: none; }
+  /* the x takes its 44pt from the others' padding, not from the dots: each dot keeps its own 44pt */
+  #reader .select-bar { gap: 2px; padding-left: calc(10px + var(--safe-left)); padding-right: calc(6px + var(--safe-right)); }
+  .select-bar .text-btn { padding: 0 6px; }
+  .select-bar .primary { padding: 0 10px; }
+  .select-bar .hl-dots { margin: 0 2px; }
 }
 .select-bar .text-btn { white-space: nowrap; height: 44px; }
 /* what does not fit on one row (Present, Copy, Clear) folds behind one "more" button (app.js fitSelectBar) */

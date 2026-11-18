@@ -88,8 +88,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     });
     await box(page, ""); await page.waitForTimeout(300);
     await page.click("#homeBody .own-row:has-text('Highlights and notes')"); await page.waitForSelector(".mk-find");
-    const count = () => page.evaluate(() => ({ rows: document.querySelectorAll(".mark-row").length, books: document.querySelectorAll(".mk-book").length, scopes: getComputedStyle(document.querySelector(".scope-row")).display }));
+    const count = () => page.evaluate(() => ({ rows: document.querySelectorAll(".mark-row").length, books: document.querySelectorAll(".mk-book:not(.mk-when)").length, whens: [...document.querySelectorAll(".mk-when")].map((h) => h.textContent).join(","), dates: [...document.querySelectorAll(".mark-row .mk-date")].filter((d) => /^[A-Z][a-z]{2} \d{1,2}$/.test(d.textContent)).length, scopes: getComputedStyle(document.querySelector(".scope-row")).display }));
     let c = await count();
+    // newest first under the day they were made, each row with its date; by book is one tap away
+    if (c.rows !== 10 || c.whens !== "Today" || c.dates !== 10 || c.books !== 0) errors.push(`${name} marks: ${c.rows} rows (${c.dates} dated) under "${c.whens}", not the latest 10 under Today`);
+    await page.click(".mk-by"); await page.waitForTimeout(150);
+    c = await count();
     if (c.rows !== 10 || c.books !== 3) errors.push(`${name} marks: ${c.rows} rows under ${c.books} headings, not the latest 10 under 3`);
     if (c.scopes !== "none") errors.push(`${name}: the scope strip shows on My studies`);
     await page.fill(".mk-find", "seed"); await page.waitForTimeout(150);
