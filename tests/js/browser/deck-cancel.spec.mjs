@@ -118,6 +118,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check((await state()).items.map((i) => i.id).join("") === "acb" && /Moved down/.test(await toastText()), "Move down should move the card and say so");
     await page.evaluate(() => window.Deck.undo());
     check((await state()).items.map((i) => i.id).join("") === "abc", "Deck.undo() should put the card back");
+    await page.keyboard.press("Escape"); await settle(); // the menu stays up after a move; a tap elsewhere now only closes it, so it is closed here first
 
     // ---- link mode can always be left: the banner stays in view, and Cancel, Escape, a tap on
     // empty board and Back each leave it, with no connection made
