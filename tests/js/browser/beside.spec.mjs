@@ -4,7 +4,7 @@ import { readerTool } from "./helpers.mjs";
 // "Open beside" in the passage sheet, two scrollers that do not move each other, the pane's own
 // arrows and Back, the reader's marks drawn in it, the divider (snaps, the edge, the saved pair
 // across a reload), Swap, close, portrait stacked, and nothing of it on a phone.
-// Split in the reader's bar: its one-time line, the picker (a typed reference, words, Recent, a
+// Split in the reader's bar (where the bar has room) and in the rail (always): its one-time line, the picker (a typed reference, words, Recent, a
 // walk down the shelves, this chapter in Greek), the pane's menu, the reference card in Search.
 // The test scriptures carry no footnotes, so a cross-reference is planted in a verse, as links.spec does.
 const HEB = "/study/scriptures/nt/heb/11?lang=eng&id=p1#p1";
@@ -75,7 +75,12 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const sb = await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar .bs-split"); if (!b || b.offsetParent === null) return null; const r = b.getBoundingClientRect(), w = b.querySelector(".w"); const aa = document.querySelector("#reader .reader-bar .size-btns, #reader .reader-bar .size-pop"); return { w: r.width, h: r.height, word: w && w.offsetParent !== null ? w.textContent : "", beforeAa: !!aa && !!(b.compareDocumentPosition(aa) & Node.DOCUMENT_POSITION_FOLLOWING) }; });
     check(sb && sb.word === "Split" && sb.w >= 40 && sb.h >= 40 && sb.beforeAa, `the Split button in the reader's bar: ${JSON.stringify(sb)}`);
     check((await pressed(page)) === "false", "Split shows as pressed with no second pane");
-    check((await texts(page, ".bs-coach")).join("|") === "New: tap Split to read two books side by side", `the first-run line reads ${JSON.stringify(await texts(page, ".bs-coach"))}`);
+    // the same button in the rail, under Ask, whatever the bar has room for
+    const rail = await page.evaluate(() => { const b = document.querySelector("#tabs .bs-rail"), ask = document.querySelector("#askBtn"); if (!b || b.offsetParent === null) return null; const r = b.getBoundingClientRect(); return { w: r.width, h: r.height, word: b.querySelector(".tab-lb").textContent, underAsk: r.top >= ask.getBoundingClientRect().bottom, pressed: b.getAttribute("aria-pressed") }; });
+    check(rail && rail.word === "Split" && rail.w >= 44 && rail.h >= 44 && rail.underAsk && rail.pressed === "false", `the Split button in the rail: ${JSON.stringify(rail)}`);
+    await page.waitForSelector(".bs-coach", { timeout: 5000 }).catch(() => {});
+    const line = await page.evaluate(() => { const n = document.querySelector(".bs-coach"), b = document.querySelector("#reader .bs-split"); if (!n || n.hidden) return null; const r = n.getBoundingClientRect(), br = b.getBoundingClientRect(); return { text: n.textContent, under: r.top >= br.bottom && r.top - br.bottom < 30 && r.right > br.left && r.left < br.right }; });
+    check(line && line.text === "New: tap Split to read two books side by side" && line.under, `the first-run line under the Split button: ${JSON.stringify(line)}`);
     await page.screenshot({ path: OUT + "00-split-button.png" });
     // Split: the pane opens with the picker in place of a page; the line goes for good
     await page.tap("#reader .bs-split");
@@ -83,7 +88,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#beside .bs-pick .bs-row .go", { timeout: 5000 }).catch(() => check(false, "the picker did not list the shelves"));
     let pl = await layout(page);
     check(pl.open && pl.beside && pl.reader && !pl.list && !(await page.$("#beside .doc")), "Split: the pane with the picker and no page, beside the reader");
-    check((await pressed(page)) === "true", "Split does not show as pressed while the pane is open");
+    check((await pressed(page)) === "true" && (await page.evaluate(() => document.querySelector("#tabs .bs-rail").getAttribute("aria-pressed"))) === "true", "Split does not show as pressed while the pane is open");
+    // the reader's bar, now half as wide, folds as it would without the button and does not overflow
+    check((await page.evaluate(() => { const b = document.querySelector("#reader .reader-bar"); return b.scrollWidth - b.clientWidth; })) <= 1, "the reader's bar overflows beside the pane");
     check(!(await page.$(".bs-coach")) && (await page.evaluate(() => GL.store.get("besideCoach"))) === 1, "the first-run line stayed after a tap");
     check(/Alma 32/.test(await h1(page, "#reader")), "Split moved the reader");
     // Recent: the places read, the page in the reader left out
@@ -119,8 +126,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(await waitTitle(page, "#beside", /Ether 12/), "a chapter chosen from the shelves did not open beside");
     check(!!(await page.$("#beside .bs-back")), "a page chosen over another left no Back in the pane");
     await page.screenshot({ path: OUT + "00c-two-books.png" });
-    // Split again: one pane, the list back, nothing saved
-    await page.tap("#reader .bs-split");
+    // Split again (the rail's, which is always there): one pane, the list back, nothing saved
+    await page.tap("#tabs .bs-rail");
     await page.waitForTimeout(400);
     pl = await layout(page);
     check(!pl.open && !pl.beside && pl.list && pl.reader && pl.saved === null && (await pressed(page)) === "false", "Split with the pane open did not return to one pane");
@@ -318,8 +325,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const { ctx, page, ids } = await boot({ width: 820, height: 1180 });
     // Split, portrait: this chapter in Greek under the English one, words typed, the pane's page to the reader
     await openMain(page, ids.heb, null, /Hebrews 11/);
-    check(await shown(page, "#reader .reader-bar .bs-split"), "portrait: no Split button in the reader's bar");
-    await page.tap("#reader .bs-split");
+    check(await shown(page, "#tabs .bs-rail"), "portrait: no Split button in the rail");
+    await page.tap("#tabs .bs-rail");
     await page.waitForSelector("#beside .bs-lang", { timeout: 8000 }).catch(() => check(false, "portrait: the picker does not offer this chapter in Greek"));
     check(/This chapter in Greek/.test((await texts(page, "#beside .bs-lang")).join("")), "portrait: the Greek row is misnamed");
     let pl = await layout(page);
@@ -345,7 +352,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(await menuRow(page, /Open in the main page/), "the pane's menu has no Open in the main page");
     check(await waitTitle(page, "#reader", new RegExp(chap.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))), "Open in the main page did not bring the page to the reader");
     check((await layout(page)).open, "Open in the main page closed the pane");
-    await page.tap("#reader .bs-split");
+    await page.tap("#tabs .bs-rail");
     await page.waitForTimeout(400);
     pl = await layout(page);
     check(!pl.open && pl.saved === null, "portrait: Split did not close the pane");
@@ -385,7 +392,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#sheet .peek-row .primary", { timeout: 8000 });
     check(!(await page.$("#sheet .beside-btn")), "the phone's passage sheet offers Open beside");
     check((await page.evaluate((id) => Beside.open(id, "p1"), ids.heb)) === false, "Beside.open should refuse on a phone");
-    check(!(await shown(page, ".bs-split")) && !(await shown(page, ".bs-split-wrap")) && !(await page.$(".bs-coach")), "the phone shows the Split button or its line");
+    check(!(await shown(page, ".bs-split")) && !(await shown(page, ".bs-split-wrap")) && !(await shown(page, ".bs-rail")) && !(await page.$(".bs-coach")), "the phone shows the Split button or its line");
     check((await page.evaluate(() => Beside.pick())) === false && (await page.evaluate((id) => Beside.jumpButton({ doc_id: id, label: "Hebrews 11" }), ids.heb)) === null, "the picker or the card's Open beside is offered on a phone");
     await page.waitForTimeout(300);
     check(!(await page.$("#beside")) && !(await page.evaluate(() => document.body.classList.contains("beside-open"))), "something of the second pane shows on the phone");

@@ -690,13 +690,50 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
 
   // ---- Split, in the reader's bar ------------------------------------------------
   // The reader draws a new bar with every page. Each one is given the button as it appears
-  // (before the text sizes, or at the end of a study's bar); the app's own watch of the bar
-  // then refits it. On a phone the button is there and not shown (app.css).
+  // (before the text sizes, or at the end of a study's bar). On a phone the button is there
+  // and not shown (app.css).
+  //
+  // The app folds its bar by measuring what the bar needs (fitReaderBar). The button is left
+  // out of that measure (app.css), so the bar folds exactly as it did before there was a
+  // button; then, each time the app has fitted the bar, the button takes what room is left:
+  // the sign with its word, or the sign alone. With no room for that either it leaves the bar,
+  // and a bar that has folded its sizes into the Aa menu has a row for it there. (Squeezing it
+  // in was tried: the bar's other buttons shrink under 44pt with it.)
+  //
+  // A full bar is common (a Bible chapter with its Greek switch beside the list), so the same
+  // button is also in the rail, under Ask, where there is always room: that one never moves.
   const readerEl = document.querySelector("#reader");
+  const toggleSplit = () => { if (up()) close(); else openPicker(); };
   function splitButton() {
-    return el("span", { class: "bs-split-wrap" }, [el("button", { type: "button", class: "icon-btn bs-split", "aria-pressed": String(up()), "aria-label": "Split: a second page beside this one", title: "Read two pages side by side", onclick: () => { if (up()) close(); else openPicker(); } }, [el("span", { class: "g", html: I.split }), el("span", { class: "w", text: "Split" })])]);
+    return el("span", { class: "bs-split-wrap" }, [el("button", { type: "button", class: "icon-btn bs-split", "aria-pressed": String(up()), "aria-label": "Split: a second page beside this one", title: "Read two pages side by side", onclick: toggleSplit }, [el("span", { class: "g", html: I.split }), el("span", { class: "w", text: "Split" })])]);
   }
-  function pressSplit() { for (const b of document.querySelectorAll(".bs-split")) b.setAttribute("aria-pressed", String(up())); }
+  function pressSplit() {
+    for (const b of document.querySelectorAll(".bs-split, .bs-rail")) b.setAttribute("aria-pressed", String(up()));
+    for (const t of document.querySelectorAll(".menu-split .bs-mw")) t.textContent = up() ? "Close the second page" : "Split: two pages side by side";
+  }
+  // as the app measures: where the bar's last piece ends, against its own padding
+  function barOver(rb) {
+    const edge = rb.getBoundingClientRect().right - (parseFloat(getComputedStyle(rb).paddingRight) || 0);
+    let right = -Infinity;
+    for (const c of rb.children) { const r = c.getBoundingClientRect(); if (r.width > 0) right = Math.max(right, r.right); }
+    return right > edge + 0.5;
+  }
+  let fitWatch = null;
+  function fitSplit(rb) {
+    const wrap = rb.querySelector(".bs-split-wrap");
+    if (!wrap || !rb.isConnected || rb.offsetParent === null) return;
+    rb.classList.remove("bs-icon", "bs-away");
+    if (getComputedStyle(wrap).display === "none") { if (fitWatch) fitWatch.takeRecords(); return; } // a phone: no button to fit
+    rb.classList.add("measuring", "bs-fit");
+    if (barOver(rb)) {
+      rb.classList.add("bs-icon");
+      if (barOver(rb)) rb.classList.add("bs-away");
+    }
+    rb.classList.remove("measuring", "bs-fit");
+    if (fitWatch) fitWatch.takeRecords(); // these changes of class are this code's own
+    placeCoach();
+  }
+  try { fitWatch = new MutationObserver((all) => { for (const rb of new Set(all.map((r) => r.target))) fitSplit(rb); }); } catch (_) {}
   function onReader() {
     const r = GL.reading;
     if (r && r.open) remember(r.doc);
@@ -705,26 +742,50 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     const before = rb.querySelector(".size-btns") || rb.querySelector(".pane-switch-slot");
     const wrap = splitButton();
     if (before && before.parentNode === rb) before.before(wrap); else rb.append(wrap);
-    coach(wrap);
+    // the row in the Aa menu, for a bar with no room left at all
+    const menuEl = rb.querySelector(".size-menu");
+    if (menuEl) menuEl.prepend(el("button", { type: "button", role: "menuitem", class: "menu-split", onclick: () => { menuEl.hidden = true; rb.querySelector(".size-pop-btn")?.setAttribute("aria-expanded", "false"); toggleSplit(); } }, [el("span", { class: "g", html: I.split }), el("span", { class: "bs-mw", text: up() ? "Close the second page" : "Split: two pages side by side" })]));
+    if (fitWatch) fitWatch.observe(rb, { attributes: true, attributeFilter: ["class"] });
+    requestAnimationFrame(() => { fitSplit(rb); coach(wrap); });
   }
   // The first time the button is there to be seen, one line under it says what it is for. Any
-  // tap takes the line away for good (the tap still does what it was for).
-  let coached = false;
+  // tap takes the line away for good (the tap still does what it was for). The line is on the
+  // body, not in the bar, so its coming and going is nothing the bar has to be refitted for.
+  // It hangs under the bar's button while that one is showing, and otherwise points at the rail's.
+  let coachEl = null, coachFor = null;
+  function placeCoach() {
+    if (!coachEl) return;
+    const seen = (n) => (n && n.offsetParent !== null ? n : null);
+    const b = seen(coachFor && coachFor.isConnected ? coachFor.querySelector(".bs-split") : null), rail = b ? null : seen(document.querySelector(".bs-rail"));
+    const r = (b || rail || { getBoundingClientRect: () => null }).getBoundingClientRect();
+    coachEl.hidden = !r || !coachFor || !coachFor.isConnected || readerEl.hidden || readerEl.offsetParent === null;
+    if (coachEl.hidden) return;
+    coachEl.classList.toggle("side", !b);
+    coachEl.style.top = b ? `${Math.round(r.bottom + 10)}px` : `${Math.round(r.top + r.height / 2 - 22)}px`;
+    coachEl.style.right = b ? `${Math.max(8, Math.round(window.innerWidth - r.right - 8))}px` : "auto";
+    coachEl.style.left = b ? "auto" : `${Math.round(r.right + 4)}px`;
+    coachEl.style.setProperty("--bs-tip", `${Math.round(r.width / 2 + 2)}px`);
+  }
   function coach(wrap) {
-    if (coached || !can() || up() || GL.store.get("besideCoach")) return;
-    wrap.append(el("span", { class: "bs-coach", role: "status", text: "New: tap Split to read two books side by side" }));
-    if (coach.armed) return;
-    coach.armed = true;
+    if (!can() || up() || GL.store.get("besideCoach") || !wrap.isConnected) return;
+    coachFor = wrap;
+    if (coachEl) { placeCoach(); return; }
+    coachEl = el("div", { class: "bs-coach", role: "status", text: "New: tap Split to read two books side by side" });
+    document.body.append(coachEl);
+    placeCoach();
     const done = () => {
-      const lines = [...document.querySelectorAll(".bs-coach")];
-      if (!lines.some((n) => n.offsetParent !== null)) return; // not seen yet (the page is behind the board): it waits
-      for (const n of lines) n.remove();
-      coached = true;
+      if (!coachEl || coachEl.hidden) return; // not seen yet: it waits
+      coachEl.remove(); coachEl = null; coachFor = null;
       GL.store.set("besideCoach", 1);
       document.removeEventListener("pointerdown", done, true);
+      window.removeEventListener("resize", placeCoach);
     };
     document.addEventListener("pointerdown", done, true);
+    window.addEventListener("resize", placeCoach);
   }
+  // the rail's own Split, under Ask: made once, shown from an iPad up (app.css)
+  const railGap = document.querySelector("#tabs .tabs-gap");
+  if (railGap) railGap.before(el("button", { type: "button", class: "bs-rail", "aria-pressed": "false", "aria-label": "Split: a second page beside this one", title: "Read two pages side by side", onclick: toggleSplit }, [el("span", { class: "tab-ic", html: I.split }), el("span", { class: "tab-lb", text: "Split" })]));
   if (readerEl) {
     try { new MutationObserver(onReader).observe(readerEl, { childList: true }); } catch (_) {}
     onReader();

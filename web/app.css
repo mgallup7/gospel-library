@@ -1536,15 +1536,27 @@ a.toast-action { display: inline-flex; align-items: center; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bs-grip { background: #6b7079; } }
 /* Split in the reader's bar, and the picker it opens in the pane (beside.js). The button is in
    every reader bar and shows from an iPad up; on a phone none of this applies. */
-.bs-split-wrap { display: none; }
+.bs-split-wrap, .size-menu .menu-split, .bs-rail { display: none; }
 @media (min-width: 760px) and (min-height: 500px) {
+  /* the same button in the rail, drawn as the rail's tabs are; filled while the pane is open */
+  .tabs .bs-rail { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; position: relative; height: clamp(58px, calc(var(--reading-size) * 3.4), 78px); color: var(--ink-2); font-size: var(--ui-11); font-weight: 500; line-height: 1.1; letter-spacing: .01em; }
+  .bs-rail:active .tab-ic { background: var(--chrome-2); }
+  .bs-rail[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
+  .bs-rail[aria-pressed="true"] .tab-ic { background: var(--accent); color: var(--accent-ink); }
+  .bs-rail:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: var(--r-card); }
   .reader-bar .bs-split-wrap { display: inline-flex; position: relative; flex: none; }
   .reader-bar .bs-split { width: auto; min-width: 40px; padding: 0 9px; gap: 6px; color: var(--accent); }
   .bs-split .g { display: inline-flex; }
   .bs-split .w { font: 600 var(--ui-14) var(--sans); }
-  .reader-bar.nowords .bs-split { padding: 0; }
-  .reader-bar.nowords .bs-split .w { display: none; }
   .reader-bar .bs-split[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  /* The app's own measure of the bar leaves the button out, so the bar folds as it always did;
+     beside.js then fits the button into the room that is left (bs-fit marks its own measure):
+     the word goes; then, where the Aa menu is showing, the button is a row of it. */
+  .reader-bar.measuring:not(.bs-fit) .bs-split-wrap { display: none; }
+  .reader-bar.bs-icon .bs-split { padding: 0; }
+  .reader-bar.bs-icon .bs-split .w { display: none; }
+  .reader-bar.bs-away:not(.measuring) .bs-split-wrap, .reader-bar.bs-away.bs-fit .bs-split-wrap { display: none; }
+  .reader-bar.bs-away.compact .size-menu .menu-split { display: flex; }
 
   .bs-bar .bs-title-plain { display: inline-flex; align-items: center; height: 36px; color: var(--ink); font-weight: 600; }
   .bs-pick { position: absolute; left: 0; right: 0; top: 0; bottom: 0; z-index: 5; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 calc(40px + var(--safe-bottom)); background: var(--paper); font-family: var(--sans); }
@@ -1602,7 +1614,8 @@ a.toast-action { display: inline-flex; align-items: center; }
 /* the one-time line under the Split button */
 .bs-coach { display: none; }
 @media (min-width: 760px) and (min-height: 500px) {
-  .bs-coach { display: block; position: absolute; top: calc(100% + 12px); right: -6px; z-index: 7; width: -webkit-max-content; width: max-content; max-width: 400px; padding: 10px 14px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); font: 600 var(--ui-14)/1.35 var(--sans); box-shadow: 0 8px 22px rgba(0, 0, 0, .2); pointer-events: none; }
-  .bs-coach::before { content: ""; position: absolute; top: -6px; right: 38px; width: 13px; height: 13px; background: var(--accent); transform: rotate(45deg); border-radius: 2px; }
-  .reader-bar.nowords .bs-coach::before { right: 20px; }
+  .bs-coach { display: block; position: fixed; z-index: 30; width: -webkit-max-content; width: max-content; max-width: 400px; padding: 10px 14px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); font: 600 var(--ui-14)/1.35 var(--sans); box-shadow: 0 8px 22px rgba(0, 0, 0, .2); pointer-events: none; }
+  .bs-coach[hidden] { display: none; }
+  .bs-coach::before { content: ""; position: absolute; top: -6px; right: var(--bs-tip, 30px); width: 13px; height: 13px; background: var(--accent); transform: rotate(45deg); border-radius: 2px; }
+  .bs-coach.side::before { top: 15px; right: auto; left: -6px; }
 }
