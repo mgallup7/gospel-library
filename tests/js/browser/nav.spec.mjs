@@ -123,7 +123,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#list .studies-hits .study-hit", { timeout: 5000 }).catch(() => {});
     const st = await page.evaluate(() => ({ n: document.querySelectorAll("#list .studies-hits .study-hit").length, t: document.querySelector("#list .studies-hits .cite span")?.textContent, b: [...document.querySelectorAll("#list .studies-hits .snip b")].map((x) => x.textContent.toLowerCase()) }));
     if (st.n !== 1 || st.t !== "Zone conference plan" || !st.b.includes("zone")) errors.push(`${name}: "zone conference" did not find the study by the words as typed: ${JSON.stringify(st)}`);
-    await box(page, "book:xyzzy faith"); await page.press("#q", "Enter"); await page.waitForSelector("#list .hit-row");
+    await box(page, "book:xyzzy faith"); await page.press("#q", "Enter"); await page.waitForSelector("#list .no-book", { timeout: 8000 }).catch(() => {}); // (the search before leaves rows of its own now)
     const nb = await page.evaluate(() => document.querySelector("#list .no-book")?.textContent || null);
     if (!nb || !nb.includes("xyzzy")) errors.push(`${name}: book:xyzzy said ${nb}`);
     await box(page, "book:alma faith"); await page.press("#q", "Enter"); await page.waitForTimeout(900);
