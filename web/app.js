@@ -897,7 +897,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       }
       // a reference typed and entered opens the chapter at the verse, on the phone as on the iPad; the
       // list keeps the card, so Back comes to it; a re-render (Back, a reload) never navigates
-      if (!typeahead && !more && !silent && data.jump?.doc_id && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
+      if (!typeahead && !more && !silent && data.jump?.doc_id && !data.jump.named && state.docId !== data.jump.doc_id) setTimeout(() => { if (mySeq === searchSeq) openDoc(data.jump.doc_id, data.jump.pid); }, 0);
       data.typeahead = typeahead;
       if (more && state.lastSearch) {
         const prev = state.lastSearch;
@@ -908,7 +908,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       }
       state.lastSearch = data;
       // a search that is a reference is a place: the page it opens shows no match strip and no painted hits
-      state.terms = data.jump?.doc_id ? [] : data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
+      state.terms = data.jump?.doc_id && !data.jump.named ? [] : data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
       if (state.view === "all" && !typeahead) await renderConcordance(data, { restore }); else renderResults(data);
       // an empty board has nothing to offer fresh results: the right pane goes back to the page (or rests empty)
       if (wide() && paneView === "board" && !window.Deck?.count?.()) panel.page();
@@ -918,7 +918,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       }
       // on a wide screen the pane beside fresh results is not left blank: the best match opens in it,
       // in this same entry, so Back still leaves the search in one step. A page already open stays.
-      if (!typeahead && !more && !silent && wide() && tabNow() === "search" && state.view !== "all" && state.group !== "documents" && !data.jump
+      if (!typeahead && !more && !silent && wide() && tabNow() === "search" && state.view !== "all" && state.group !== "documents" && (!data.jump || data.jump.named)
         && data.hits.length && !state.docId && !state.studyId && panelPane.hidden) {
         const h = data.hits[0];
         openDoc(h.doc_id, h.pid, { replace: true });
@@ -1019,7 +1019,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const askedBook = (/\bbook:("[^"]*"|\S+)/i.exec(data.query || "") || [])[1]?.replace(/"/g, "") || state.book;
     if (askedBook && data.filters && !data.filters.bookSlug && !data.filters.volume) frag.append(el("div", { class: "status no-book", role: "status", text: `No book of scripture is called “${askedBook}”, so this search is not kept to one book.` }));
     // how the search was read is said only over something found; over nothing, the empty line speaks alone
-    const found = !!(data.jump || data.hits.length || data.documents.length || (data.titles || []).length);
+    const found = !!(data.jump || data.hits.length || data.documents.length || (data.titles || []).length || (data.topics || []).length);
     if (data.smart && found) {
       const sm = data.smart;
       const bits = [];
@@ -1036,6 +1036,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         el("span", { text: `${how.charAt(0).toUpperCase() + how.slice(1)}: ${bits.join(" · ") || data.query}` }),
         /^".*"$/.test(data.query.replace(FILTER_WORDS, " ").trim()) ? null : el("button", { type: "button", class: "text-btn small exact-words", text: "Only exact words", onclick: () => { state.q = exactQuery(data); syncControls(); runSearch({ typeahead: false }); } }),
         asTypedBtn,
+        sm.offer ? el("button", { type: "button", class: "text-btn small only-book", text: `Only in ${sm.offer.name} (${sm.offer.count.toLocaleString()})`, title: `Keep this search to ${sm.offer.name}`, onclick: () => { state.q = sm.offer.q; syncControls(); runSearch({ typeahead: false }); } }) : null,
       ]);
       if (data.widened) line.append(el("span", { class: "widened", text: ` · Claude also searched: ${data.widened.join("; ")}` }));
       frag.append(line);
@@ -1044,6 +1045,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (data.original_hint) { const line = window.Original?.hintLine(data.original_hint); if (line) frag.append(line); }
     // an English word on its own: the Hebrew and Greek most often read that way, filled in when the engine answers
     if (!data.original && !data.original_hint && !data.typeahead) { const slot = el("div", { class: "orig-behind-slot" }); frag.append(slot); window.Original?.offerFor(data.query, slot); }
+    if (data.topics && data.topics.length) {
+      frag.append(el("div", { class: "group-title", text: "In the study helps" }));
+      for (const d of data.topics) frag.append(docRow(d));
+    }
     if (data.titles && data.titles.length) {
       frag.append(el("div", { class: "group-title", text: "By title" }));
       for (const d of data.titles) frag.append(docRow(d));
@@ -1621,7 +1626,18 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       doc.next ? el("button", { text: `${doc.next.title} ›`, onclick: () => stepChapter(doc.next) }) : el("span"),
     ]);
     const foot = el("div", { class: "doc-foot", text: doc.fetched_at ? `Copied from churchofjesuschrist.org ${new Date(doc.fetched_at).toLocaleDateString()}. Text and study helps are the Church's; this copy is for personal study.` : "" });
-    readerPane.replaceChildren(bar, body, nav, foot);
+    // a chapter that quotes another (or is quoted): one line under the bar, and one tap puts the two side by side
+    let twinLine = null;
+    if (doc.twins && doc.twins.length) {
+      const twin = el("div", { class: "twin-line" });
+      for (const t of doc.twins) {
+        const beside = !!window.Beside?.can?.();
+        twin.append(el("span", { text: `This chapter ${t.how} ${t.label}.` }),
+          el("button", { type: "button", class: "text-btn small twin-open", text: beside ? "Read them side by side" : `Open ${t.label}`, onclick: () => { if (beside) window.Beside.open(t.doc_id); else openDoc(t.doc_id, null); } }));
+      }
+      twinLine = el("div", { class: "twin-wrap" }, [twin]);
+    }
+    readerPane.replaceChildren(...[bar, twinLine, body, nav, foot].filter(Boolean));
     readerPane.classList.remove("has-study");
     readerPane.scrollTop = 0;
     unseen = readerPane.hidden; // drawn behind the board: it finds its verse when it is first shown

@@ -3,7 +3,8 @@
 // server does: search, document, resolve, browse. Mirrors gospel_library/search.py.
 import sqlite3InitModule from "./vendor/sqlite3.mjs";
 import * as S from "./lib/scriptures.js";
-import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections, quoteWords, quoteScore, alsoSpelled, spellOut, TINY, QUESTION_WORDS } from "./lib/query.js";
+import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections, quoteWords, quoteScore, alsoSpelled, spellOut, foldWord, TINY, QUESTION_WORDS, BOOK_WORDS } from "./lib/query.js";
+import { passageNamed, parallelsOf } from "./lib/names.js";
 import { esc } from "./lib/format.js";
 // Search by meaning lives in its own module; if it fails to load (a broken
 // download, an old browser), search by words carries on without it. The
@@ -834,6 +835,17 @@ async function rankedSearch(q, opts) {
       out.jump = { label: ref.label, uri: ref.uri, pid: ref.pid, doc_id: r ? r.id : null, title: r ? r.title : S.citation(ref.book, ref.chapter), verse_end: ref.verseEnd };
     }
   }
+  // a passage asked for by its name ("Moroni's promise", "the Beatitudes"): its reference as a card to
+  // open, above whatever the words find (it is offered, not opened: the name may be meant as words)
+  if (!out.jump && !explicit) {
+    const named = passageNamed((n && n.quote) || raw);
+    const ref = named ? S.parseReference(named.ref) : null;
+    if (ref) {
+      const r = row("SELECT id, title FROM documents WHERE uri=?", [ref.uri]);
+      if (r) out.jump = { label: `${named.name} · ${ref.label}`, uri: ref.uri, pid: ref.pid, doc_id: r.id, title: r.title, verse_end: ref.verseEnd, named: true };
+    }
+  }
+  const placed = !!out.jump && !out.jump.named; // a reference typed: the search is that place
   const terms = (n ? n.terms : cq.terms) || [];
   // The line as typed, word by word (the question around it taken off): what a passage is scored against.
   const coreLine = n && n.core && n.core.split(" ").length >= 3 ? n.core : null; // a question's own words, when enough are left to be a line
@@ -841,7 +853,7 @@ async function rankedSearch(q, opts) {
   const asked = !!n && !n.quote && /^(?:(?:what|where|who|which|how|why|when)\s+(?:did|does|do|is|are|was|were|can|could|should|would|will|verse|scripture|passage)|find|show|give|tell|list)\b/i.test(fixed.text.trim());
   const line = (n && n.quote) || coreLine || (asked ? n.terms.join(" ") : null) || (n && n.rest) || fixed.text.replace(/\b\w+:("[^"]*"|\S+)/g, " ");
   const typed = explicit ? [] : quoteWords(line);
-  const quoteLike = typed.length >= 3 && typed.length <= 24 && !out.jump;
+  const quoteLike = typed.length >= 3 && typed.length <= 24 && !placed;
   const partial = typeahead && !/\s$/.test(String(q || "")) && typed.length > 0 && typed[typed.length - 1].length >= 2;
   // the words shown as found, and marked in the passages: for a typed line, every word of it that carries weight
   const shownTerms = quoteLike && !asked ? [...new Set(typed.filter((w) => !TINY.has(w) && w.length > 1))] : (n ? n.terms : cq.terms);
@@ -853,9 +865,10 @@ async function rankedSearch(q, opts) {
   const ranked = new Map();  // paragraph_id -> {hit, lex, sem, exact}
   const take = (r, slot, rank) => {
     let e = ranked.get(r.paragraph_id);
-    if (!e) { e = { hit: hitOf(r, words), lex: null, sem: null, exact: false }; ranked.set(r.paragraph_id, e); }
+    if (!e) { e = { hit: hitOf(r, words), lex: null, sem: null, sems: null, exact: false }; ranked.set(r.paragraph_id, e); }
     if (slot === "lex" && e.lex === null) e.lex = rank;
     if (slot === "sem" && e.sem === null) e.sem = rank;
+    if (slot === "sems" && e.sems === null) e.sems = rank;
     if (slot === "exact") { e.exact = true; if (e.lex === null) e.lex = rank; }
     return e;
   };
@@ -932,11 +945,18 @@ async function rankedSearch(q, opts) {
   out.filters = { collections: cq.collections || [], speaker: cq.speaker || null, yearFrom: cq.yearFrom || null, yearTo: cq.yearTo || null, bookSlug: cq.bookSlug || null, volume: cq.volume || null, edition: cq.edition || null, excludeEdition: cq.excludeEdition || null };
   // 3. The meaning, when the model is here and this is a real search, not a keystroke or a request for exact words.
   let semantic = false;
-  if (!typeahead && !light && !explicit && !out.jump && semReady() && semanticIndex()) {
+  if (!typeahead && !light && !explicit && !placed && semReady() && semanticIndex()) {
     try {
       const cands = await semanticCandidates(fixed.text, cq, 150);
       if (!db) throw new Error("the library was replaced during the search");
       if (cands) { semantic = true; cands.forEach((r, i) => take(r, "sem", i)); }
+      // The verses nearest in meaning are ranked among themselves as well: beside half a million
+      // paragraphs of talks and manuals, the verse a paraphrase points at would rarely make the cut.
+      if (cands && !cq.collections.length && !cq.speaker && !cq.yearFrom && !cq.bookSlug && !cq.volume && !cq.edition) {
+        const verses = await semanticCandidates(fixed.text, { ...cq, collections: ["scriptures"] }, 40);
+        if (!db) throw new Error("the library was replaced during the search");
+        if (verses) verses.forEach((r, i) => take(r, "sems", i));
+      }
     } catch (err) { if (!db) throw err; console.warn("meaning search failed:", err?.message); }
   }
   // 4. Score. A line of three words or more is judged first by how much each passage looks like it
@@ -947,16 +967,39 @@ async function rankedSearch(q, opts) {
   const weights = quoteLike ? typed.map(wordWeight) : null;
   const boost = n && n.boostBook ? n.boostBook : null;
   let scored = [];
+  for (const e of ranked.values()) e.ql = quoteLike ? (e.exact ? 1 : quoteScore(typed, weights, e.hit.text, partial)) : 0;
+  // A line that runs over a verse's end: the verse and the one after it (or before) are read as
+  // one, and if together they are the line, the hit is the pair ("Alma 32:21-22").
+  if (quoteLike && !typeahead && !exactTotal) {
+    const tries = [...ranked.values()].filter((e) => e.hit.kind === "verse" && e.ql >= 0.35 && e.ql < 0.9).sort((a, b) => b.ql - a.ql).slice(0, 8);
+    for (const e of tries) {
+      const nb = neighbors(e.hit);
+      const withNext = nb.after && nb.after.verse ? quoteScore(typed, weights, `${e.hit.text} ${nb.after.text}`, partial) : 0;
+      const withPrev = nb.before && nb.before.verse ? quoteScore(typed, weights, `${nb.before.text} ${e.hit.text}`, partial) : 0;
+      const best = Math.max(withNext, withPrev);
+      if (best < 0.85 || best < e.ql + 0.12) continue;
+      const pair = withNext >= withPrev ? [e.hit.verse, nb.after.verse] : [nb.before.verse, e.hit.verse];
+      e.ql = best;
+      e.hit.span = pair;
+      e.hit.citation = String(e.hit.citation).replace(/:\d+$/, `:${pair[0]}\u2013${pair[1]}`);
+    }
+  }
+  // The line itself was found (or nearly): then it leads and the rest follow by likeness. Otherwise
+  // the search is a paraphrase or a question, and what the meaning found counts for more than
+  // passages that only share some of its words.
+  const lineHit = quoteLike && [...ranked.values()].some((e) => e.exact || e.ql >= 0.8);
   for (const e of ranked.values()) {
     let f = 0;
     if (e.lex !== null) f += 1 / (K + e.lex);
     if (e.sem !== null) f += 1 / (K + e.sem);
+    if (e.sems !== null) f += 1 / (K + e.sems);
     if (e.exact) f += 1 / K;
-    e.ql = quoteLike ? (e.exact ? 1 : quoteScore(typed, weights, e.hit.text, partial)) : 0;
-    let s = quoteLike ? (e.exact ? 1 : 0) + e.ql * e.ql + 0.5 * (f / (3 / K)) : f;
+    const fN = f / (3 / K);
+    let s = !quoteLike ? f : lineHit ? (e.exact ? 1 : 0) + e.ql * e.ql + 0.5 * fN : 0.6 * e.ql * e.ql + fN;
     s *= prior(e.hit, scoped);
     if (boost && e.hit.book_slug && (e.hit.book_slug === boost || e.hit.book_slug.endsWith("-" + boost))) s *= 1.5;
-    e.hit.why = e.exact ? "exact" : e.ql >= 0.8 ? "close" : e.lex !== null && e.sem !== null ? "both" : e.sem !== null ? "meaning" : "words";
+    const meant = e.sem !== null || e.sems !== null;
+    e.hit.why = e.exact ? "exact" : e.ql >= 0.8 ? "close" : e.lex !== null && meant ? "both" : meant ? "meaning" : "words";
     scored.push({ s, e });
   }
   scored.sort((a, b) => b.s - a.s || a.e.hit.paragraph_id - b.e.hit.paragraph_id);
@@ -999,9 +1042,25 @@ async function rankedSearch(q, opts) {
     const again = await rankedSearch(q, { ...opts, noGuess: true });
     if (again.hits.length) return again;
   }
+  // A book named in passing ("great are the words of isaiah", "what did alma teach about faith") is
+  // not searched alone, but it is offered: one tap keeps the search to that book.
+  if (!typeahead && !explicit && !cq.bookSlug && heads.length) {
+    const word = typed.find((w) => BOOK_WORDS.has(w) && !/^\d/.test(BOOK_WORDS.get(w))) || (n && n.boostBook && S.book(n.boostBook) ? n.boostBook : null);
+    const slug = word ? (BOOK_WORDS.get(word) || word) : null;
+    const rest = slug ? [...new Set((n && asked ? n.terms : typed).filter((w) => w !== word && !TINY.has(w) && w.length > 1 && !QUESTION_WORDS_LOCAL.has(w)))] : [];
+    if (slug && rest.length && rest.length <= 6) {
+      try {
+        const count = countRows(rest.map((w) => ftsPhrase(w)).join(" AND "), { ...cqUser, bookSlug: slug });
+        if (count > 0) out.smart.offer = { book: slug, name: (S.book(slug) && S.book(slug).name) || word, count, q: `${rest.join(" ")} book:${slug}` };
+      } catch (_) { /* no offer, then */ }
+    }
+  }
+  // A subject of a word or two: its entries in the Topical Guide, the Guide to the Scriptures and the
+  // Bible Dictionary lead, since they are where the Church has already gathered its passages.
+  if (!typeahead && !explicit && !placed && typed.length >= 1 && typed.length <= 3 && (!cq.collections.length || cq.collections.includes("study-helps"))) out.topics = topicEntries(typed);
   // titles are offered unless the line itself was found: then the passage leads and nothing stands above it
   const lineFound = quoteLike && heads.length && (heads[0].why === "exact" || heads[0].why === "close");
-  if (terms.length && !lineFound) out.titles = titleMatches(terms, cq);
+  if (terms.length && !lineFound) out.titles = titleMatches(terms, cq).filter((d) => !(out.topics || []).some((t) => t.doc_id === d.doc_id));
   out.original_hint = hint;
   return out;
 }
@@ -1262,6 +1321,19 @@ function titleMatches(terms, cq) {
   } catch (_) { return []; }
 }
 
+// The study helps' own entries for a subject: the documents of that shelf whose title is the words
+// typed ("faith": Topical Guide, Faith; Guide to the Scriptures, Faith; Bible Dictionary, Faith).
+function topicEntries(typed) {
+  const want = typed.map(foldWord).join(" ");
+  try {
+    return rows(`SELECT d.id, d.uri, d.title, d.author, d.year, d.month, d.session, d.book_slug, d.book_name, d.chapter, d.volume, c.slug AS collection, b.title AS book_title
+                   FROM documents_fts f JOIN documents d ON d.id=f.rowid JOIN collections c ON c.id=d.collection_id LEFT JOIN books b ON b.id = d.book_id
+                  WHERE documents_fts MATCH ? AND c.slug = 'study-helps' ORDER BY bm25(documents_fts) LIMIT 40`, [`title : (${typed.map((t) => ftsPhrase(t)).filter(Boolean).join(" AND ")})`])
+      .filter((r) => quoteWords(r.title).map(foldWord).join(" ") === want)
+      .slice(0, 4).map(summary);
+  } catch (_) { return []; }
+}
+
 // --------------------------------------------------------------- document ----
 async function document(id, uri) {
   const sql = "SELECT d.*, c.slug AS collection, c.title AS collection_title FROM documents d JOIN collections c ON c.id=d.collection_id WHERE ";
@@ -1273,6 +1345,15 @@ async function document(id, uri) {
   doc.section_path = r.section_path ? JSON.parse(r.section_path) : [];
   doc.label = docLabel(r);
   doc.citation = citation(r);
+  // the chapters this one repeats or is repeated in (Isaiah in the Book of Mormon, the two sermons), to read beside it
+  doc.twins = [];
+  if (r.book_slug && r.chapter) {
+    for (const t of parallelsOf(r.book_slug, r.chapter)) {
+      const b = S.book(t.slug);
+      const other = b ? row("SELECT id FROM documents WHERE book_slug=? AND chapter=? LIMIT 1", [t.slug, t.chapter]) : null;
+      if (other) doc.twins.push({ doc_id: other.id, label: S.citation(b, t.chapter), how: t.how });
+    }
+  }
   doc.footnotes = rows("SELECT note_id, marker, pid, html, text, refs FROM footnotes WHERE document_id=? ORDER BY id", [r.id])
     .map((n) => ({ ...n, refs: n.refs ? JSON.parse(n.refs) : [] }));
   doc.book = r.book_id ? row("SELECT id, uri, title FROM books WHERE id=?", [r.book_id]) : null;

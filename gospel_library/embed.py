@@ -197,6 +197,12 @@ def smoke_test(conn, embedder: Embedder, queries: list[str], *, k: int = 5, chun
     The vectors are read in chunks, so a library of half a million paragraphs does not need them all in memory at once."""
     qvs = embedder.encode(list(queries), query=True) if queries else np.zeros((0, DIMS), dtype=np.float32)
     best: list[list[tuple[float, int]]] = [[] for _ in queries]
+    # the same, among the verses of scripture alone (the app ranks those in a list of their own)
+    verses: list[list[tuple[float, int]]] = [[] for _ in queries]
+    try:
+        scripture = np.array([r[0] for r in conn.execute("SELECT rowid FROM paragraphs WHERE kind = 'verse'")], dtype=np.int64)
+    except Exception:  # a store without verses has none to list
+        scripture = np.zeros(0, dtype=np.int64)
     cur = conn.execute("SELECT paragraph_id, v FROM vectors ORDER BY paragraph_id")
     while True:
         rows = cur.fetchmany(chunk)
@@ -209,11 +215,19 @@ def smoke_test(conn, embedder: Embedder, queries: list[str], *, k: int = 5, chun
             col = scores[:, qi]
             top = np.argpartition(-col, min(k, len(col) - 1))[:k] if len(col) > k else np.arange(len(col))
             best[qi] = sorted(best[qi] + [(float(col[i]), int(ids[i])) for i in top], key=lambda t: -t[0])[:k]
+            where = np.nonzero(np.isin(ids, scripture))[0]
+            if len(where):
+                sub = col[where]
+                pick = np.argsort(-sub)[:k]
+                verses[qi] = sorted(verses[qi] + [(float(sub[i]), int(ids[where[i]])) for i in pick], key=lambda t: -t[0])[:k]
     out = []
     for qi, q in enumerate(queries):
         found = []
         for score, pid in best[qi]:
             r = conn.execute("SELECT p.text, d.title FROM paragraphs p JOIN documents d ON d.id = p.document_id WHERE p.rowid = ?", (pid,)).fetchone()
             found.append((score, r[1] if r else "?", (r[0] if r else "")[:120]))
+        for score, pid in verses[qi]:
+            r = conn.execute("SELECT p.text, d.title, p.verse FROM paragraphs p JOIN documents d ON d.id = p.document_id WHERE p.rowid = ?", (pid,)).fetchone()
+            found.append((score, f"verse: {r[1]}:{r[2]}" if r else "?", (r[0] if r else "")[:120]))
         out.append((q, found))
     return out

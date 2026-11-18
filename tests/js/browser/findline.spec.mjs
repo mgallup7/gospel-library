@@ -54,6 +54,56 @@ export default async function run(browser, { BASE, PASS }) {
   check(inAlma.smart.book === "alma" && inAlma.hits.length && inAlma.hits.every((h) => h.book_slug === "alma"), "\"in alma\" did not keep the search to Alma");
   const dropped = await page.evaluate(() => GL.api("search", { q: "the liahona in genesis", limit: 10 }));
   check(dropped.hits.length > 0, "a guessed book that left nothing was not dropped");
+  // a passage asked for by its name is offered as a card, and plain words are not taken for names
+  const named = await page.evaluate(() => GL.api("search", { q: "moroni's promise", limit: 5 }));
+  check(named.jump?.named && /Moroni 10:3/.test(named.jump.label) && named.jump.pid === "p3", `"moroni's promise" offered ${JSON.stringify(named.jump)}`);
+  const plain = await page.evaluate(() => GL.api("search", { q: "faith", limit: 5 }));
+  check(!plain.jump, `"faith" was taken for a passage's name: ${JSON.stringify(plain.jump)}`);
+  await page.fill("#q", "the beatitudes"); await page.press("#q", "Enter");
+  await page.waitForSelector("#list .jump", { timeout: 8000 }).catch(() => {});
+  check(/Beatitudes · Matthew 5:3/.test((await page.textContent("#list .jump").catch(() => "")) || ""), "the Beatitudes card is not on the results");
+  // a book named in passing is offered, one tap, and the tap keeps the search to it
+  const offer = await page.evaluate(() => GL.api("search", { q: "what did alma teach about faith", limit: 5 }));
+  check(offer.smart.offer?.book === "alma" && offer.smart.offer.count > 0 && !offer.smart.book, `no "Only in Alma" offer: ${JSON.stringify(offer.smart)}`);
+  await page.fill("#q", "what did alma teach about faith"); await page.press("#q", "Enter");
+  await page.waitForSelector("#list .only-book", { timeout: 8000 }).catch(() => {});
+  await page.evaluate(() => document.querySelector("#list .only-book")?.click());
+  await page.waitForFunction(() => /book:alma/.test(document.querySelector("#q").value), null, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+  const kept = await page.evaluate(() => ({ q: document.querySelector("#q").value, cites: [...document.querySelectorAll("#list .hit .cite span:first-child")].map((c) => c.textContent) }));
+  check(kept.q === "faith book:alma" && kept.cites.length > 0 && kept.cites.every((c) => /^Alma \d/.test(c)), `"Only in Alma" gave ${JSON.stringify(kept).slice(0, 300)}`);
+  // a line that runs over a verse's end is found as the pair of verses
+  const pair = await page.evaluate(() => GL.api("search", { q: "search these things diligently for great are the words of isaiah for surely he spake as touching all things", limit: 5, light: true }));
+  check(/^3 Nephi 23:1\u20132$/.test(pair.hits[0]?.citation || "") && pair.hits[0].why === "close", `a line over two verses leads with ${pair.hits[0]?.citation} (${pair.hits[0]?.why})`);
+  // a chapter that quotes another says so, and one tap puts the two side by side
+  const twin = await page.evaluate(async () => { const id = (await GL.api("search", { q: "2 Nephi 12", limit: 1 })).jump.doc_id; const d = await GL.api("doc", { id }); return { id, twins: d.twins }; });
+  check(twin.twins?.length === 1 && twin.twins[0].label === "Isaiah 2" && twin.twins[0].how === "quotes", `2 Nephi 12's twin: ${JSON.stringify(twin.twins)}`);
+  const back = await page.evaluate(async () => { const id = (await GL.api("search", { q: "Isaiah 53", limit: 1 })).jump.doc_id; return (await GL.api("doc", { id })).twins; });
+  check(back?.[0]?.label === "Mosiah 14" && back[0].how === "is quoted in", `Isaiah 53's twin: ${JSON.stringify(back)}`);
+  await page.evaluate((id) => GL.openDoc(id), twin.id);
+  await page.waitForSelector("#reader .twin-line .twin-open", { timeout: 8000 }).catch(() => {});
+  check(/This chapter quotes Isaiah 2\./.test((await page.textContent("#reader .twin-line").catch(() => "")) || ""), "2 Nephi 12 does not say it quotes Isaiah 2");
+  await page.evaluate(() => document.querySelector("#reader .twin-open")?.click());
+  await page.waitForFunction(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .doc h1")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
+  check(await page.evaluate(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .doc h1")?.textContent || "")), "the twin did not open beside");
   await ctx.close();
+  // a phone has no second pane: the twin opens in the reader
+  {
+    const phone = await browser.newContext({ viewport: { width: 393, height: 852 } });
+    const pp = await phone.newPage();
+    pp.on("pageerror", (e) => errors.push(`page error (phone): ${e.message}`));
+    await pp.goto(BASE); await pp.fill("div.setup input", PASS); await pp.keyboard.press("Enter");
+    await pp.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
+    const id = await pp.evaluate(async () => (await GL.api("search", { q: "Mosiah 14", limit: 1 })).jump.doc_id);
+    await pp.evaluate((id) => GL.openDoc(id), id);
+    await pp.waitForSelector("#reader .twin-open", { timeout: 8000 }).catch(() => {});
+    check(/^Open Isaiah 53$/.test((await pp.textContent("#reader .twin-open").catch(() => "")) || ""), "on a phone the twin should offer to open Isaiah 53");
+    const box = await pp.evaluate(() => { const r = document.querySelector("#reader .twin-line")?.getBoundingClientRect(); return r ? { l: r.left, r: r.right, w: innerWidth } : null; });
+    check(box && box.l >= 0 && box.r <= box.w, `the twin line runs off the phone: ${JSON.stringify(box)}`);
+    await pp.evaluate(() => document.querySelector("#reader .twin-open")?.click());
+    await pp.waitForFunction(() => /Isaiah 53/.test(document.querySelector("#reader .doc h1")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
+    check(/Isaiah 53/.test(await pp.evaluate(() => document.querySelector("#reader .doc h1")?.textContent || "")), "the twin did not open on the phone");
+    await phone.close();
+  }
   return errors;
 }

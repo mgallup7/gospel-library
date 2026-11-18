@@ -803,7 +803,7 @@ def test_embeddings(tmp_path):
     assert ((np.unpackbits(np.frombuffer(bits, dtype=np.uint8)) == 1) == (arr >= 0)).all()
     # the smoke test: the best passages for a query, scored against the int8 vectors (in chunks)
     smoke = embed.smoke_test(conn, e, ["faith", "hope"], k=3, chunk=1)
-    assert [q for q, _ in smoke] == ["faith", "hope"] and len(smoke[0][1]) == 1 and isinstance(smoke[0][1][0][0], float)
+    assert [q for q, _ in smoke] == ["faith", "hope"] and len(smoke[0][1]) == 2 and isinstance(smoke[0][1][0][0], float) and smoke[0][1][1][1].startswith("verse: ")  # the best of all, then the best verse
     n = embed.pack_bits(conn)
     assert n == 1 and conn.execute("SELECT length(bits) FROM vecbits").fetchone()[0] == 48
     assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='vectors'").fetchone()

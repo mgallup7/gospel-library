@@ -124,7 +124,7 @@ jobs:
         timeout-minutes: 70
         env:
           EMBED_MINUTES: ${{ inputs.embed_minutes || 45 }}
-        run: python -m gospel_library embed --minutes "$EMBED_MINUTES" --smoke "faith is not to have a perfect knowledge" "what did the prophets say about covenants and identity" "how a missionary can deal with discouragement" "Joseph Smith on the Nauvoo Legion"
+        run: python -m gospel_library embed --minutes "$EMBED_MINUTES" --smoke "faith is not to have a perfect knowledge" "what did the prophets say about covenants and identity" "how a missionary can deal with discouragement" "Joseph Smith on the Nauvoo Legion" "serving others is serving god" "god does not look at outward appearance but at the heart" "the lord will prepare a way to keep his commandments" "small things bring about big things" "build on the rock of christ so the devil has no power over you" "wherever you go I will go"
 
       - name: Build the device bundle
         env:

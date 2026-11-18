@@ -1758,3 +1758,10 @@ body.gest #reader .doc, body.gest #beside .doc { touch-action: pan-y; } /* two f
 }
 .set-top { display: flex; align-items: center; gap: 10px; min-height: 44px; font: var(--ui-15) var(--sans); color: var(--ink); }
 .set-top .set-top-now { color: var(--ink-2); min-width: 4.5em; }
+
+/* A chapter that quotes another: one quiet line above the text, with the way to read the two together. */
+.twin-wrap { max-width: 68ch; margin: 0 auto; padding: 14px 20px 0; font-family: var(--serif); font-size: var(--reading-size); box-sizing: content-box; }
+.twin-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 14px; border-radius: 10px; background: rgba(127,127,127,.09); font-family: var(--sans, system-ui, sans-serif); font-size: var(--ui-13); line-height: 1.35; color: var(--ink-2); }
+.twin-line .text-btn.small { min-height: 32px; position: relative; }
+.twin-line .text-btn.small::after { content: ""; position: absolute; inset: -6px 0; }
+body.presenting .twin-wrap { display: none; }

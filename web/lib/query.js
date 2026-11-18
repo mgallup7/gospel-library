@@ -193,7 +193,7 @@ const SYNONYMS = {
   identity: ["child of god", "who you are", "divine nature", "children of god"], testimony: ["testify", "witness", "know"], agency: ["choose", "free to choose", "liberty"],
 };
 
-const BOOK_WORDS = new Map([
+export const BOOK_WORDS = new Map([
   ["nephi", "1-nephi"], ["alma", "alma"], ["mosiah", "mosiah"], ["helaman", "helaman"], ["moroni", "moroni"], ["mormon", "mormon"], ["ether", "ether"], ["jacob", "jacob"], ["enos", "enos"],
   ["isaiah", "isaiah"], ["jeremiah", "jeremiah"], ["ezekiel", "ezekiel"], ["daniel", "daniel"], ["genesis", "genesis"], ["exodus", "exodus"], ["deuteronomy", "deuteronomy"], ["joshua", "joshua"],
   ["psalms", "psalms"], ["psalm", "psalms"], ["proverbs", "proverbs"], ["matthew", "matthew"], ["luke", "luke"], ["romans", "romans"], ["corinthians", "1-corinthians"], ["hebrews", "hebrews"],

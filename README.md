@@ -74,6 +74,11 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
 - Touch gestures: flick a page left or right to turn the chapter, spread or pinch
   two fingers to change the text size, and on an iPhone the top bar steps aside
   while you read down. One switch in Settings turns them off.
+- A half-remembered line finds its verse: the passage closest to the words typed,
+  in their order, leads, with one word wrong or in modern English (sees for seeth).
+  A book named in passing is offered as one tap ("Only in Isaiah"), never assumed.
+- Passages by the names they go by (Moroni's promise, the Beatitudes, Lehi's dream),
+  and chapters that quote another (Isaiah in 2 Nephi) offer to be read side by side.
 - A Back that says where it leads. Every place has an address (a shelf and
   how far into it you are, a search, a page, Ask, Deck), so "‹ Alma 32" or
   "‹ Results" in the reader bar, and at the top of every list on a phone,
