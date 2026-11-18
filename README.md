@@ -80,6 +80,13 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   and Right on a keyboard) turn to the previous and next chapter without
   adding a Back step. With a keyboard, Cmd+F or Cmd+K is the search box and
   Cmd+[ is Back.
+- Two pages at once on an iPad: "Open beside" in a passage's sheet puts that
+  chapter in a second pane next to the page being read (under it in
+  portrait), with its own scroll, arrows and Back. The divider drags and
+  snaps to a third, a half and two thirds; two taps even it out, and run to
+  the pane's edge it closes the pane. The second page is a reading copy that
+  shows your highlights and notes; Swap brings it to the reader to mark. The
+  pair comes back when the app is opened again.
 - Links stay in the app. A cross-reference, a footnote, a link from
   Missionary Standards to Preach My Gospel, however the Church's page
   writes the address (`alma/32?id=p21`, `alma/32.21-27`, a whole book, the
