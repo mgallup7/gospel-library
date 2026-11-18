@@ -107,7 +107,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click(gear);
     await page.waitForSelector("#sheet:not([hidden]) .settings", { timeout: 5000 });
     const secs = await page.evaluate(() => [...document.querySelectorAll("#sheet .set-sec h3")].map((h) => h.textContent).join(","));
-    check(secs === "Claude,Reading,Library,Backup,Sync between devices,Keyboard,About", `Settings should hold Claude, Reading, Library, Backup, Sync between devices, Keyboard, About: ${secs}`);
+    check(secs === "Reading,Sync between devices,Backup,Claude,Library,Keyboard,About", `Settings should hold Reading, Sync between devices, Backup, Claude, Library, Keyboard, About, under its status block: ${secs}`);
+    const top = await page.evaluate(() => { const s = document.querySelector("#sheet"), st = document.querySelector("#set-status"), done = document.querySelector("#sheet .set-done"); s.scrollTop = 900; const r = done.getBoundingClientRect(), box = s.getBoundingClientRect(); const pinned = r.top >= box.top - 1 && r.bottom <= box.top + 80 && r.height >= 44; s.scrollTop = 0; return { first: document.querySelector("#sheet .set-sec") === st, rows: [...st.querySelectorAll(".set-lb")].map((x) => x.textContent).join(","), pinned }; });
+    check(top.first && top.rows === "Library,Sync,Text size" && top.pinned, `Settings should open on its status block, with Done pinned: ${JSON.stringify(top)}`);
     check(await page.evaluate(() => !!document.querySelector("#sheet .ask-settings textarea.ask-instructions") && document.querySelector("#tabs").inert), "Claude's part is ask.js's own box, and the tabs are inert under the sheet");
     await page.waitForFunction(() => /Kept|May be cleared|does not say/.test(document.querySelector("#set-library")?.textContent || ""), null, { timeout: 5000 }).catch(() => errors.push(`${name}: Settings should say whether storage is persisted`));
     check((await at()).over <= 0, "Settings overflows sideways");

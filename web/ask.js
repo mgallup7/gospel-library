@@ -524,7 +524,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
         el("button", { type: "button", class: "primary", text: "Save", onclick: () => {
           const k = key.value.trim();
           // the same test the first setup makes: a key that cannot be one is not saved over a good one
-          if (!/^sk-ant-/.test(k)) { msg.textContent = k ? "That does not look like a Claude API key (they begin with sk-ant-). Nothing was saved." : "Paste a Claude API key, or use Remove key from this device. Nothing was saved."; key.focus(); return; }
+          if (!/^sk-ant-/.test(k)) { msg.textContent = k ? "That does not look like a Claude API key (they begin with sk-ant-). Nothing was saved." : settings.key ? "Paste a Claude API key, or use Remove key from this device. Nothing was saved." : "Paste a Claude API key first. Nothing was saved."; key.focus(); return; }
           const first = !settings.key;
           settings.model = model.value; settings.planner = planner.checked; settings.think = think.checked; settings.web = web.checked; settings.key = k;
           const hadI = settings.instructions, hadN = settings.notes; // what Claude was told until now, for the Undo below
@@ -538,14 +538,15 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
           else GL().toast("Settings saved.");
         } }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
-        el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => {
+        // (offered only when there is a key here to remove)
+        ...(!settings.key ? [] : [el("button", { type: "button", class: "text-btn danger", text: "Remove key from this device", onclick: () => {
           const was = settings.key, said = thread.slice(); // Undo puts back the key and the conversation it took with it
           settings.key = "";
           setThread([]);
           close();
           if (live()) render(live());
           GL().toast("The key is off this device.", { action: "Undo", onAction: () => { settings.key = was; setThread(said); if (live()) render(live()); } });
-        } }),
+        } })]),
       ]),
     ]);
     box.addEventListener("input", keep);

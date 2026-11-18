@@ -68,7 +68,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForTimeout(600);
   const after = await page.evaluate(async () => ({ marks: (await window.Marks.all()).length, studies: (await window.Studies.list()).length, decks: window.Deck.backup().saved.length }));
   check(JSON.stringify(after) === JSON.stringify(before), `Undo of an import should leave marks, study pages and decks as they were: ${JSON.stringify(before)} then ${JSON.stringify(after)}`);
-  check(/The import was undone/.test(await page.textContent("#sheet .set-said")) && await page.locator("#sheet .set-incoming").isHidden(), "Settings does not say the import was undone, or still offers its words for Claude");
+  check(/The import was undone/.test(await page.textContent("#sheet #set-backup .set-said")) && await page.locator("#sheet .set-incoming").isHidden(), "Settings does not say the import was undone, or still offers its words for Claude");
   // again: the words for Claude accepted, and that taken back
   await page.setInputFiles("#sheet .settings input[type=file]", file);
   await page.waitForSelector("#sheet .set-incoming:not([hidden])", { timeout: 5000 }).catch(() => errors.push("the imported note for Claude was not offered"));

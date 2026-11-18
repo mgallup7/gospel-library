@@ -34,14 +34,14 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${name}: the offer makes the page scroll sideways`);
     await page.click("#sheet .set-incoming .text-btn");
     check(JSON.stringify(await told()) === JSON.stringify(before) && await page.locator("#sheet .set-incoming").isHidden(), `${name}: Leave them out changed something, or left the offer up`);
-    check(/Left out/.test(await page.textContent("#sheet .set-said")), `${name}: Leave them out said nothing`);
+    check(/Left out/.test(await page.textContent("#sheet #set-backup .set-said")), `${name}: Leave them out said nothing`);
     // again, and accepted this time
     await page.setInputFiles("#sheet .settings input[type=file]", file);
     await page.waitForSelector("#sheet .set-incoming:not([hidden])", { timeout: 8000 }).catch(() => {});
     await page.click("#sheet .set-incoming .primary");
     const after = await told();
     check(/HOSTILE-INSTRUCTION/.test(after.i) && /HOSTILE-NOTE/.test(after.n) && /A second line/.test(after.n), `${name}: Accept did not bring the words in: ${JSON.stringify(after).slice(0, 200)}`);
-    check(/Brought in: your instructions to Claude, 2 remembered notes\./.test(await page.textContent("#sheet .set-said")), `${name}: after Accept: ${await page.textContent("#sheet .set-said")}`);
+    check(/Brought in: your instructions to Claude, 2 remembered notes\./.test(await page.textContent("#sheet #set-backup .set-said")), `${name}: after Accept: ${await page.textContent("#sheet #set-backup .set-said")}`);
     await page.evaluate((b) => { window.Ask.settings.instructions = b.i; window.Ask.settings.notes = b.n; }, before);
     await ctx.close();
   }

@@ -410,26 +410,44 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (here() > 0 && history.state?.prevUrl === url) { state.browse = was; history.back(); return; }
     renderHome(); push(true);
   }
+  // Safari shows a control's pressed look (:active) under a finger only when the page listens
+  // for touchstart. The home-screen app did (the edge swipe below); a Safari tab did not, so
+  // nothing looked pressed there. This listener does nothing else.
+  document.addEventListener("touchstart", () => {}, { passive: true });
   // Edge swipes in the home-screen app, where iOS keeps its own gesture for itself: in from the
   // left edge goes back, in from the right edge goes forward. In Safari the system gesture does
   // this already, so the app stays out of its way there.
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   if (standalone) {
-    const EDGE = 28, NEED = 80;
+    // It begins within 16pt of the edge (the verses begin at 20, so a finger on a line's first
+    // word is not on the edge), is over within 400 ms, and never happens while words are
+    // selected or after a press that rested before it moved: a long press on the first word of
+    // a line, dragged right to select a phrase, used to go Back. The book chips, the chapter
+    // grid and the Deck take it too (their edge is padding); what stays out is what the finger
+    // drags or scrolls sideways itself: a card's grip and the link dots, a board mid-drag, the
+    // scope row, a text field, the stage and the sheets.
+    const EDGE = 16, NEED = 80, QUICK = 400, REST = 250;
     let swipe = null;
+    const wordsSelected = () => { try { const s = window.getSelection ? window.getSelection() : null; return !!(s && s.rangeCount && !s.isCollapsed && String(s).trim()); } catch (_) { return false; } };
     document.addEventListener("touchstart", (e) => {
       swipe = null;
       if (e.touches.length !== 1 || show || !state.ready) return;
       const t = e.touches[0];
-      if (e.target.closest(".board, .port, .scopes, .shelf, .chapters, input, textarea, .stage, .sheet, .dsheet")) return;
-      if (t.clientX <= EDGE) swipe = { dir: -1, x: t.clientX, y: t.clientY };
-      else if (t.clientX >= window.innerWidth - EDGE) swipe = { dir: 1, x: t.clientX, y: t.clientY };
+      if (e.target.closest(".bc-grip, .port, .board.dragging, .board.reordering, .scopes, input, textarea, .stage, .sheet, .dsheet")) return;
+      if (wordsSelected()) return;
+      if (t.clientX <= EDGE) swipe = { dir: -1, x: t.clientX, y: t.clientY, at: Date.now(), moved: false };
+      else if (t.clientX >= window.innerWidth - EDGE) swipe = { dir: 1, x: t.clientX, y: t.clientY, at: Date.now(), moved: false };
     }, { passive: true });
     document.addEventListener("touchmove", (e) => {
       if (!swipe) return;
       const t = e.touches[0];
-      if (Math.abs(t.clientY - swipe.y) > 50) swipe = null; // a scroll, not a swipe
+      if (Math.abs(t.clientY - swipe.y) > 50) { swipe = null; return; } // a scroll, not a swipe
+      if (!swipe.moved && Math.abs(t.clientX - swipe.x) > 10) {
+        if (Date.now() - swipe.at > REST) swipe = null; // the finger rested first: a long press, not a swipe
+        else swipe.moved = true;
+      }
     }, { passive: true });
+    document.addEventListener("touchcancel", () => { swipe = null; }, { passive: true });
     document.addEventListener("touchend", (e) => {
       if (!swipe) return;
       const t = e.changedTouches[0];
@@ -437,6 +455,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const go = swipe;
       swipe = null;
       if (Math.abs(t.clientY - go.y) > 50) return;
+      if (Date.now() - go.at > QUICK || wordsSelected()) return;
       if (go.dir < 0 && dx >= NEED) { goBack(); }
       else if (go.dir > 0 && dx <= -NEED) { history.forward(); }
     }, { passive: true });
@@ -555,7 +574,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   async function render({ restore = null, boot = false } = {}) {
     const paneWas = boot ? history.state?.pane || null : null; // read before anything is drawn: drawing writes it again
     const searching = state.q.trim().length >= 2;
-    if (searching && !state.terms.length) state.terms = termsFrom(state.q);
+    // (a reference is a place, not words to mark on the page: "alma 32 21" painted "Alma" yellow)
+    if (searching && !state.terms.length && !refLike(state.q)) state.terms = termsFrom(state.q);
     const listWork = searching ? runSearch({ typeahead: false, silent: true, restore }) : (state.lastSearch = null, renderHome());
     // (at the start, a page that was showing over the board when the app was left shows again)
     const boardFirst = wide() && !searching && state.browse?.tab === "deck" && !(paneWas === "page" && (state.docId || state.studyId));
@@ -887,7 +907,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         data.jump = prev.jump;
       }
       state.lastSearch = data;
-      state.terms = data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
+      // a search that is a reference is a place: the page it opens shows no match strip and no painted hits
+      state.terms = data.jump?.doc_id ? [] : data.smart?.terms?.length ? data.smart.terms.flatMap((t) => t.split(" ")) : termsFrom(q);
       if (state.view === "all" && !typeahead) await renderConcordance(data, { restore }); else renderResults(data);
       // an empty board has nothing to offer fresh results: the right pane goes back to the page (or rests empty)
       if (wide() && paneView === "board" && !window.Deck?.count?.()) panel.page();
@@ -903,7 +924,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         openDoc(h.doc_id, h.pid, { replace: true });
       }
       // the concordance is every match already: Claude's extra searches belong to the ranked list, and would redraw it over this one
-      if (!typeahead && !more && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
+      // (and only for a search he just made: a redraw on Back, a tab return or a reload is silent, and must not send a paid request again)
+      if (!typeahead && !more && !silent && state.view !== "all" && data.smart && window.Ask?.hasKey() && navigator.onLine) widenWithClaude(q, data, mySeq);
     } catch (e) {
       if (mySeq !== searchSeq) return;
       listPane.replaceChildren(el("div", { class: "status error", text: `Search failed: ${e.message}` }));
@@ -940,9 +962,40 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     data.extra = added.length;
     data.widened = (plan.queries || []).map((x) => x.q);
     state.lastSearch = data;
+    // the extra rows go under the ones he may already be reading: the list stays where it is
+    const at = { list: listPane.scrollTop, win: window.scrollY };
     renderResults(data);
+    listPane.scrollTop = at.list;
+    if (!wide() && readerPane.hidden && window.scrollY !== at.win) window.scrollTo(0, at.win);
   }
 
+  // Does the box hold a reference ("alma 32 21", "D&C 4:2", "1 Nephi 3:7-9")? Only a guess from
+  // its shape, for the moment before the search answers (a reload on a page opened by reference).
+  function refLike(q) { return /^\s*(\d\s*)?[A-Za-z&.' ]*[A-Za-z&.]\s*\d+(\s*[:.\s]\s*\d+(\s*[-–,]\s*\d+)*)?\s*$/.test(q || ""); }
+  // "Only exact words": the words in quotes, and nothing else. Filters typed as filters stay as
+  // typed; a book or a shelf the search read out of the sentence ("faith in Alma") becomes a
+  // filter, so the quotes hold "faith" and the search is still kept to Alma.
+  const FILTER_WORDS = /\b(speaker|by|year|book|in|scope):("[^"]*"|\S+)/gi;
+  function exactQuery(data) {
+    const sm = data.smart || {};
+    const raw = data.query.trim();
+    const keep = raw.match(FILTER_WORDS) || [];
+    const typed = (k) => keep.some((f) => new RegExp(`^(${k}):`, "i").test(f));
+    let words = raw.replace(FILTER_WORDS, " ").replace(/"/g, " ").replace(/\s+/g, " ").trim();
+    if (sm.natural) {
+      const tail = /^(.*\S)\s+(?:in|from)\s+(?:the\s+)?(?:book\s+of\s+)?(\S+(?:\s+\S+){0,3})$/i.exec(words);
+      const names = (name) => !!tail && tail[2].toLowerCase().split(/\s+/).some((w) => w.replace(/[^a-z0-9]/g, "").length > 2 && name.toLowerCase().includes(w.replace(/[^a-z0-9]/g, "")));
+      if (sm.book && !typed("book")) {
+        const name = sm.book === "sections" ? "d&c" : sm.book.replace(/-/g, " ");
+        keep.push(/\s/.test(name) ? `book:"${name}"` : `book:${name}`);
+        if (names(name) || (sm.book === "sections" && tail && /d&c|doctrine/i.test(tail[2]))) words = tail[1];
+      } else if (sm.scope && sm.scope !== state.scope && !typed("in|scope")) {
+        keep.push(`scope:${sm.scope}`);
+        if (names(SCOPE_NAME[sm.scope] || sm.scope) || names(sm.scope)) words = tail[1];
+      }
+    }
+    return [`"${words}"`, ...keep].join(" ");
+  }
   function termsFrom(q) {
     return q.replace(/\b(speaker|by|year|book|in|scope):("[^"]*"|\S+)/gi, " ")
       .replace(/[^\w\s'’-]/g, " ")
@@ -981,7 +1034,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const how = `${sm.exact ? "Exact phrase found, then " : ""}${sm.semantic ? "by words and meaning" : "by words"}`;
       const line = el("div", { class: "smart-line" }, [
         el("span", { text: `${how.charAt(0).toUpperCase() + how.slice(1)}: ${bits.join(" · ") || data.query}` }),
-        /^".*"$/.test(data.query.trim()) ? null : el("button", { type: "button", class: "text-btn small", text: "Only exact words", onclick: () => { state.q = `"${data.query.trim().replace(/"/g, "")}"`; syncControls(); runSearch({ typeahead: false }); } }),
+        /^".*"$/.test(data.query.replace(FILTER_WORDS, " ").trim()) ? null : el("button", { type: "button", class: "text-btn small exact-words", text: "Only exact words", onclick: () => { state.q = exactQuery(data); syncControls(); runSearch({ typeahead: false }); } }),
         asTypedBtn,
       ]);
       if (data.widened) line.append(el("span", { class: "widened", text: ` · Claude also searched: ${data.widened.join("; ")}` }));
@@ -997,9 +1050,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     }
     const total = data.total || 0;
     if (data.hits.length || data.documents.length) {
-      const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents" && !data.typeahead;
+      // (typed results too: they are a sample, and nothing else on them said that more exist; the
+      // count is known only after a full search, so the typed line leaves the number out)
+      const lexAll = data.lexical_total > 0 && data.lexical_match && state.group !== "documents";
       const line = el("div", { class: "group-title", role: "status", "aria-live": "polite", text: state.group === "documents" ? `${total.toLocaleString()} talks and chapters` : `${data.smart?.semantic ? "Top " : ""}${total.toLocaleString()} ${total === 1 ? "passage" : "passages"}` });
-      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small see-all", text: data.lexical_total === 1 ? "See the 1 with these words, in its book" : `See all ${data.lexical_total.toLocaleString()}, book by book \u203a`, title: "Every passage with these words, in the order of the books", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
+      if (lexAll) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small see-all", text: data.typeahead ? "See all, book by book ›" : data.lexical_total === 1 ? "See the 1 with these words, in its book" : `See all ${data.lexical_total.toLocaleString()}, book by book \u203a`, title: "Every passage with these words, in the order of the books", onclick: () => { state.view = "all"; state.cbook = ""; state.exact = false; runSearch({ typeahead: false }); } }));
       // the results as a whole, handed to Claude (the floating pill's other job)
       if (data.hits.length && window.Ask) line.append(el("span", { text: " · " }), el("button", { type: "button", class: "text-btn small inline think-these", text: "Think these through", title: "Think these through with Claude", onclick: () => thinkHere() }));
       frag.append(line);
@@ -1112,6 +1167,20 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const redo = () => { push(true); renderConcordance(data); };
     const books = all.by_book || [];
     const chipBook = books.find((b) => b.key === state.cbook);
+    // the chips sit under their volumes, in the order of the shelf, so Alma is a few chips into
+    // the Book of Mormon and not the 44th in one long row; what is not scripture comes last
+    let volOf = new Map(), volNames = [];
+    if (books.length > 1) {
+      try { const shelf = await api("scriptures"); for (const v of shelf.volumes) { volNames.push(v.name); for (const b of v.books) volOf.set(b.slug, v.name); } } catch (_) { volOf = new Map(); volNames = []; }
+      if (state.view !== "all") return;
+    }
+    const bookGroups = [];
+    for (const name of [...volNames, "Other books"]) {
+      const inVol = books.filter((b) => (volOf.get(b.key) || "Other books") === name);
+      if (inVol.length) bookGroups.push({ name, books: inVol });
+    }
+    const bookChip = (b) => el("button", { type: "button", class: "chip small" + (b.key === state.cbook ? " on" : ""), "data-book": b.key, "aria-pressed": String(b.key === state.cbook),
+      onclick: () => { state.cbook = b.key === state.cbook ? "" : b.key; redo(); } }, [bookChipName(b.name), el("b", { text: ` ${b.n.toLocaleString()}` })]);
     const frag = document.createDocumentFragment();
     const t = listTrail(); if (t) frag.append(t);
     frag.append(el("div", { class: "conc-head" }, [
@@ -1125,9 +1194,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
           onclick: () => { if ((k === "exact") === state.exact) return; state.exact = k === "exact"; redo(); } }))),
       ]) : null,
       // how many in each book, as filters on the list: tap one to see that book, again to see them all
-      books.length > 1 || chipBook ? el("div", { class: "conc-books", role: "group", "aria-label": "Matches by book" }, books.map((b) =>
-        el("button", { type: "button", class: "chip small" + (b.key === state.cbook ? " on" : ""), "data-book": b.key, "aria-pressed": String(b.key === state.cbook),
-          onclick: () => { state.cbook = b.key === state.cbook ? "" : b.key; redo(); } }, [bookChipName(b.name), el("b", { text: ` ${b.n.toLocaleString()}` })]))) : null,
+      books.length > 1 || chipBook ? el("div", { class: "conc-books" + (bookGroups.length > 1 ? " by-volume" : ""), role: "group", "aria-label": "Matches by book" },
+        bookGroups.length > 1
+          ? bookGroups.map((g) => el("div", { class: "conc-vol", role: "group", "aria-label": g.name }, [el("div", { class: "conc-vol-name", text: g.name }), el("div", { class: "conc-vol-row" }, g.books.map(bookChip))]))
+          : books.map(bookChip)) : null,
     ].filter(Boolean)));
     if (all.exact === false && state.exact && data.lexical_match) frag.append(el("div", { class: "status", text: "This search cannot be narrowed to the exact words; showing each word with its family." }));
     // the words the match holds (a natural question brings its synonyms), marked whole or with their endings
@@ -1160,7 +1230,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     listPane.replaceChildren(frag);
     // the chip that is on stays in sight in its own row (sideways on a phone, down on the iPad)
     const onChip = $(".conc-books .chip.on", listPane);
-    if (onChip) { const row = onChip.parentElement; row.scrollLeft = onChip.offsetLeft - 16; row.scrollTop = onChip.offsetTop - 4; }
+    if (onChip) {
+      const row = onChip.parentElement, box = onChip.closest(".conc-books");
+      row.scrollLeft = onChip.offsetLeft - row.offsetLeft - 16;
+      box.scrollTop = onChip.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 24;
+    }
     listPane.scrollTop = restore ? restore.list || 0 : 0;
     if (restore) window.scrollTo(0, restore.win || 0);
     markActive();
@@ -1204,7 +1278,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ["conference", "General Conference", (st) => st.talks ? `${st.talks.toLocaleString()} talks, 1971 to ${latestName(st)}` : "Not downloaded yet", (st) => st.talks ? `1971 to ${latestName(st, true)}` : "Not downloaded yet"],
     ["preach-my-gospel", "Preach My Gospel", () => "2023 edition", () => "2023 edition"],
     ["missionary-standards", "Missionary Standards", () => "The booklet, its supplement, the service missionary edition", () => "All three editions"],
-    ["handbook", "General Handbook", (st) => `${count(st, "handbook")} chapters`, (st) => `${count(st, "handbook")} chapters`],
+    ["handbook", "General Handbook", (st) => `${count(st, "handbook")} ${count(st, "handbook") === 1 ? "chapter" : "chapters"}`, (st) => `${count(st, "handbook")} ${count(st, "handbook") === 1 ? "chapter" : "chapters"}`],
     ["come-follow-me", "Come, Follow Me", () => "This year and last", () => "This year and last"],
     ["manuals", "Books and manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
@@ -1333,7 +1407,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       if (last) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openDoc(last.id, last.pid || null) }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: last.title }), el("span", { class: "hc-s", text: [last.where, last.verse ? `at verse ${last.verse}` : null].filter(Boolean).join(" · ") })]), el("span", { class: "hc-go", text: "›" })]));
       if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => switchTab("deck") }, [
-        el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
+        el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "link" : "links"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
       body.append(sec);
     }
     // Come, Follow Me: the lesson for this week, one tap away
@@ -1505,6 +1579,21 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(state.pid || "") ? Number(state.pid.slice(1)) : null;
     store.set("lastRead", { id: currentDoc.id, title: currentDoc.title, where: crumbFor(currentDoc), pid: state.pid || null, verse });
   }
+  // Continue also remembers the place reached by reading: as the page scrolls, the first verse
+  // on screen is written into lastRead (at most once a second). iOS starts a home-screen app
+  // again at the shelves, so that card is the way back to the verse, not only to the chapter.
+  let readTimer = 0;
+  function noteReading() {
+    readTimer = 0;
+    if (!state.ready || !currentDoc || state.docId !== currentDoc.id || readerPane.hidden || document.body.classList.contains("presenting")) return;
+    const last = store.get("lastRead");
+    if (!last || last.id !== currentDoc.id) return;
+    const pid = topUnit({ preferTarget: true })?.id || null;
+    if (pid === (last.pid || null)) return;
+    const verse = currentDoc.collection === "scriptures" && /^p\d+$/.test(pid || "") ? Number(pid.slice(1)) : null;
+    store.set("lastRead", { ...last, pid, verse });
+  }
+  document.addEventListener("scroll", () => { if (!readTimer) readTimer = setTimeout(noteReading, 1000); }, { capture: true, passive: true });
 
   function renderDoc(doc) {
     const bar = el("div", { class: "reader-bar" }, [
@@ -1577,12 +1666,18 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     return el("button", { type: "button", class: "crumb", disabled: !can, title: can ? `${up || "Contents"}: all of it` : crumbFor(doc),
       "aria-label": can ? `${name}. Open ${up || "the contents"}` : name, onclick: () => openContents(doc) }, [el("span", { text: name })]);
   }
-  function openContents(doc) {
+  async function openContents(doc) {
     const c = doc.collection || "";
     const tab = TAB_OF[c] || (c.startsWith("jsp-") ? "jsp" : "manuals");
     const browse = c === "scriptures" && doc.book_slug ? { tab, book: doc.book_slug } : { tab, bookUri: doc.book.uri };
     if (tab === "jsp") browse.series = c;
     if (tab === "conference" && doc.year) browse.year = doc.year;
+    // A shelf of one book shows that book's contents as the shelf itself (browseCollection), so
+    // the contents has one address, the shelf's: with the book's own address as well, Back from
+    // a chapter passed through the same contents twice.
+    if (browse.bookUri && tab !== "jsp" && tab !== "conference") {
+      try { const data = await api("browse", { collection: tab }); if (data.books.filter((x) => x.docs > 0).length === 1) delete browse.bookUri; } catch (_) {}
+    }
     openList(browse);
   }
   // A shelf, or a depth in one, opened from the page: the list on a wide screen, the whole screen on
@@ -1663,7 +1758,23 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
     for (const m of list) { docMarks.set(m.pid, m); drawMark(body, m); }
     drawRanges(body);
+    applyWordMarks(doc, body);
   }
+  // A color given to a Hebrew or Greek word shows in the English too: a tint of that color on
+  // the verse's number while the tiles are put away (app.css), so the mark is never invisible.
+  async function applyWordMarks(doc, body) {
+    if (!window.Marks || !window.Marks.words || !doc?.uri || !body) return;
+    let list = [];
+    try { list = await window.Marks.words(doc.uri); } catch (_) { return; }
+    if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
+    for (const n of body.querySelectorAll(".verse-number.wm")) n.classList.remove("wm", "wm-y", "wm-g", "wm-b", "wm-p");
+    for (const m of list) {
+      const pid = m.pid || (Number.isFinite(m.verse) ? `p${m.verse}` : null);
+      const num = pid ? body.querySelector(`#${CSS.escape(pid)} .verse-number`) : null;
+      if (num && m.color) { num.classList.remove("wm-y", "wm-g", "wm-b", "wm-p"); num.classList.add("wm", `wm-${m.color}`); num.title = "A Hebrew or Greek word in this verse is highlighted"; }
+    }
+  }
+  window.addEventListener("marks:change", () => { if (currentDoc && state.docId === currentDoc.id) applyWordMarks(currentDoc, $(".doc", readerPane)); });
   function drawMark(body, m) {
     const unit = body.querySelector(`#${CSS.escape(m.pid)}`);
     if (!unit) return;
@@ -2109,7 +2220,14 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (got) { clearTimeout(phraseHide); phraseSel = got; showPhraseBar(); return; }
     if (phraseSel && phraseSel.mode !== "edit") { clearTimeout(phraseHide); phraseHide = setTimeout(hidePhraseBar, 700); }
   }
-  document.addEventListener("selectionchange", () => { clearTimeout(phraseTimer); phraseTimer = setTimeout(onTextSelection, 220); });
+  document.addEventListener("selectionchange", () => {
+    // a bar left up on marked words goes the moment other words begin to be selected, so a
+    // color tapped next can never land on the phrase it was showing before
+    if (phraseSel && phraseSel.mode === "edit") {
+      try { const s = window.getSelection ? window.getSelection() : null; if (s && s.rangeCount && !s.isCollapsed && readerPane.contains(s.anchorNode)) hidePhraseBar(); } catch (_) {}
+    }
+    clearTimeout(phraseTimer); phraseTimer = setTimeout(onTextSelection, 220);
+  });
   function hidePhraseBar() {
     clearTimeout(phraseHide);
     phraseSel = null;
@@ -2126,12 +2244,16 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const words = s.mode === "edit" ? rec.text : s.text;
     const label = s.mode === "verses" ? `${s.pids.length} passages` : `“${words.length > 60 ? words.slice(0, 58) + "…" : words}”`;
     const name = (c) => window.Marks.COLOR_NAME[c];
+    const shut = () => { if (s.mode !== "edit") dropTextSelection(); hidePhraseBar(); };
     const bar = el("div", { class: "phrase-bar", role: "group", "aria-label": s.mode === "verses" ? "The selected passages" : "The selected words" }, [
+      // a phone: the way out is an x at the start, as on the selection bar (app.css shows one or the other)
+      el("button", { type: "button", class: "ph-x", "aria-label": s.mode === "edit" ? "Done" : "Clear the selection", title: s.mode === "edit" ? "Done" : "Clear", html: ICON_CLEAR, onclick: shut }),
       el("span", { class: "n", text: label }),
       el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": String(!!rec && rec.color === c), "aria-label": `Highlight ${name(c)}`, title: `Highlight ${name(c)}`, onclick: () => phraseColor(c) }))),
       el("button", { type: "button", class: "text-btn ph-note", text: "Note", title: s.mode === "verses" ? "A note on these passages, first to last" : "A note on the verse or paragraph these words are in", onclick: phraseNote }),
+      window.Deck ? el("button", { type: "button", class: "primary ph-deck", "aria-label": "Add to deck", title: s.mode === "verses" ? "Add these passages to the deck" : "Add this verse to the deck, with these words marked on its card", text: "+ Deck", onclick: phraseDeck }) : null,
       s.mode === "edit" ? el("button", { type: "button", class: "text-btn danger ph-remove", text: "Remove", title: "Take this highlight off", onclick: () => phraseRemove(rec) }) : null,
-      el("button", { type: "button", class: "text-btn ph-clear", text: s.mode === "edit" ? "Done" : "Clear", onclick: () => { if (s.mode !== "edit") dropTextSelection(); hidePhraseBar(); } }),
+      el("button", { type: "button", class: "text-btn ph-clear", text: s.mode === "edit" ? "Done" : "Clear", onclick: shut }),
     ].filter(Boolean));
     // A mouse press on the bar leaves the page's selection as it is, so the words stay lit while a
     // color is chosen. Only a real mouse: a finger's press is never touched.
@@ -2174,10 +2296,14 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       // an older phrase that lies wholly under the new one would show none of its words: it goes
       const under = old ? [] : [...docPhrases.values()].filter((m) => m.pid === pid && m.id !== rec.id && m.start >= rec.start && m.end <= rec.end);
       for (const m of under) { await window.Marks.removeId(m.id); docPhrases.delete(m.id); }
-      dropTextSelection(); hidePhraseBar();
-      if (currentDoc !== page) return;
+      dropTextSelection();
+      if (currentDoc !== page) { hidePhraseBar(); return; }
       docPhrases.set(rec.id, rec);
       drawPhrases($(".doc", readerPane), pid);
+      // the bar stays, now on the marked words, so a note or + Deck can follow the color (Done closes it)
+      clearTimeout(phraseHide);
+      phraseSel = { mode: "edit", id: rec.id };
+      showPhraseBar();
       if (old) toast("Color changed.", { action: "Undo", onAction: () => restorePhrase(page, old, "Color put back.") });
       else toast("Highlighted.");
     } catch (_) { toast("Could not save that mark."); }
@@ -2196,9 +2322,33 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   async function restorePhrase(page, rec, said) {
     try {
       const back = await window.Marks.save(rec);
-      if (currentDoc === page) { docPhrases.set(back.id, back); drawPhrases($(".doc", readerPane), back.pid); }
+      if (currentDoc === page) {
+        docPhrases.set(back.id, back); drawPhrases($(".doc", readerPane), back.pid);
+        if (phraseSel && phraseSel.mode === "edit" && phraseSel.id === back.id) showPhraseBar(); // the bar still up shows the color that came back
+      }
       toast(said);
     } catch (_) { toast("Could not put that back."); }
+  }
+  // + Deck: the verse the words are in goes on the deck, and the words are its card's highlight
+  // (the deck's own, by word indexes on the card), so the phrase need not be marked again on
+  // the board. A verse already on the deck gets the highlight on the card it has. Several
+  // passages go on as the selection bar would put them.
+  function phraseDeck() {
+    const s = phraseSel, page = currentDoc, body = $(".doc", readerPane);
+    if (!s || !page || !body || !window.Deck) return;
+    const rec = s.mode === "edit" ? docPhrases.get(s.id) : null;
+    const pids = s.mode === "verses" ? s.pids : [rec ? rec.pid : s.pid];
+    const units = pids.map((pid) => (pid ? body.querySelector(`#${CSS.escape(pid)}`) : null)).filter(Boolean).map(unitInfo);
+    if (!units.length) return;
+    const words = s.mode === "verses" ? "" : rec ? rec.text : s.text;
+    const near = rec ? rec.start : s.start;
+    const added = window.Deck.addFromDoc(page, units);
+    const ids = added ? window.Deck.lastAdded?.() || [] : [];
+    const marked = !!(words && window.Deck.highlightPhrase?.(page.id, units[0].pid, words, near || 0));
+    dropTextSelection(); hidePhraseBar();
+    if (!added) { toast(marked ? "Already on the deck. These words are marked on its card." : "Already on the deck."); return; }
+    if (window.Deck.saysWhere?.()) return; // the deck says where it went, with an Undo of its own
+    toast(marked ? "On the deck, with these words marked." : added === 1 ? "On the deck." : `${added} passages on the deck.`, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); } });
   }
   // Note: the note is the verse's (or the paragraph's) own, as from the selection bar
   function phraseNote() {
@@ -2235,7 +2385,15 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     try { marks = await window.Marks.all(); } catch (_) { marks = []; }
     const sec = el("section", { class: "marks-sec" });
     const allBtn = el("button", { type: "button", class: "text-btn small", hidden: true, onclick: () => { allMarksShown = !allMarksShown; draw(); } });
-    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? (marks.some((m) => m.kind === "phrase" || m.kind === "word") ? `${marks.length} ${marks.length === 1 ? "mark" : "marks"}` : `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked`) : "Nothing marked yet" }), allBtn]));
+    // Newest first under Today, This week and Earlier, each row with its date, so last week's
+    // mark is found by when it was made; the same rows under their books is one tap away.
+    let byBook = store.get("marksBy") === "book";
+    const byBtn = el("button", { type: "button", class: "text-btn small mk-by", hidden: true, onclick: () => { byBook = !byBook; store.set("marksBy", byBook ? "book" : "date"); draw(); } });
+    const stampOf = (m) => m.updated || m.created || 0;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const whenOf = (m) => { const t = stampOf(m); return !t ? "Earlier" : t >= today.getTime() ? "Today" : t >= today.getTime() - 6 * 86400000 ? "This week" : "Earlier"; };
+    const dateOf = (m) => { const t = stampOf(m); if (!t) return ""; const d = new Date(t); return d.toLocaleDateString([], d.getFullYear() === today.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" }); };
+    sec.append(el("div", { class: "home-sec-head" }, [el("h3", { class: "marks-count", text: marks.length ? (marks.some((m) => m.kind === "phrase" || m.kind === "word") ? `${marks.length} ${marks.length === 1 ? "mark" : "marks"}` : `${marks.length} ${marks.length === 1 ? "passage" : "passages"} marked`) : "Nothing marked yet" }), el("span", { class: "mk-head-acts" }, [byBtn, allBtn])]));
     const list = el("div", { class: "mark-list" });
     // A phrase reads as its words in quotation marks under its verse; a Hebrew or Greek word as
     // its verse and the word with its meaning ("Revelation 3:16, χλιαρὸς lukewarm").
@@ -2258,7 +2416,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         if (d && b && !b.disabled && !b.classList.contains("on") && !d.classList.contains("with-orig")) b.click();
       }
     } }, [
-      el("span", { class: "mk-cite", text: where(m) }),
+      el("span", { class: "mk-top" }, [el("span", { class: "mk-cite", text: where(m) }), el("span", { class: "mk-date", text: dateOf(m) })]),
       el("span", { class: "mk-text", text: said(m) }),
       m.note ? el("span", { class: "mk-note" }, [el("span", { class: "ic", html: ICON_NOTE }), document.createTextNode(m.note.length > 160 ? m.note.slice(0, 158) + "…" : m.note)]) : null,
     ].filter(Boolean));
@@ -2269,7 +2427,16 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const shown = hits.slice(0, allMarksShown ? hits.length : 10);
       allBtn.hidden = hits.length <= 10;
       allBtn.textContent = allMarksShown ? "Latest only" : `All ${hits.length}`;
+      byBtn.hidden = marks.length <= 3;
+      byBtn.textContent = byBook ? "By date" : "By book";
+      byBtn.title = byBook ? "Newest first, under Today, This week and Earlier" : "Under a heading for each book";
       if (!shown.length) { list.replaceChildren(el("p", { class: "studies-lede mk-none", text: "No highlight or note matches." })); return; }
+      if (!byBook) {
+        const whens = new Map();
+        for (const m of shown) { const w = whenOf(m); if (!whens.has(w)) whens.set(w, []); whens.get(w).push(m); }
+        list.replaceChildren(...[...whens].flatMap(([w, ms]) => [el("h3", { class: "mk-book mk-when", text: w }), ...ms.map(row)]));
+        return;
+      }
       const books = new Map();
       for (const m of shown) { const b = markBook(m); if (!books.has(b)) books.set(b, []); books.get(b).push(m); }
       if (books.size < 2) { list.replaceChildren(...shown.map(row)); return; }
@@ -2387,21 +2554,55 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   function openSettings(again = false) {
     if (!state.ready || (overlay && !again)) return;
     const head = el("h2", { text: "Settings", tabindex: "-1" });
-    const box = el("div", { class: "settings" }, [head]);
-    const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [el("h3", { text: title }), ...[].concat(kids).filter(Boolean)]); box.append(s); return s; };
+    // The name and Done stay at the top while the screen scrolls under them: the only Close used
+    // to scroll away with the first section.
+    const box = el("div", { class: "settings" }, [el("div", { class: "set-head" }, [head, el("button", { type: "button", class: "text-btn set-done", text: "Done", onclick: closeSheet })])]);
+    // The sections are made in the order the code below needs and laid out in the order he
+    // needs them (ORDER, at the end): how things stand first, Claude's long form after the rest.
+    const secs = {};
+    const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [title ? el("h3", { text: title }) : null, ...[].concat(kids)].filter(Boolean)); secs[id] = s; return s; };
     const row = (label, value) => el("div", { class: "set-row" }, [el("span", { class: "set-lb", text: label }), typeof value === "string" ? el("span", { class: "set-val", text: value }) : value]);
     if (window.Ask?.settingsBox) sec("claude", "Claude", window.Ask.settingsBox({ close: closeSheet }));
-    // Reading
-    const sizeNow = () => `${parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17} px`;
+    // The text size in plain words: where it stands from the size the app starts at
+    const sizeNow = () => {
+      const sizes = [15, 16, 17, 18, 19, 21, 23, 26, 30, 34];
+      const at = sizes.indexOf(parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17);
+      const off = at < 0 ? 0 : at - 2;
+      return off === 0 ? "Standard" : `${Math.abs(off)} ${Math.abs(off) === 1 ? "step" : "steps"} ${off > 0 ? "larger" : "smaller"}`;
+    };
     const sizeLb = el("span", { class: "set-size-now", "aria-live": "polite", text: sizeNow() });
     const step = (d) => { resize(d); sizeLb.textContent = sizeNow(); };
-    sec("reading", "Reading", [
+    // How things stand, first: the library on this device, the sync, the text size
+    const libNow = el("span", { class: "set-val set-lib-now", text: "Counting…" });
+    const syncSaid = el("span", { class: "set-sync-said", role: "status" });
+    const syncNow = el("button", { type: "button", class: "text-btn set-sync-now", text: "Sync now", hidden: true, onclick: () => { try { window.Sync.syncNow(); } catch (_) {} } });
+    const syncSet = el("button", { type: "button", class: "text-btn set-sync-setup", text: "Set up", hidden: true, onclick: () => { secs.sync?.scrollIntoView({ block: "start" }); } });
+    if (window.Sync?.status) {
+      let drawn = false, off = null;
+      const draw = (st = window.Sync.status()) => {
+        if (drawn && !syncSaid.isConnected) { off?.(); return; }
+        drawn = true;
+        syncSaid.textContent = st.connected ? st.text : "Not set up: highlights and notes stay on this device.";
+        syncSaid.classList.toggle("bad", !!st.error);
+        syncNow.hidden = !st.connected; syncNow.disabled = !!st.syncing;
+        syncSet.hidden = !!st.connected;
+      };
+      off = window.Sync.onStatus(draw);
+      draw();
+    }
+    sec("status", "", el("div", { class: "set-rows set-status" }, [
+      row("Library", libNow),
+      window.Sync?.status ? el("div", { class: "set-row" }, [el("span", { class: "set-lb", text: "Sync" }), el("span", { class: "set-val set-sync" }, [syncSaid, syncNow, syncSet])]) : null,
       row("Text size", el("span", { class: "set-size" }, [
         el("button", { type: "button", "aria-label": "Smaller text", onclick: () => step(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
         sizeLb,
         el("button", { type: "button", "aria-label": "Larger text", onclick: () => step(1), html: "<span style='font-size:21px;font-weight:600'>A</span>" }),
       ])),
+    ].filter(Boolean)));
+    // Reading: the size as it will read on the page
+    sec("reading", "Reading", [
       el("p", { class: "set-sample", text: "For behold, this life is the time for men to prepare to meet God." }),
+      el("p", { class: "set-note", text: "The text size above changes this sample and every page. The reader's Aa does the same while you read." }),
     ]);
     // Library: filled in as the answers come
     const libRows = el("div", { class: "set-rows" }, [row("On this device", "Counting…")]);
@@ -2419,9 +2620,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         const active = store.get("active") || {};
         const built = st.meta?.bundle?.built_at || active.builtAt;
         rows.push(row("Version", [built ? `Built ${new Date(built).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}` : "", active.version ? `version ${String(active.version).slice(0, 12)}` : ""].filter(Boolean).join(", ") || "Unknown"));
+        libNow.textContent = [built ? `Built ${new Date(built).toLocaleDateString([], { month: "short", day: "numeric" })}` : "", `${st.documents.toLocaleString()} pages`].filter(Boolean).join(" · ");
         const sem = await semanticNote();
         rows.push(row("On this device", [`${st.documents.toLocaleString()} pages`, st.verses ? `${st.verses.toLocaleString()} verses` : "", st.talks ? `${st.talks.toLocaleString()} talks` : "", st.originals ? "Hebrew and Greek" : "", sem ? "search by meaning" : ""].filter(Boolean).join(", ")));
-      } catch (_) { rows.push(row("On this device", "The library is not answering.")); }
+      } catch (_) { rows.push(row("On this device", "The library is not answering.")); libNow.textContent = "The library is not answering."; }
       try { const e = await navigator.storage?.estimate?.(); if (e && e.usage) rows.push(row("Size", `${mb(e.usage)} used on this device`)); } catch (_) {}
       const keepRow = el("div", { class: "set-row" });
       const drawKeep = async () => {
@@ -2530,8 +2732,9 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       errLog,
     ]);
     try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
+    for (const id of ["status", "reading", "sync", "backup", "claude", "library", "keys", "about"]) if (secs[id]) box.append(secs[id]);
     $(".sheet-body", sheet).replaceChildren(box);
-    sheet.classList.add("page");
+    sheet.classList.add("page", "has-done");
     sheet.scrollTop = 0;
     openSheet("Settings");
     // the sheet puts the cursor in its first field; here that would raise the keyboard over the
@@ -2620,14 +2823,31 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       };
       const clear = () => { const f = $(".doc .sel", readerPane); clearSelection(); focusUnit(f); };
       bar = el("div", { class: "select-bar" }, [
+        // on a phone the way out of a selection is in sight, not under "more" (app.css shows this one there only)
+        el("button", { type: "button", class: "sel-x", "aria-label": "Clear selection", title: "Clear selection", html: ICON_CLEAR, onclick: clear }),
         el("span", { class: "n" }),
         window.Marks ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, window.Marks.COLORS.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "data-color": c, "aria-pressed": "false", "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => highlightSelection(c) }))) : null,
         window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", title: "A note on the selected passages, first to last", onclick: () => { const u = selectedUnits(); if (u.length) editNote(u[0], u.length > 1 ? u[u.length - 1] : null); } }) : null,
         el("button", { type: "button", class: "primary add-deck", "aria-label": "Add to deck", onclick: () => {
           const first = $(".doc .sel", readerPane);
-          const added = window.Deck?.addFromDoc(currentDoc, selectedUnits());
+          const doc = currentDoc, units = selectedUnits();
+          const fresh = units.filter((u) => !window.Deck?.has(doc.id, u.pid));
+          const added = window.Deck?.addFromDoc(doc, units);
           clearSelection(); // the bar goes, and focus with it: back to the first verse that was selected
           focusUnit(first);
+          // Verses next to each other go on as one card. The toast says so, and Split puts each
+          // on a card of its own (he asked for three cards and got two, with "On the deck").
+          if (added && added < fresh.length) {
+            const ids = window.Deck.lastAdded?.() || [];
+            const split = () => {
+              window.Deck.removeIds(ids);
+              const made = [];
+              for (const u of fresh) { if (window.Deck.addFromDoc(doc, [u])) made.push(...window.Deck.lastAdded()); }
+              toast(`${made.length} separate cards.`, { action: "Undo", onAction: () => { window.Deck.removeIds(made); toast(`${made.length} passages taken off the deck.`); } });
+            };
+            deckToast(added, added === 1 ? "Added as one card." : `Added as ${added} cards: neighbours share one.`, [{ action: "Split", onAction: split }]);
+            return;
+          }
           deckToast(added, added === 1 ? "On the deck. Tap Deck to highlight and link." : `${added} passages on the deck. Tap Deck to highlight and link.`);
         } }, [el("span", { class: "long", text: "Add to deck" }), el("span", { class: "short", text: "+ Deck" })]),
         // these three fold behind "more" when the bar has no room for them (fitSelectBar)
@@ -2672,12 +2892,26 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   const ICON_MORE = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>';
   const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a1 1 0 0 1 1-1h9"/></svg>';
   const ICON_CLEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  // A tap outside an open menu only closes it. The menus close on the pointer going down; the
+  // click that follows would still land on whatever is under the finger (closing Aa over the
+  // text selected a verse), so that one click is dropped. A drag still scrolls the page.
+  function swallowTap(e) {
+    e.stopPropagation();
+    let timer = 0;
+    const done = () => { clearTimeout(timer); document.removeEventListener("click", stop, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("pointercancel", done, true); };
+    const stop = (c) => { c.preventDefault(); c.stopPropagation(); done(); };
+    const up = () => { clearTimeout(timer); timer = setTimeout(done, 400); }; // the click comes right after the finger lifts, or not at all
+    document.addEventListener("click", stop, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", done, true);
+    timer = setTimeout(done, 5000);
+  }
   function popMenu(btnAttrs, items, cls) {
     const menu = el("div", { class: "size-menu", role: "menu", hidden: true }, items.map(([label, icon, act]) =>
       el("button", { type: "button", role: "menuitem", onclick: () => { shut(); act(); } }, [el("span", { class: "g", html: icon }), label])));
     const btn = el("button", { type: "button", "aria-haspopup": "menu", "aria-expanded": "false", ...btnAttrs, onclick: (e) => { e.stopPropagation(); if (menu.hidden) open(); else shut(); } });
     const wrap = el("span", { class: cls }, [btn, menu]);
-    const away = (e) => { if (!wrap.contains(e.target)) shut(); };
+    const away = (e) => { if (!wrap.contains(e.target)) { shut(); swallowTap(e); } };
     menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } });
     function open() { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true); menu.querySelector("button")?.focus({ preventScroll: true }); }
     function shut() { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); }
@@ -2744,11 +2978,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     else if (window.Deck && window.Deck.undo && window.Deck.undo()) toast("Undone."); // deck.js listens too, and stands down once this has taken the key
   });
   // The toast after an add, with an Undo that takes off exactly what that add put on.
-  function deckToast(added, text) {
+  function deckToast(added, text, more = null) {
     if (added && window.Deck?.saysWhere?.()) return; // the deck says where it went, with an Undo of its own: one toast, not two
     const ids = added ? window.Deck?.lastAdded?.() || [] : [];
     if (!ids.length) { toast(added === 0 ? "Already on the deck." : text); return; }
-    toast(text, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); } });
+    toast(text, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); }, more });
   }
   // The + and Add to deck buttons on results follow the deck, whatever changed it: an undo, the board's remove, another tab.
   function syncHitButtons() {
@@ -3100,7 +3334,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ].filter(Boolean));
     // "Aa" always, since the sizes are always in it; three dots beside it once Present and the rest have folded in
     const btn = el("button", { type: "button", class: "icon-btn size-pop-btn", "aria-label": "Text size and more", title: "Text size and more", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); if (menu.hidden) openMenu(); else shut(); } }, [el("span", { class: "aa", text: "Aa" }), el("span", { class: "dots", html: ICON_MORE })]);
-    const away = (e) => { if (!wrap.contains(e.target)) shut(); };
+    const away = (e) => { if (!wrap.contains(e.target)) { shut(); swallowTap(e); } };
     const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); shut(); btn.focus(); } };
     function openMenu() {
       const ob = wrap.closest(".reader-bar")?.querySelector(".orig-btn"), item = menu.querySelector(".menu-orig");
@@ -3224,10 +3458,33 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (!currentDoc) return;
     const units = presentUnits(currentDoc);
     if (!units.length) return;
-    const pid = fromPid || state.pid || $(".doc .is-target", readerPane)?.id || null;
+    // Where to begin: the verse asked for, else the first one selected, else the first one on
+    // screen (the verse he came for when it is still in view), so Present opens on what he is
+    // reading and not on slide 1.
+    const pid = fromPid || $(".doc .sel", readerPane)?.id || topUnit({ preferTarget: true })?.id || null;
     let i = pid ? units.findIndex((u) => u.pid === pid) : 0;
     if (i < 0) i = 0;
-    openStage({ units, i, doc: currentDoc });
+    openStage({ units, i, doc: currentDoc, from: { i, reader: readerPane.scrollTop, win: window.scrollY } });
+  }
+
+  // The first verse or paragraph showing under the reader's bar; null at the top of a page,
+  // where the title is still in view. preferTarget: the verse the address names, when it is on
+  // screen, stands for the place.
+  function topUnit({ preferTarget = false } = {}) {
+    const body = $(".doc", readerPane);
+    if (!body || readerPane.hidden) return null;
+    const bar = $(".reader-bar", readerPane);
+    const edge = Math.max(bar ? bar.getBoundingClientRect().bottom : 0, readerPane.getBoundingClientRect().top, 0);
+    const floor = Math.min(window.innerHeight, readerPane.getBoundingClientRect().bottom);
+    if (preferTarget) {
+      const t = body.querySelector(".is-target");
+      const r = t && t.id ? t.getBoundingClientRect() : null;
+      if (r && r.bottom > edge + 20 && r.top < floor - 20) return t;
+    }
+    const h1 = body.querySelector("h1");
+    if (h1 && h1.getBoundingClientRect().bottom > edge) return null;
+    for (const n of body.querySelectorAll(UNIT_SEL)) { if (n.id && n.getBoundingClientRect().bottom > edge + 20) return n; }
+    return null;
   }
 
   // A hand-picked list of passages (from Ask or the deck), each with its own
@@ -3247,11 +3504,24 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // A mouse moving wakes the controls; a touch wakes them only in the top-right corner, where
   // they live, so taps that turn the page leave the room looking at the words alone.
   stage.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse") wakeControls(); }, { passive: true });
+  // While faded the controls take no touches (app.css), and the touch that wakes them does
+  // nothing else: its click is dropped, so it neither presses the button that appears under the
+  // finger nor turns the slide.
+  let wakingTouch = 0;
   stage.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse") { wakeControls(); return; }
     const r = stage.getBoundingClientRect();
-    if (e.clientY - r.top < 120 && r.right - e.clientX < 220) wakeControls();
+    if (e.clientY - r.top < 120 && r.right - e.clientX < 220) {
+      if (!stage.classList.contains("show-controls")) wakingTouch = Date.now();
+      wakeControls();
+    }
   }, { passive: true });
+  stage.addEventListener("click", (e) => {
+    if (!wakingTouch) return;
+    const fresh = Date.now() - wakingTouch < 1500;
+    wakingTouch = 0;
+    if (fresh) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
   // The elapsed time since Present began, for the speaker only: it sits in the controls and
   // keeps counting while the screen is blanked. Tapping it starts it again from 0:00.
   let stageClock = null, stageT0 = 0;
@@ -3316,7 +3586,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
 
   function stopPresenting() {
     if (!show) return;
-    const atPid = show.doc ? show.units[show.i]?.pid : null;
+    // Closed on the slide it opened on, the chapter goes back to exactly where it was; after
+    // moving through slides, to the verse reached.
+    const from = show.from && show.from.i === show.i ? show.from : null;
+    const atPid = show.doc && !from ? show.units[show.i]?.pid : null;
     show.lock?.release?.();
     show = null;
     clearInterval(stageClock); stageClock = null;
@@ -3329,7 +3602,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     // focus goes back to what opened the stage, once the screen is out of full-screen (nothing outside it can take focus before)
     const back = stageOpener && stageOpener.isConnected ? stageOpener : (atPid ? readerPane.querySelector(`#${CSS.escape(atPid)}`) : null);
     stageOpener = null;
-    const restore = () => { if (back && back.isConnected) { try { back.focus({ preventScroll: true }); } catch (_) {} } };
+    const restore = () => {
+      if (back && back.isConnected) { try { back.focus({ preventScroll: true }); } catch (_) {} }
+      if (from) { readerPane.scrollTop = from.reader; if (window.scrollY !== from.win) window.scrollTo(0, from.win); }
+    };
     if (document.fullscreenElement) { const p = document.exitFullscreen?.(); if (p && p.then) p.then(restore, restore); else restore(); }
     else restore();
     dropOverlay("stage"); // closed by hand: its marker goes too (Back closing it has already cleared overlay)
@@ -3496,7 +3772,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     }
     sheetSlid = false;
     sheet.hidden = true; $("#scrim")?.remove();
-    sheet.classList.remove("page");
+    sheet.classList.remove("page", "has-done");
     document.body.classList.remove("sheet-page");
     inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
@@ -3617,6 +3893,18 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   for (const b of document.querySelectorAll("#tabs .tab[data-tab]")) b.addEventListener("click", () => switchTab(b.dataset.tab));
   $("#settingsBtn").addEventListener("click", () => { if (state.ready) openSettings(); });
   function focusBox() { try { input.focus({ preventScroll: true }); input.select(); } catch (_) {} }
+  // A tap into the box while it holds the last search selects that text, so the next thing
+  // typed replaces it ("alma 32 21" then "d&c 4 2" used to run together). A tap in a box that
+  // already has the cursor places the cursor, as usual. The selection is made on the click,
+  // after the browser has put its own cursor down, so it is not undone.
+  let boxHad = false;
+  const noteBox = () => { boxHad = document.activeElement === input; };
+  input.addEventListener("touchstart", noteBox, { passive: true });
+  input.addEventListener("mousedown", noteBox);
+  input.addEventListener("click", () => {
+    if (!boxHad && input.value) { try { input.setSelectionRange(0, input.value.length); } catch (_) {} }
+    boxHad = true;
+  });
   // The search box from the keyboard ("/", Cmd+F): where it is not on the screen (the Deck, Ask,
   // a page on a phone) Search comes up first.
   function focusSearch() {
@@ -3855,6 +4143,9 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // A question handed to Ask from elsewhere (the word sheet's "Ask Claude what else it can mean")
   function askQuestion(question) {
     rememberScroll(); hideNote();
+    // on a phone the page gives way to the answer, as it does for Think it through: left in the
+    // address, the page came back over the answer on a tab return or a reload
+    if (!wide()) { state.docId = null; state.pid = null; state.studyId = null; }
     state.browse = { tab: "ask", question }; state.q = "";
     syncControls(); renderHome(); showList(); push();
   }
@@ -3862,6 +4153,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ask: askQuestion,
     api, el, esc, store, sanitize, openDoc, followLink, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
+    swallowTap, // deck.js: a tap outside a card's menu only closes it
     get ready() { return state.ready; },
     passphrase: () => store.get("passphrase") || "", // sync.js seals the synced file with it
     get skills() { return store.get("skills")?.data || null; },
