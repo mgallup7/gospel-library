@@ -279,6 +279,7 @@ export function naturalQuery(raw, speakers = []) {
     const at = words.findIndex((w) => BOOK_WORDS.has(w));
     if (at >= 0 && words.length > 2) { const slug = BOOK_WORDS.get(words[at]); out.boostBook = slug === "1-nephi" || slug === "1-corinthians" ? words[at] : slug; words = words.filter((_, k) => k !== at); }
   }
+  out.rest = words.join(" "); // the line itself, once any place, speaker or year named around it is taken off
   const trim = (list) => {
     let a = 0, b = list.length - 1;
     while (a <= b && QUESTION_WORDS.has(list[a])) a++;

@@ -14,13 +14,18 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
 
   // typeahead vs return
-  await box(page, "zzqx nothing");
+  await box(page, "zzqx qqzv");
   await page.waitForTimeout(900);
   const typed = await page.textContent("#list");
   check(!/Nothing matches/.test(typed), "typeahead should not say nothing matches");
   await page.press("#q", "Enter");
   await page.waitForTimeout(900);
   check(/Nothing matches/.test(await page.textContent("#list")), "Return should say nothing matches for nonsense");
+  // one real word beside nonsense: the passages with that word, said plainly, not an empty page
+  await box(page, "zzqx charity");
+  await page.press("#q", "Enter");
+  await page.waitForTimeout(900);
+  check(/No passage has all of these words/.test(await page.textContent("#list")) && (await page.locator("#list .hit").count()) > 0, "a search with one real word should show the passages that have it");
 
   // a footnote in the sheet, closed by Back. Alma 32 has footnotes in the full library; the
   // test library's scriptures have none, so a Papers journal stands in.

@@ -839,7 +839,7 @@ async function rankedSearch(q, opts) {
   const coreLine = n && n.core && n.core.split(" ").length >= 3 ? n.core : null; // a question's own words, when enough are left to be a line
   // a question ("what did jesus say about being perfect") is scored on what it asks about, not on its own wording
   const asked = !!n && !n.quote && /^(?:(?:what|where|who|which|how|why|when)\s+(?:did|does|do|is|are|was|were|can|could|should|would|will|verse|scripture|passage)|find|show|give|tell|list)\b/i.test(fixed.text.trim());
-  const line = (n && n.quote) || coreLine || (asked ? n.terms.join(" ") : null) || fixed.text.replace(/\b\w+:("[^"]*"|\S+)/g, " ");
+  const line = (n && n.quote) || coreLine || (asked ? n.terms.join(" ") : null) || (n && n.rest) || fixed.text.replace(/\b\w+:("[^"]*"|\S+)/g, " ");
   const typed = explicit ? [] : quoteWords(line);
   const quoteLike = typed.length >= 3 && typed.length <= 24 && !out.jump;
   const partial = typeahead && !/\s$/.test(String(q || "")) && typed.length > 0 && typed[typed.length - 1].length >= 2;
