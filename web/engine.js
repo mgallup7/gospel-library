@@ -1075,7 +1075,7 @@ async function rankedSearch(q, opts) {
   }
   // A book named in passing ("great are the words of isaiah", "what did alma teach about faith") is
   // not searched alone, but it is offered: one tap keeps the search to that book.
-  if (!typeahead && !explicit && !cq.bookSlug && heads.length) {
+  if (!explicit && !cq.bookSlug && heads.length) { // (while typing as well: the results on the screen then are the typed ones)
     const word = typed.find((w) => BOOK_WORDS.has(w) && !/^\d/.test(BOOK_WORDS.get(w))) || (n && n.boostBook && S.book(n.boostBook) ? n.boostBook : null);
     const slug = word ? (BOOK_WORDS.get(word) || word) : null;
     const rest = slug ? [...new Set((n && asked ? n.terms : typed).filter((w) => w !== word && !TINY.has(w) && w.length > 1 && !QUESTION_WORDS_LOCAL.has(w)))] : [];

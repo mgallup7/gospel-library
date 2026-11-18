@@ -65,7 +65,12 @@ export default async function run(browser, { BASE, PASS }) {
   // a book named in passing is offered, one tap, and the tap keeps the search to it
   const offer = await page.evaluate(() => GL.api("search", { q: "what did alma teach about faith", limit: 5 }));
   check(offer.smart.offer?.book === "alma" && offer.smart.offer.count > 0 && !offer.smart.book, `no "Only in Alma" offer: ${JSON.stringify(offer.smart)}`);
-  await page.fill("#q", "what did alma teach about faith"); await page.press("#q", "Enter");
+  // it is there while the search is only typed, in sight and big enough to tap, and after Return
+  await page.fill("#q", ""); await page.locator("#q").pressSequentially("what did alma teach about faith", { delay: 15 });
+  await page.waitForSelector("#list .only-book", { timeout: 8000 }).catch(() => {});
+  const chip = await page.evaluate(() => { const e = document.querySelector("#list .only-book"); if (!e) return null; const r = e.getBoundingClientRect(); return { text: e.textContent, seen: r.width > 40 && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth }; });
+  check(chip && /^Only in Alma \(\d+\)$/.test(chip.text) && chip.seen, `while typing, the "Only in Alma" chip: ${JSON.stringify(chip)}`);
+  await page.press("#q", "Enter"); await page.waitForTimeout(1500);
   await page.waitForSelector("#list .only-book", { timeout: 8000 }).catch(() => {});
   await page.evaluate(() => document.querySelector("#list .only-book")?.click());
   await page.waitForFunction(() => /book:alma/.test(document.querySelector("#q").value), null, { timeout: 5000 }).catch(() => {});
