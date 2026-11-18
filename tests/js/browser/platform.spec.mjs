@@ -58,11 +58,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const sizeTo = async (px) => {
       await page.evaluate(() => window.GL.openSettings()); await wait();
       for (let i = 0; i < 12; i++) {
-        const now = parseInt(await page.textContent("#sheet .set-size-now"), 10);
+        const now = await page.evaluate(() => parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size"), 10) || 17); // Settings says the size in words now
         if (now === px) break;
         await page.click(`#sheet .set-size button[aria-label="${now < px ? "Larger" : "Smaller"} text"]`);
       }
-      check(parseInt(await page.textContent("#sheet .set-size-now"), 10) === px, `Settings should reach ${px}px`);
+      check((await page.evaluate(() => parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size"), 10) || 17)) === px && !/px/.test(await page.textContent("#sheet .set-size-now")), `Settings should reach ${px}px, and say the size in words: ${await page.textContent("#sheet .set-size-now")}`);
       await page.keyboard.press("Escape"); await wait();
     };
     const fits = async (where) => {

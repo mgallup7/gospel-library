@@ -2510,21 +2510,55 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   function openSettings(again = false) {
     if (!state.ready || (overlay && !again)) return;
     const head = el("h2", { text: "Settings", tabindex: "-1" });
-    const box = el("div", { class: "settings" }, [head]);
-    const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [el("h3", { text: title }), ...[].concat(kids).filter(Boolean)]); box.append(s); return s; };
+    // The name and Done stay at the top while the screen scrolls under them: the only Close used
+    // to scroll away with the first section.
+    const box = el("div", { class: "settings" }, [el("div", { class: "set-head" }, [head, el("button", { type: "button", class: "text-btn set-done", text: "Done", onclick: closeSheet })])]);
+    // The sections are made in the order the code below needs and laid out in the order he
+    // needs them (ORDER, at the end): how things stand first, Claude's long form after the rest.
+    const secs = {};
+    const sec = (id, title, kids) => { const s = el("section", { class: "set-sec", id: `set-${id}` }, [title ? el("h3", { text: title }) : null, ...[].concat(kids)].filter(Boolean)); secs[id] = s; return s; };
     const row = (label, value) => el("div", { class: "set-row" }, [el("span", { class: "set-lb", text: label }), typeof value === "string" ? el("span", { class: "set-val", text: value }) : value]);
     if (window.Ask?.settingsBox) sec("claude", "Claude", window.Ask.settingsBox({ close: closeSheet }));
-    // Reading
-    const sizeNow = () => `${parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17} px`;
+    // The text size in plain words: where it stands from the size the app starts at
+    const sizeNow = () => {
+      const sizes = [15, 16, 17, 18, 19, 21, 23, 26, 30, 34];
+      const at = sizes.indexOf(parseInt(getComputedStyle(document.documentElement).getPropertyValue("--reading-size")) || 17);
+      const off = at < 0 ? 0 : at - 2;
+      return off === 0 ? "Standard" : `${Math.abs(off)} ${Math.abs(off) === 1 ? "step" : "steps"} ${off > 0 ? "larger" : "smaller"}`;
+    };
     const sizeLb = el("span", { class: "set-size-now", "aria-live": "polite", text: sizeNow() });
     const step = (d) => { resize(d); sizeLb.textContent = sizeNow(); };
-    sec("reading", "Reading", [
+    // How things stand, first: the library on this device, the sync, the text size
+    const libNow = el("span", { class: "set-val set-lib-now", text: "Counting…" });
+    const syncSaid = el("span", { class: "set-sync-said", role: "status" });
+    const syncNow = el("button", { type: "button", class: "text-btn set-sync-now", text: "Sync now", hidden: true, onclick: () => { try { window.Sync.syncNow(); } catch (_) {} } });
+    const syncSet = el("button", { type: "button", class: "text-btn set-sync-setup", text: "Set up", hidden: true, onclick: () => { secs.sync?.scrollIntoView({ block: "start" }); } });
+    if (window.Sync?.status) {
+      let drawn = false, off = null;
+      const draw = (st = window.Sync.status()) => {
+        if (drawn && !syncSaid.isConnected) { off?.(); return; }
+        drawn = true;
+        syncSaid.textContent = st.connected ? st.text : "Not set up: highlights and notes stay on this device.";
+        syncSaid.classList.toggle("bad", !!st.error);
+        syncNow.hidden = !st.connected; syncNow.disabled = !!st.syncing;
+        syncSet.hidden = !!st.connected;
+      };
+      off = window.Sync.onStatus(draw);
+      draw();
+    }
+    sec("status", "", el("div", { class: "set-rows set-status" }, [
+      row("Library", libNow),
+      window.Sync?.status ? el("div", { class: "set-row" }, [el("span", { class: "set-lb", text: "Sync" }), el("span", { class: "set-val set-sync" }, [syncSaid, syncNow, syncSet])]) : null,
       row("Text size", el("span", { class: "set-size" }, [
         el("button", { type: "button", "aria-label": "Smaller text", onclick: () => step(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
         sizeLb,
         el("button", { type: "button", "aria-label": "Larger text", onclick: () => step(1), html: "<span style='font-size:21px;font-weight:600'>A</span>" }),
       ])),
+    ].filter(Boolean)));
+    // Reading: the size as it will read on the page
+    sec("reading", "Reading", [
       el("p", { class: "set-sample", text: "For behold, this life is the time for men to prepare to meet God." }),
+      el("p", { class: "set-note", text: "The text size above changes this sample and every page. The reader's Aa does the same while you read." }),
     ]);
     // Library: filled in as the answers come
     const libRows = el("div", { class: "set-rows" }, [row("On this device", "Counting…")]);
@@ -2542,9 +2576,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
         const active = store.get("active") || {};
         const built = st.meta?.bundle?.built_at || active.builtAt;
         rows.push(row("Version", [built ? `Built ${new Date(built).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}` : "", active.version ? `version ${String(active.version).slice(0, 12)}` : ""].filter(Boolean).join(", ") || "Unknown"));
+        libNow.textContent = [built ? `Built ${new Date(built).toLocaleDateString([], { month: "short", day: "numeric" })}` : "", `${st.documents.toLocaleString()} pages`].filter(Boolean).join(" · ");
         const sem = await semanticNote();
         rows.push(row("On this device", [`${st.documents.toLocaleString()} pages`, st.verses ? `${st.verses.toLocaleString()} verses` : "", st.talks ? `${st.talks.toLocaleString()} talks` : "", st.originals ? "Hebrew and Greek" : "", sem ? "search by meaning" : ""].filter(Boolean).join(", ")));
-      } catch (_) { rows.push(row("On this device", "The library is not answering.")); }
+      } catch (_) { rows.push(row("On this device", "The library is not answering.")); libNow.textContent = "The library is not answering."; }
       try { const e = await navigator.storage?.estimate?.(); if (e && e.usage) rows.push(row("Size", `${mb(e.usage)} used on this device`)); } catch (_) {}
       const keepRow = el("div", { class: "set-row" });
       const drawKeep = async () => {
@@ -2653,8 +2688,9 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       errLog,
     ]);
     try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
+    for (const id of ["status", "reading", "sync", "backup", "claude", "library", "keys", "about"]) if (secs[id]) box.append(secs[id]);
     $(".sheet-body", sheet).replaceChildren(box);
-    sheet.classList.add("page");
+    sheet.classList.add("page", "has-done");
     sheet.scrollTop = 0;
     openSheet("Settings");
     // the sheet puts the cursor in its first field; here that would raise the keyboard over the
@@ -3691,7 +3727,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     }
     sheetSlid = false;
     sheet.hidden = true; $("#scrim")?.remove();
-    sheet.classList.remove("page");
+    sheet.classList.remove("page", "has-done");
     document.body.classList.remove("sheet-page");
     inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
