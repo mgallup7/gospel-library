@@ -1127,7 +1127,7 @@ body.sheet-page .scrim { background: rgba(0, 0, 0, .32); z-index: 39; }
 .select-bar .primary, .deck .primary, .deck-summary .primary { height: 44px; padding: 0 14px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .deck .primary:disabled, .deck .text-btn:disabled { opacity: .45; }
 .toast { position: fixed; left: calc(50% + var(--rail-w) / 2); bottom: calc(18px + max(var(--tabs-h), var(--safe-bottom))); transform: translate(-50%, 10px); z-index: 60; padding: 10px 16px; border-radius: var(--r-ctl); background: var(--ink); color: var(--paper); font: var(--ui-14) var(--sans); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
-body.sel-up .toast { bottom: calc(84px + max(var(--tabs-h), var(--safe-bottom))); } /* above a selection bar that stays up, itself above the tab bar */
+body.sel-up .toast, body.bs-sel-up .toast { bottom: calc(84px + max(var(--tabs-h), var(--safe-bottom))); } /* above a selection bar that stays up, itself above the tab bar */
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 /* the one toast stays in the page between messages: hidden from touch and VoiceOver once it fades */
 .toast:not(.show) { visibility: hidden; pointer-events: none; transition: opacity .2s, transform .2s, visibility 0s .2s; }
@@ -1576,7 +1576,19 @@ a.toast-action { display: inline-flex; align-items: center; }
   .bs-bar .bs-close svg { width: 22px; height: 22px; }
   #beside.narrow .bs-swap .w { display: none; }
   #beside.narrow .bs-swap { width: 40px; padding: 0; }
-  .bs-hint { flex: none; padding: 8px 16px; font: var(--ui-13)/1.35 var(--sans); color: var(--ink); background: var(--target); border-bottom: 1px solid var(--rule); }
+  /* this side's own bar for the verses tapped here: the reader's selection bar, in this pane */
+  .bs-select:not([hidden]) { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px calc(12px + var(--safe-right)) calc(8px + var(--safe-bottom)) 8px; background: var(--chrome); border-top: 1px solid var(--rule); font-family: var(--sans); }
+  .bs-select .bs-spacer { flex: 1 1 0; min-width: 0; }
+  .bs-select .n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-13); color: var(--ink-2); }
+  .bs-select .bs-sel-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: var(--r-ctl); color: var(--ink-2); }
+  .bs-select .bs-sel-x svg { width: 20px; height: 20px; }
+  .bs-select .bs-sel-x:active { background: var(--chrome-2); }
+  .bs-select .hl-dots { flex: none; gap: 16px; margin: 0 6px; }
+  .bs-select .hl-dot[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 4px var(--accent); }
+  .bs-select .text-btn { flex: none; }
+  .bs-select .primary { flex: none; height: 44px; padding: 0 14px; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink); font: 600 var(--ui-15) var(--sans); white-space: nowrap; }
+  #beside.narrow .bs-select .n { display: none; }
+  #beside.narrow .bs-select .hl-dots { gap: 12px; margin: 0 2px; }
   .bs-under { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
   .bs-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   #beside .doc { padding: 18px 30px calc(60px + var(--safe-bottom)); }

@@ -209,12 +209,29 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.tap("#reader .select-bar .hl-dot.hl-g");
     const drawn = await page.waitForFunction(() => document.querySelector("#beside .doc #p5")?.classList.contains("hl-g"), null, { timeout: 5000 }).then(() => true, () => false);
     check(drawn, "a highlight made in the reader did not appear in the pane");
-    // a verse tapped in the pane is not selected; the hint says why, once
-    await page.evaluate(() => { document.querySelector("#beside .doc #p5").scrollIntoView({ block: "center" }); });
-    await page.tap("#beside .doc #p5");
-    await page.waitForTimeout(200);
-    check((await page.evaluate(() => document.querySelectorAll("#beside .sel").length)) === 0 && !(await page.$("#beside .select-bar")), "a verse was selected in the pane");
-    check(await page.evaluate(() => { const h = document.querySelector("#beside .bs-hint"); return !h.hidden && h.textContent === "Reading copy. Swap to mark this side."; }), "the hint did not show on the first verse tapped in the pane");
+    // a verse tapped in the pane is selected there, and its bar marks it: both sides show the color
+    await page.evaluate(() => { document.querySelector("#beside .doc #p7").scrollIntoView({ block: "center" }); });
+    await page.tap("#beside .doc #p7");
+    await page.waitForSelector("#beside .bs-select:not([hidden]) .hl-dot.hl-b", { timeout: 5000 });
+    check((await page.evaluate(() => document.querySelectorAll("#beside .sel").length)) === 1 && (await page.evaluate(() => !document.querySelector("#reader .doc #p7").classList.contains("sel"))), "a verse tapped in the pane was not selected there alone");
+    await page.tap("#beside .bs-select .hl-dot.hl-b");
+    const both = await page.waitForFunction(() => document.querySelector("#beside .doc #p7")?.classList.contains("hl-b") && document.querySelector("#reader .doc #p7")?.classList.contains("hl-b"), null, { timeout: 5000 }).then(() => true, () => false);
+    check(both, "a highlight made in the pane did not show on both sides");
+    // a note written from the pane
+    await page.tap("#beside .bs-select .text-btn");
+    await page.waitForSelector("#sheet .note-text", { timeout: 5000 });
+    await page.fill("#sheet .note-text", "From the second page");
+    await page.tap("#sheet .peek-row .primary");
+    const noted = await page.waitForFunction(() => document.querySelector("#beside .doc #p7 .note-mark") && document.querySelector("#reader .doc #p7 .note-mark"), null, { timeout: 5000 }).then(() => true, () => false);
+    check(noted, "a note written in the pane did not show on both sides");
+    await page.screenshot({ path: OUT + "03b-pane-select.png" });
+    // the same color again takes it off; the X lets the verse go
+    await page.evaluate(() => document.querySelector("#beside .bs-select .hl-dot.hl-b").click());
+    await page.waitForFunction(() => !document.querySelector("#beside .doc #p7")?.classList.contains("hl-b"), null, { timeout: 5000 }).catch(() => {});
+    check(!(await page.evaluate(() => document.querySelector("#beside .doc #p7").classList.contains("hl-b"))), "the same color again did not take the highlight off");
+    await page.evaluate(() => document.querySelector("#beside .bs-select .bs-sel-x").click()); // the toast may still lie over it
+    check(await page.evaluate(() => document.querySelector("#beside .bs-select").hidden && !document.querySelector("#beside .sel")), "the X did not clear the pane's selection");
+    await page.evaluate(async () => { await window.Marks.remove(GL.reading.doc.uri, "p7"); });
     await page.screenshot({ path: OUT + "03-same-chapter.png" });
 
     // the divider: held, the stops are named; let go, it snaps; the pair comes back after a reload

@@ -83,10 +83,10 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   function build() {
     if (pane) return;
     bar = el("div", { class: "bs-bar" });
-    hint = el("div", { class: "bs-hint", role: "status", hidden: true, text: "Reading copy. Swap to mark this side." });
+    hint = el("div", { class: "bs-select", hidden: true }); // this side's own bar for the verses tapped here
     scroller = el("div", { class: "bs-scroll" });
     under = el("div", { class: "bs-under" }, [scroller]); // the chapter list drops over the page from here
-    pane = el("section", { id: "beside", class: "bs-pane", "aria-label": "The page beside" }, [bar, hint, under]);
+    pane = el("section", { id: "beside", class: "bs-pane", "aria-label": "The page beside" }, [bar, under, hint]);
     divider = el("div", { class: "bs-div" }, [el("span", { class: "bs-grip" }), el("span", { class: "bs-grab", role: "separator", tabindex: "0", "aria-label": "Divider between the two pages. Drag to resize, double-tap to even out." })]);
     track = el("div", { class: "bs-track", hidden: true });
     scroller.addEventListener("scroll", saveSoon, { passive: true });
@@ -149,7 +149,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     if (picking) shutPicker();
     remember(doc);
     drawBar();
-    hint.hidden = true;
+    hint.hidden = true; hint.replaceChildren(); document.body.classList.remove("bs-sel-up");
     scroller.replaceChildren(body);
     scroller.scrollTop = 0;
     mount();
@@ -243,16 +243,108 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
       } catch (err) { window.GLLog?.note("beside.phrases", err); }
     }
   }
-  // a note is read here in the app's own sheet; it is written from the reader
-  function readNote(m) {
+  // ---- marking on this side ----------------------------------------------------
+  // A verse tapped here is selected here: the same colors, Note and Add to deck as the reader's
+  // bar, written to the same store, so both sides and every device show the mark. Words inside a
+  // verse are still marked from the reader (Swap brings the page there).
+  const unitOf = (n) => {
+    const c = n.cloneNode(true);
+    for (const junk of c.querySelectorAll("sup.marker, .verse-number, .page-break, .note-mark")) junk.remove();
+    const num = n.querySelector(".verse-number");
+    const verse = num ? parseInt(num.textContent, 10) : null;
+    return { pid: n.id, kind: n.classList.contains("verse") ? "verse" : "para", verse: Number.isFinite(verse) ? verse : null, text: c.textContent.replace(/\s+/g, " ").trim() };
+  };
+  const picked = () => (cur ? [...cur.body.querySelectorAll(".sel")].map(unitOf) : []);
+  const citeOf = (doc, u) => (u.kind === "verse" && doc.citation ? `${chapterOf(doc.citation)}:${u.verse}` : nameOf(doc));
+  // the reader draws its own marks as it makes them; one made here, on the chapter it also has
+  // open, is news to it, and it redraws as it does for a mark from another device
+  function tellReader(doc) {
+    const r = GL.reading;
+    if (r && r.open && r.doc.uri === doc.uri) { try { window.dispatchEvent(new CustomEvent("marks:change", { detail: { local: false } })); } catch (_) {} }
+  }
+  function clearPicked() {
+    if (cur) for (const n of cur.body.querySelectorAll(".sel")) n.classList.remove("sel");
+    drawSelect();
+  }
+  async function colorPicked(color) {
+    const units = picked(), doc = cur && cur.doc;
+    if (!units.length || !doc || !window.Marks) return;
+    try {
+      const had = new Map((await window.Marks.forDoc(doc.uri)).map((m) => [m.pid, m]));
+      const allSame = units.every((u) => had.get(u.pid)?.color === color); // the same color again takes it off
+      for (const u of units) {
+        const ranged = !!had.get(u.pid)?.pid_end;
+        await window.Marks.set({ uri: doc.uri, doc_id: doc.id, pid: u.pid, verse: u.verse, kind: u.kind, color: allSame ? null : color, text: ranged ? undefined : u.text, citation: ranged ? undefined : citeOf(doc, u), title: doc.title });
+      }
+      tellReader(doc);
+      drawSelect();
+    } catch (_) { GL.toast("Could not save that mark."); }
+  }
+  async function editNote(unit) {
+    const doc = cur && cur.doc;
     const bodyEl = document.querySelector("#sheet .sheet-body");
-    if (!bodyEl) return;
+    if (!doc || !bodyEl || !window.Marks) return;
+    let old = null;
+    try { old = (await window.Marks.forDoc(doc.uri)).find((m) => m.pid === unit.pid) || null; } catch (_) {}
+    const existing = old?.note || "";
+    const cite = old?.pid_end && old.citation ? old.citation : citeOf(doc, unit);
+    const ta = el("textarea", { class: "note-text", rows: 5, placeholder: "Your note on this passage…", "aria-label": `Note on ${cite}` });
+    ta.value = existing;
+    const save = async () => {
+      try {
+        const keep = !!ta.value.trim();
+        // a note that spans verses (made in the reader) keeps its span, its words and its citation
+        const fields = old?.pid_end && keep ? { note: ta.value } : { note: ta.value, pid_end: null, verse_end: null, text: unit.text, citation: citeOf(doc, unit) };
+        await window.Marks.set({ uri: doc.uri, doc_id: doc.id, pid: unit.pid, verse: unit.verse, kind: unit.kind, title: doc.title, ...fields });
+        tellReader(doc);
+        GL.closeSheet();
+        if (!keep && existing) GL.toast("Note removed.", { action: "Undo", onAction: async () => { try { await window.Marks.set({ uri: old.uri, pid: old.pid, doc_id: old.doc_id, verse: old.verse, kind: old.kind, color: old.color || null, note: old.note, pid_end: old.pid_end || null, verse_end: old.verse_end, text: old.text, citation: old.citation, title: old.title }); tellReader(doc); GL.toast("Note put back."); } catch (_) {} } });
+        else GL.toast(keep ? "Note saved." : "Nothing to save.");
+      } catch (_) { GL.toast("Could not save the note."); }
+    };
     bodyEl.replaceChildren(
-      el("div", { class: "nm", text: `Note on ${m.citation || nameOf(cur.doc)}` }),
-      el("p", { class: "bs-note", text: m.note }),
-      el("p", { class: "note-passage", text: "Swap to bring this page to the reader, where the note can be changed." }),
+      el("div", { class: "nm", text: `Note on ${cite}` }),
+      el("p", { class: "note-passage", text: unit.text.length > 180 ? unit.text.slice(0, 178) + "…" : unit.text }),
+      ta,
+      el("div", { class: "peek-row" }, [
+        el("button", { type: "button", class: "primary", text: "Save", onclick: save }),
+        existing ? el("button", { type: "button", class: "text-btn danger", text: "Delete", onclick: () => { ta.value = ""; save(); } }) : null,
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => GL.closeSheet() }),
+      ].filter(Boolean)),
     );
     GL.openSheet("Note");
+    setTimeout(() => ta.focus(), 50);
+  }
+  function deckPicked() {
+    const units = picked(), doc = cur && cur.doc;
+    if (!units.length || !doc || !window.Deck) return;
+    const added = window.Deck.addFromDoc(doc, units);
+    const ids = added ? window.Deck.lastAdded?.() || [] : [];
+    clearPicked();
+    if (!added) { GL.toast("Already on the deck."); return; }
+    GL.toast(added === 1 ? "On the deck." : `${added} passages on the deck.`, { action: "Undo", onAction: () => { window.Deck.removeIds(ids); GL.toast(ids.length === 1 ? "Taken off the deck." : `${ids.length} passages taken off the deck.`); } });
+  }
+  async function drawSelect() {
+    if (!hint) return;
+    const units = picked();
+    document.body.classList.toggle("bs-sel-up", !!(units.length && cur)); // a toast clears this bar as it does the reader's
+    if (!units.length || !cur) { hint.hidden = true; hint.replaceChildren(); return; }
+    let had = new Map();
+    try { had = new Map((await window.Marks.forDoc(cur.doc.uri)).map((m) => [m.pid, m])); } catch (_) {}
+    const colors = window.Marks ? window.Marks.COLORS : [];
+    hint.replaceChildren(...[
+      el("button", { type: "button", class: "bs-sel-x", "aria-label": "Clear selection", title: "Clear selection", html: I.close, onclick: clearPicked }),
+      el("span", { class: "n", text: units.length === 1 ? citeOf(cur.doc, units[0]) : `${units.length} selected` }),
+      el("span", { class: "bs-spacer" }),
+      colors.length ? el("span", { class: "hl-dots", role: "group", "aria-label": "Highlight" }, colors.map((c) => el("button", { type: "button", class: `hl-dot hl-${c}`, "aria-pressed": String(units.every((u) => had.get(u.pid)?.color === c)), "aria-label": `Highlight ${window.Marks.COLOR_NAME[c]}`, title: `Highlight ${window.Marks.COLOR_NAME[c]}`, onclick: () => colorPicked(c) }))) : null,
+      window.Marks ? el("button", { type: "button", class: "text-btn", text: "Note", onclick: () => editNote(units[0]) }) : null,
+      window.Deck ? el("button", { type: "button", class: "primary", text: pane.classList.contains("narrow") ? "Deck" : "Add to deck", "aria-label": "Add to deck", onclick: deckPicked }) : null,
+    ].filter(Boolean));
+    hint.hidden = false;
+  }
+  function readNote(m) {
+    const n = cur && cur.body.querySelector(`#${CSS.escape(m.pid)}`);
+    if (n) editNote(unitOf(n));
   }
   window.addEventListener("marks:change", () => { if (cur) paintMarks(); });
 
@@ -264,8 +356,9 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     if (!cur) return;
     const a = e.target.closest("a");
     if (!a) {
-      // a verse is not selected on this side yet; the first tap of a session says so, once
-      if (e.target.closest(UNIT_SEL) && !e.target.closest(".note-mark")) sayHint();
+      // a verse tapped is selected, and tapped again let go (words being selected by the system are left alone)
+      const u = e.target.closest(UNIT_SEL);
+      if (u && u.id && cur.body.contains(u) && !e.target.closest(".note-mark, button, .orig-row, .orig-tiles") && String(window.getSelection?.() || "") === "") { u.classList.toggle("sel"); drawSelect(); }
       return;
     }
     const href = a.getAttribute("href") || "";
@@ -301,14 +394,6 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     bodyEl.replaceChildren(...[n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, el("div", {}, [GL.sanitize(n.html || GL.esc(n.text))])].filter(Boolean));
     GL.openSheet("Footnote");
   }
-  let hintTimer = null;
-  function sayHint() {
-    try { if (sessionStorage.getItem("gospel.besideHint")) return; sessionStorage.setItem("gospel.besideHint", "1"); } catch (_) { if (sayHint.said) return; sayHint.said = true; }
-    hint.hidden = false;
-    clearTimeout(hintTimer);
-    hintTimer = setTimeout(() => { if (hint) hint.hidden = true; }, 7000);
-  }
-
   // ---- the chapters of this book, under the title --------------------------------
   function shutMenu(refocus) {
     if (!menu) return;
@@ -376,10 +461,10 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   }
   function unmount() {
     clearInterval(poll); poll = null;
-    clearTimeout(saveTimer); clearTimeout(hintTimer);
+    clearTimeout(saveTimer);
     shutMenu();
     if (pane) { pane.remove(); divider.remove(); track.remove(); track.hidden = true; }
-    document.body.classList.remove("beside-open", "bs-dragging");
+    document.body.classList.remove("beside-open", "bs-dragging", "bs-sel-up");
     main.style.removeProperty("--bs-a"); main.style.removeProperty("--bs-b");
     cur = null; trail = []; stepping = false; seq++;
     picking = false; pickSeq++; if (pick) pick.remove();
