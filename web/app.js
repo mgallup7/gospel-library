@@ -2954,6 +2954,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       el("div", { class: "peek" }, verses.map((x) => el("p", { class: x.kind === "verse" ? "verse" : "para" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean)))),
       el("div", { class: "peek-row" }, [
         el("button", { type: "button", class: "primary", text: `Open ${res.title}`, onclick: open }),
+        window.Beside?.button?.(res) || null, // beside.js: "Open beside", on an iPad
         window.Deck ? el("button", { type: "button", class: "text-btn", text: "Add to deck", onclick: async () => {
           try {
             const doc = await api("doc", { id: res.doc_id });
@@ -3858,7 +3859,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   }
   window.GL = {
     ask: askQuestion,
-    api, el, esc, store, openDoc, followLink, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
+    api, el, esc, store, sanitize, openDoc, followLink, startPresentingUnits, toast, panel, search: searchFor, openSheet, hideSheet: hideNote, closeSheet, openSettings,
     openOverlay, dropOverlay, inertBehind, // deck.js: its link mode, label editor and sheets are overlay markers, so Back leaves them
     get ready() { return state.ready; },
     passphrase: () => store.get("passphrase") || "", // sync.js seals the synced file with it
@@ -3887,6 +3888,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     try { navigator.storage?.persist?.().catch(() => {}); } catch (_) {} // 150 MB that should not be evicted
     api("speakers", {}).then((rows) => { const dl = $("#speakerList"); for (const r of rows) dl.append(el("option", { value: r.name })); }).catch(() => {});
     await render({ restore: history.state?.scroll || null, boot: true }); // where the page was when the app was last hidden, if this is a reload
+    try { window.Beside?.restore?.(); } catch (_) {} // beside.js: the second page that was open comes back
     setTimeout(checkForUpdate, 1500);
     setTimeout(loadSkills, 400);
     setTimeout(loadSemantic, 2500);

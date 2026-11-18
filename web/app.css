@@ -1441,3 +1441,96 @@ a.toast-action { display: inline-flex; align-items: center; }
   .primary:not(:disabled):hover, .jump:hover, .scopes button.on:hover { filter: brightness(1.08); }
   .search input:hover:not(:focus) { background: var(--chrome-2); }
 }
+
+/* ==== the second pane: two pages at once on an iPad (beside.js) ====================
+   Everything for it is in this block. One class on the body, beside-open, lays the place out:
+   the list's column gives way and the reader and the pane share the width (the height in
+   portrait). Without the class, and on a phone, nothing here applies. */
+#beside, .bs-div, .bs-track { display: none; }
+.beside-btn { display: none; }
+@media (min-width: 760px) and (min-height: 500px) {
+  /* the way in: beside "Open Hebrews 11" in the passage sheet */
+  .sheet .peek-row .beside-btn { display: inline-flex; align-items: center; gap: 7px; height: var(--ctl-h); padding: 0 14px 0 11px; border-radius: var(--r-ctl); font: 600 var(--ui-15) var(--sans); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .beside-btn .g { display: inline-flex; }
+  .beside-btn svg { width: 20px; height: 20px; }
+  .beside-btn:active { background: var(--chrome-2); }
+
+  body.beside-open main { display: flex; position: relative; }
+  body.beside-open main > #list, body.beside-open main > #reader, body.beside-open main > #panel { flex: var(--bs-a, 1) 1 0; order: 1; min-height: 0; }
+  /* with a page open the list is behind the pair (closing the pane brings it back); with none, the list is the first of the two */
+  body.beside-open:not(.list-only) main > #list { display: none; }
+  body.beside-open:not(.list-only) .bar, body.beside-open:not(.list-only) #filters { display: none; }
+  body.beside-open:not(.list-only) .reader-bar { padding-top: calc(6px + var(--safe-top)); }
+  /* the reader is the side that takes marks: one line of the accent over its bar says which */
+  body.beside-open:not(.list-only) #reader > .reader-bar::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--accent); }
+
+  body.beside-open #beside { display: flex; flex-direction: column; flex: var(--bs-b, 1) 1 0; order: 3; min-width: 0; min-height: 0; position: relative; overflow: hidden; background: var(--paper); }
+  .bs-bar { flex: none; display: flex; align-items: center; gap: 4px; min-height: 53px; box-sizing: border-box; padding: 6px calc(8px + var(--safe-right)) 6px 14px; background: var(--chrome); border-bottom: 1px solid var(--rule); font-family: var(--sans); }
+  body.beside-open:not(.list-only) .bs-bar { padding-top: calc(6px + var(--safe-top)); }
+  .bs-bar .bs-spacer { flex: 1 1 0; min-width: 0; }
+  .bs-bar button { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; height: 36px; border-radius: var(--r-ctl); color: var(--ink-2); }
+  .bs-bar button::after { content: ""; position: absolute; inset: -4px -2px; } /* 44pt to the finger */
+  .bs-bar button:not(:disabled):active { background: var(--chrome-2); }
+  .bs-bar button:disabled { opacity: .45; cursor: default; }
+  .bs-bar svg { width: 20px; height: 20px; }
+  .bs-bar .bs-title { flex: 0 1 auto; min-width: 0; padding: 0 6px; font: 500 var(--ui-15) var(--sans); text-align: left; }
+  .bs-bar .bs-title:disabled { opacity: 1; }
+  .bs-bar .bs-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bs-bar .bs-nav { display: inline-flex; flex: none; }
+  .bs-bar .bs-chap, .bs-bar .bs-back { width: 40px; }
+  .bs-bar .bs-back { color: var(--accent); margin-left: -8px; }
+  .bs-bar .bs-swap { gap: 6px; padding: 0 10px; font: 600 var(--ui-15) var(--sans); color: var(--accent); }
+  .bs-bar .bs-swap .g { display: inline-flex; }
+  .bs-bar .bs-close { width: 40px; height: 40px; }
+  .bs-bar .bs-close svg { width: 22px; height: 22px; }
+  #beside.narrow .bs-swap .w { display: none; }
+  #beside.narrow .bs-swap { width: 40px; padding: 0; }
+  .bs-hint { flex: none; padding: 8px 16px; font: var(--ui-13)/1.35 var(--sans); color: var(--ink); background: var(--target); border-bottom: 1px solid var(--rule); }
+  .bs-under { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+  .bs-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #beside .doc { padding: 18px 30px calc(60px + var(--safe-bottom)); }
+  #beside .doc mark.hlp { cursor: auto; }
+  .sheet .bs-note { margin: 0 0 12px; font: var(--reading-size)/1.5 var(--serif); white-space: pre-wrap; }
+  /* the book's chapters, let down from the title over the top of the page */
+  .bs-menu { position: absolute; left: 0; right: 0; top: 0; max-height: 72%; overflow-y: auto; -webkit-overflow-scrolling: touch; z-index: 6; padding: 4px 0 14px; background: var(--paper); border-bottom: 1px solid var(--rule); box-shadow: 0 14px 28px rgba(0, 0, 0, .14); font-family: var(--sans); }
+  .bs-menu-h { padding: 10px 16px 2px; font: 600 var(--ui-13) var(--sans); color: var(--ink-2); }
+  .bs-menu .chapters button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+  /* the divider: a hairline with a grip. Only its own grab area takes the finger (touch-action
+     is none there and nowhere else): a strip along the line, in the panes' margins, and a 44pt
+     pad at the grip. The pages on either side scroll and select as they always do. */
+  body.beside-open .bs-div { display: block; order: 2; flex: none; width: 1px; position: relative; z-index: 8; background: var(--rule); }
+  .bs-grip { position: absolute; left: -3px; top: 50%; width: 7px; height: 46px; margin-top: -23px; border-radius: 4px; background: #a9adb3; box-shadow: 0 0 0 4px var(--paper); pointer-events: none; }
+  .bs-grab { position: absolute; top: 0; bottom: 0; left: -8px; width: 17px; touch-action: none; cursor: col-resize; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .bs-grab::after { content: ""; position: absolute; left: -10px; top: 50%; width: 44px; height: 96px; margin-top: -48px; }
+  .bs-grab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+  .bs-div.live { background: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .bs-div.live .bs-grip { background: var(--accent); }
+  body.bs-dragging main { -webkit-user-select: none; user-select: none; cursor: col-resize; }
+
+  /* the stops, named while the divider is held */
+  body.beside-open .bs-track:not([hidden]) { display: block; position: absolute; left: 0; right: 0; bottom: 0; height: 104px; z-index: 9; pointer-events: none; background: linear-gradient(to top, var(--paper) 62%, transparent); }
+  .bs-stop { position: absolute; bottom: 16px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .bs-stop i { width: 2px; height: 12px; border-radius: 1px; background: var(--accent); opacity: .45; }
+  .bs-stop b { font: 600 var(--ui-12) var(--sans); color: var(--ink-2); background: var(--chrome); padding: 5px 11px; border-radius: 13px; white-space: nowrap; }
+  .bs-stop.at i { opacity: 0; }
+  .bs-stop.at b { background: var(--accent); color: var(--accent-ink); }
+  .bs-stop.end b { background: none; color: var(--ink-3); font-weight: 500; padding: 5px 11px; }
+  .bs-stop.end.at b { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+}
+/* portrait: one page over the other, each the full line length, the divider lying across */
+@media (min-width: 760px) and (min-height: 500px) and (orientation: portrait) {
+  body.beside-open main { flex-direction: column; }
+  body.beside-open .bs-div { width: auto; height: 1px; }
+  .bs-grip { left: 50%; top: -3px; width: 46px; height: 7px; margin: 0 0 0 -23px; }
+  .bs-grab { top: -8px; bottom: auto; left: 0; right: 0; width: auto; height: 17px; cursor: row-resize; }
+  .bs-grab::after { left: 50%; top: -6px; width: 96px; height: 44px; margin: 0 0 0 -48px; } /* mostly over the lower bar's empty middle */
+  body.bs-dragging main { cursor: row-resize; }
+  body.beside-open:not(.list-only) .bs-bar { padding-top: 6px; } /* the upper bar has the status bar's room, not this one */
+  body.beside-open .bs-track:not([hidden]) { left: auto; top: 0; width: 190px; height: auto; background: none; }
+  .bs-stop { bottom: auto; right: 14px; transform: translateY(-50%); }
+  .bs-stop i { display: none; }
+  .bs-stop b { box-shadow: 0 0 0 3px var(--paper); }
+  .bs-stop.end b { background: var(--paper); }
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bs-grip { background: #6b7079; } }
