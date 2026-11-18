@@ -66,7 +66,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await settle();
     s = await state();
     check(s.links.length === 0 && s.items[1].hl.length === 0, `Remove link should leave no stray highlight: ${s.items[1].hl.length}`);
-    check(/Connection removed/.test(await toastText()), "Remove link should say so");
+    check(/Link removed/.test(await toastText()), "Remove link should say so");
     await undoToast();
     s = await state();
     check(s.links.length === 1 && s.items[1].hl.length === 1, "Undo should bring the connection and its highlight back");
@@ -105,7 +105,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await settle();
     s = await state();
     check(s.items.length === 2 && s.links.length === 0, "the card and its connection should go");
-    check(/Removed Alma 32:21, with its 1 connection and speaker notes/.test(await toastText()), `the toast should say what went with the card: ${await toastText()}`);
+    check(/Removed Alma 32:21, with its 1 link and speaker notes/.test(await toastText()), `the toast should say what went with the card: ${await toastText()}`);
     await shot("02-card-removed");
     await undoToast();
     s = await state();

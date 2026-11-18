@@ -351,7 +351,7 @@ import { database } from "./lib/idb.js";
       setTimeout(() => {
         const t = takenOff; takenOff = null;
         batching--; lastEntry = batchEntry; if (!batching) batchEntry = null;
-        did(`${t.n === 1 ? "Taken off the deck" : `${t.n} passages taken off the deck`}${t.links ? `, with ${plural(t.links, "connection")}` : ""}.`);
+        did(`${t.n === 1 ? "Taken off the deck" : `${t.n} passages taken off the deck`}${t.links ? `, with ${plural(t.links, "link")}` : ""}.`);
       }, 0);
     }
     takenOff.n++; takenOff.links += linksOn(it);
@@ -794,7 +794,7 @@ import { database } from "./lib/idb.js";
     const n = count(), l = deck.links.length;
     // a deck of questions or slide text alone is not empty, so it does not say so
     if (!n) { const k = deck.items.length; return k ? `${k} ${k === 1 ? "card" : "cards"}, no passages yet.` : "Nothing on the deck yet."; }
-    return `${n} ${n === 1 ? "passage" : "passages"}${l ? `, ${l} ${l === 1 ? "connection" : "connections"}` : ""}.`;
+    return `${n} ${n === 1 ? "passage" : "passages"}${l ? `, ${l} ${l === 1 ? "link" : "links"}` : ""}.`;
   }
 
   function buildBoard() {
@@ -807,7 +807,7 @@ import { database } from "./lib/idb.js";
     const themes = el("div", { class: "themes" });
     const download = el("button", { type: "button", class: "primary", text: "Download PowerPoint", onclick: () => downloadFile() });
     const present = el("button", { type: "button", class: "primary quiet", text: "Present", onclick: () => presentDeck() });
-    const think = el("button", { type: "button", class: "text-btn", text: "Think it through", title: "Claude studies the chain: labels, connections, a caption", onclick: () => thinkChain() });
+    const think = el("button", { type: "button", class: "text-btn", text: "Think it through", title: "Claude studies the chain: labels, links, a caption", onclick: () => thinkChain() });
     const md = el("button", { type: "button", class: "text-btn", text: "Markdown", title: "The deck as Markdown, for Bear or any notes app", onclick: () => exportMarkdown() });
     const more = el("button", { type: "button", class: "text-btn", text: "More", "aria-expanded": "false", onclick: () => { const open = ui.moreRow.hidden; ui.moreRow.hidden = !open; more.setAttribute("aria-expanded", String(open)); if (open) prepareSoon(); } });
     // the file is built as the finger comes down on Download (or a pointer comes over it, or it takes the focus), so the tap finds it ready
@@ -903,7 +903,7 @@ import { database } from "./lib/idb.js";
     if (linking) {
       const from = endOf(linking);
       b.replaceChildren(el("div", { class: "bb", role: "status" }, [
-        el("span", { html: `Tap a phrase or a passage to link <b>${esc(from && from.hl ? `“${phraseOf(from.item, from.hl)}”` : from ? from.item.citation : "")}</b> to it.` }),
+        el("span", { html: `Tap a word, a highlight or a card to link <b>${esc(from && from.hl ? `“${phraseOf(from.item, from.hl)}”` : from ? from.item.citation : "")}</b> to it.` }),
         el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: () => cancelLink() }),
       ]));
     } else if (drag) {
@@ -1022,7 +1022,7 @@ import { database } from "./lib/idb.js";
           e.stopPropagation();
           const links = deck.links.filter((l) => (l.from.id === it.id && l.from.hl === h.id) || (l.to.id === it.id && l.to.hl === h.id)).length;
           removeHighlight(it, h); active = null; save();
-          did(links ? `Highlight removed, with its ${plural(links, "connection")}.` : "Highlight removed.");
+          did(links ? `Highlight removed, with its ${plural(links, "link")}.` : "Highlight removed.");
         } }),
         el("button", { type: "button", class: "chip small", text: "Done", onclick: (e) => { e.stopPropagation(); active = null; draw(); } }),
       ]));
@@ -1035,7 +1035,7 @@ import { database } from "./lib/idb.js";
         const other = endOf(out ? l.to : l.from);
         if (!other) continue;
         const otherText = other.hl ? `: “${phraseOf(other.item, other.hl)}”` : "";
-        row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this connection", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
+        row.append(el("button", { type: "button", class: "chip small link-chip" + (l.label ? "" : " unlabeled"), title: "Edit this link", onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } }, [
           el("b", { text: String(linkNumber(l)) }),
           ` ${out ? "→" : "←"} ${cardCitation(other.item)}${otherText}`,
           el("i", { text: l.label ? `, ${l.label}` : ", add a label" }),
@@ -1345,7 +1345,7 @@ import { database } from "./lib/idb.js";
   function removeCard(it) {
     const links = linksOn(it), notes = !!(it.notes || "").trim();
     removeItem(it);
-    const also = [links ? plural(links, "connection") : "", notes ? "speaker notes" : ""].filter(Boolean).join(" and ");
+    const also = [links ? plural(links, "link") : "", notes ? "speaker notes" : ""].filter(Boolean).join(" and ");
     did(`Removed ${cardName(it)}${also ? `, with its ${also}` : ""}.`);
   }
 
@@ -1598,7 +1598,7 @@ import { database } from "./lib/idb.js";
       // a numbered circle on the lane, moved along it when another badge is in the way.
       const top = Math.min(ya, yb), bottom = Math.max(ya, yb), mid = (top + bottom) / 2;
       const num = linkNumber(l);
-      const common = { type: "button", "data-link": l.id, title: l.label ? `${l.label} (edit)` : "Name this connection", "aria-label": `Connection ${num}${l.label ? `: ${l.label}` : ""}`, onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } };
+      const common = { type: "button", "data-link": l.id, title: l.label ? `${l.label} (edit)` : "Name this link", "aria-label": `Link ${num}${l.label ? `: ${l.label}` : ""}`, onclick: (e) => { e.stopPropagation(); openLabelEditor(l, e.currentTarget); } };
       let placed = false;
       if (l.label) {
         const w = Math.min(W - 12, 260, 34 + l.label.length * 6.4);
@@ -1648,18 +1648,18 @@ import { database } from "./lib/idb.js";
     editing = link;
     const a = endOf(link.from), b = endOf(link.to);
     const name = (end) => (end ? (end.hl ? `“${phraseOf(end.item, end.hl)}”` : end.item.citation) : "");
-    const input = el("input", { class: "deck-subtitle", placeholder: "What the arrow says", value: link.label || "", "data-was": link.label || "", "aria-label": "Connection label", autocapitalize: "off" }); // data-was: the label as the editor found it, so Cmd+Z in an untouched box undoes the link (below, and app.js)
+    const input = el("input", { class: "deck-subtitle", placeholder: "What the link says", value: link.label || "", "data-was": link.label || "", "aria-label": "Link label", autocapitalize: "off" }); // data-was: the label as the editor found it, so Cmd+Z in an untouched box undoes the link (below, and app.js)
     const setLabel = (v) => { link.label = v; input.value = v; save({ redraw: false }); queueLines(); }; // the arrow wears the label as it is typed
     input.addEventListener("input", () => setLabel(input.value));
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); closeEditor(); draw(); } }); // Escape is taken at the document, focus or no focus
-    const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Connection", tabindex: "-1" }, [
+    const pop = el("div", { class: "bpop", role: "dialog", "aria-label": "Link", tabindex: "-1" }, [
       el("div", { class: "bpop-t", html: `<b class="num">${linkNumber(link)}</b> ${esc(name(a))} <span class="arrow">→</span> ${esc(name(b))}` }),
       el("div", { class: "bpop-s", text: `${a ? a.item.citation : ""} → ${b ? b.item.citation : ""}` }),
       input,
       el("div", { class: "shelf" }, QUICK_LABELS.map((q) => el("button", { type: "button", class: "chip small" + (link.label === q ? " on" : ""), text: q, onclick: () => { setLabel(q); closeEditor(); draw(); } }))),
       el("div", { class: "deck-actions" }, [
         el("button", { type: "button", class: "primary", text: "Done", onclick: () => { closeEditor(); draw(); } }),
-        el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { removeLink(link); closeEditor(); save(); did("Connection removed."); } }),
+        el("button", { type: "button", class: "text-btn danger", text: "Remove link", onclick: () => { removeLink(link); closeEditor(); save(); did("Link removed."); } }),
         el("button", { type: "button", class: "text-btn", text: "Swap direction", onclick: () => { [link.from, link.to] = [link.to, link.from]; closeEditor(); save(); did("Direction swapped."); } }),
       ]),
     ]);
@@ -1710,7 +1710,7 @@ import { database } from "./lib/idb.js";
       // are Cancel.
       let answer = "cancel";
       const finish = (v) => { answer = v; dlg.close(); };
-      const what = `${n} ${n === 1 ? "passage" : "passages"}${l ? ` and ${l} ${l === 1 ? "connection" : "connections"}` : ""}`;
+      const what = `${n} ${n === 1 ? "passage" : "passages"}${l ? ` and ${l} ${l === 1 ? "link" : "links"}` : ""}`;
       const name = el("input", { class: "deck-subtitle", value: deck.title || `Deck ${new Date().toLocaleDateString([], { month: "short", day: "numeric" })}`, "aria-label": "Name for the saved deck", autocapitalize: "words" });
       const nameRow = el("div", { class: "dsheet-save", hidden: true }, [
         el("label", { text: "Save it as" }),
@@ -1933,7 +1933,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       const line = el("div", { class: "think-row" }, [el("span", { html: text }), b]);
       b.addEventListener("click", () => {
         const ok = act();
-        if (ok === false) { if (!quiet) GL().toast("That passage or arrow is no longer on the deck."); return; }
+        if (ok === false) { if (!quiet) GL().toast("That passage or link is no longer on the deck."); return; }
         b.textContent = "Done"; b.disabled = true;
         if (!quiet) did(done, () => { b.textContent = btn; b.disabled = false; });
       });
@@ -1945,7 +1945,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     for (const x of r.labels || []) {
       const l0 = deck.links[Number(x.link) - 1];
       if (!l0 || !x.label) continue;
-      applied.push(row(`<b>Label arrow ${x.link}:</b> “${esc(x.label)}”${l0.label ? ` (now “${esc(l0.label)}”)` : ""}`, "Apply", () => { const l = deck.links.find((y) => y.id === l0.id); if (!l) return false; l.label = String(x.label).trim(); save(); }, "Label applied."));
+      applied.push(row(`<b>Label link ${x.link}:</b> “${esc(x.label)}”${l0.label ? ` (now “${esc(l0.label)}”)` : ""}`, "Apply", () => { const l = deck.links.find((y) => y.id === l0.id); if (!l) return false; l.label = String(x.label).trim(); save(); }, "Label applied."));
     }
     for (const c of r.connections || []) {
       const a0 = byNum(c.from?.passage), b0 = byNum(c.to?.passage);
@@ -1959,7 +1959,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
         const from = { id: a.id, hl: ra ? (hlAt(a, ra.s) && hlAt(a, ra.s).e === ra.e && hlAt(a, ra.s).s === ra.s ? hlAt(a, ra.s).id : setHighlight(a, ra.s, ra.e).id) : null };
         const to = { id: b.id, hl: rb ? (hlAt(b, rb.s) && hlAt(b, rb.s).e === rb.e && hlAt(b, rb.s).s === rb.s ? hlAt(b, rb.s).id : setHighlight(b, rb.s, rb.e).id) : null };
         addLink(from, to, String(c.label || "").trim()); save();
-      }, "Connection added."));
+      }, "Link added."));
     }
     for (const k of r.key_phrases || []) {
       const p = byNum(k.passage);

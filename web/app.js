@@ -1277,7 +1277,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ["conference", "General Conference", (st) => st.talks ? `${st.talks.toLocaleString()} talks, 1971 to ${latestName(st)}` : "Not downloaded yet", (st) => st.talks ? `1971 to ${latestName(st, true)}` : "Not downloaded yet"],
     ["preach-my-gospel", "Preach My Gospel", () => "2023 edition", () => "2023 edition"],
     ["missionary-standards", "Missionary Standards", () => "The booklet, its supplement, the service missionary edition", () => "All three editions"],
-    ["handbook", "General Handbook", (st) => `${count(st, "handbook")} chapters`, (st) => `${count(st, "handbook")} chapters`],
+    ["handbook", "General Handbook", (st) => `${count(st, "handbook")} ${count(st, "handbook") === 1 ? "chapter" : "chapters"}`, (st) => `${count(st, "handbook")} ${count(st, "handbook") === 1 ? "chapter" : "chapters"}`],
     ["come-follow-me", "Come, Follow Me", () => "This year and last", () => "This year and last"],
     ["manuals", "Books and manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
@@ -1406,7 +1406,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       if (last) sec.append(el("button", { type: "button", class: "home-card", onclick: () => openDoc(last.id, last.pid || null) }, [
         el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: last.title }), el("span", { class: "hc-s", text: [last.where, last.verse ? `at verse ${last.verse}` : null].filter(Boolean).join(" · ") })]), el("span", { class: "hc-go", text: "›" })]));
       if (deckN) sec.append(el("button", { type: "button", class: "home-card", onclick: () => switchTab("deck") }, [
-        el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "connection" : "connections"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
+        el("span", { class: "hc-main" }, [el("span", { class: "hc-t", text: `Deck: ${window.Deck.state?.title || "untitled"}` }), el("span", { class: "hc-s", text: `${deckN} ${deckN === 1 ? "passage" : "passages"}${window.Deck.state?.links?.length ? `, ${window.Deck.state.links.length} ${window.Deck.state.links.length === 1 ? "link" : "links"}` : ""}` })]), el("span", { class: "hc-go", text: "Open" })]));
       body.append(sec);
     }
     // Come, Follow Me: the lesson for this week, one tap away
@@ -1665,12 +1665,18 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     return el("button", { type: "button", class: "crumb", disabled: !can, title: can ? `${up || "Contents"}: all of it` : crumbFor(doc),
       "aria-label": can ? `${name}. Open ${up || "the contents"}` : name, onclick: () => openContents(doc) }, [el("span", { text: name })]);
   }
-  function openContents(doc) {
+  async function openContents(doc) {
     const c = doc.collection || "";
     const tab = TAB_OF[c] || (c.startsWith("jsp-") ? "jsp" : "manuals");
     const browse = c === "scriptures" && doc.book_slug ? { tab, book: doc.book_slug } : { tab, bookUri: doc.book.uri };
     if (tab === "jsp") browse.series = c;
     if (tab === "conference" && doc.year) browse.year = doc.year;
+    // A shelf of one book shows that book's contents as the shelf itself (browseCollection), so
+    // the contents has one address, the shelf's: with the book's own address as well, Back from
+    // a chapter passed through the same contents twice.
+    if (browse.bookUri && tab !== "jsp" && tab !== "conference") {
+      try { const data = await api("browse", { collection: tab }); if (data.books.filter((x) => x.docs > 0).length === 1) delete browse.bookUri; } catch (_) {}
+    }
     openList(browse);
   }
   // A shelf, or a depth in one, opened from the page: the list on a wide screen, the whole screen on
@@ -1751,7 +1757,23 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
     for (const m of list) { docMarks.set(m.pid, m); drawMark(body, m); }
     drawRanges(body);
+    applyWordMarks(doc, body);
   }
+  // A color given to a Hebrew or Greek word shows in the English too: a tint of that color on
+  // the verse's number while the tiles are put away (app.css), so the mark is never invisible.
+  async function applyWordMarks(doc, body) {
+    if (!window.Marks || !window.Marks.words || !doc?.uri || !body) return;
+    let list = [];
+    try { list = await window.Marks.words(doc.uri); } catch (_) { return; }
+    if (!currentDoc || currentDoc.id !== doc.id || !body.isConnected) return;
+    for (const n of body.querySelectorAll(".verse-number.wm")) n.classList.remove("wm", "wm-y", "wm-g", "wm-b", "wm-p");
+    for (const m of list) {
+      const pid = m.pid || (Number.isFinite(m.verse) ? `p${m.verse}` : null);
+      const num = pid ? body.querySelector(`#${CSS.escape(pid)} .verse-number`) : null;
+      if (num && m.color) { num.classList.remove("wm-y", "wm-g", "wm-b", "wm-p"); num.classList.add("wm", `wm-${m.color}`); num.title = "A Hebrew or Greek word in this verse is highlighted"; }
+    }
+  }
+  window.addEventListener("marks:change", () => { if (currentDoc && state.docId === currentDoc.id) applyWordMarks(currentDoc, $(".doc", readerPane)); });
   function drawMark(body, m) {
     const unit = body.querySelector(`#${CSS.escape(m.pid)}`);
     if (!unit) return;
