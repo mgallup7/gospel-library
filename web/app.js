@@ -410,6 +410,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (here() > 0 && history.state?.prevUrl === url) { state.browse = was; history.back(); return; }
     renderHome(); push(true);
   }
+  // Safari shows a control's pressed look (:active) under a finger only when the page listens
+  // for touchstart. The home-screen app did (the edge swipe below); a Safari tab did not, so
+  // nothing looked pressed there. This listener does nothing else.
+  document.addEventListener("touchstart", () => {}, { passive: true });
   // Edge swipes in the home-screen app, where iOS keeps its own gesture for itself: in from the
   // left edge goes back, in from the right edge goes forward. In Safari the system gesture does
   // this already, so the app stays out of its way there.
