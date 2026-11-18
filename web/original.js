@@ -40,7 +40,10 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
     if (store.get("orig")) show(doc, body, btn);
   }
 
-  async function show(doc, body, btn) {
+  // keep: the choice is remembered and the tiles take the reader's word colors. The second pane
+  // (beside.js, through tiles below) passes false: its tiles are a reading copy, and showing
+  // them there does not turn them on in the reader.
+  async function show(doc, body, btn, keep = true) {
     btn.disabled = true;
     let data;
     try { data = await GL().api("original", { doc_id: doc.id }); }
@@ -48,7 +51,7 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
     btn.disabled = false;
     if (!body.isConnected) return;
     if (!data || !data.available || !data.verses.length) { GL().toast("No original text for this chapter."); return; }
-    store.set("orig", true);
+    if (keep) store.set("orig", true);
     btn.classList.add("on");
     body.classList.add("with-orig");
     data.uri = doc.uri; data.title = doc.title; // for a word's highlight: the page it is on
@@ -65,8 +68,7 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
     const first = body.querySelector("p.verse");
     if (title && first) { first.before(block(title, data, true)); placed++; }
     if (!placed) { GL().toast("The verses here could not be matched to the original text."); }
-    shown = { uri: doc.uri, body };
-    paintTiles();
+    if (keep) { shown = { uri: doc.uri, body }; paintTiles(); }
     if (!body.querySelector(".orig-credit")) body.append(el("div", { class: "orig-credit" }, [
       el("span", { text: CREDIT + ". " }),
       el("button", { type: "button", class: "text-btn small orig-legend-btn", text: "What the marks mean", onclick: () => legendSheet(data.lang || BIBLE[doc.volume]) }),
@@ -450,5 +452,6 @@ import { foldGlosses, exampleOf, grammarMeaning, outlineOf, meaningsOf } from ".
     return wordSheet({ word: l.lemma || "", translit: l.translit || "", gloss: "", strongs: l.strongs, morph: "" }, { lang: l.lang, citation: where }, {});
   }
 
-  window.Original = { attach, resultsHeader, hintLine, offerFor, check, isBible, closeSheet };
+  const tiles = (doc, body) => show(doc, body, el("button"), false); // a chapter's tiles in a page that is not the reader's
+  window.Original = { attach, resultsHeader, hintLine, offerFor, check, isBible, closeSheet, tiles };
 })();

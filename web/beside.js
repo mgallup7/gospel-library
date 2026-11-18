@@ -29,6 +29,8 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>',
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h14M14 4l4 4-4 4"/><path d="M20 16H6M10 12l-4 4 4 4"/></svg>',
     prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+    find: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
     next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>',
     note: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v12H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   };
@@ -51,6 +53,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   let picking = false;  // the picker is up: in place of a page, or over the one that is there
   let level = [];       // how far into the shelves the picker has gone
   let pickSeq = 0;
+  let origOn = false;   // the Hebrew or Greek tiles show under this pane's Bible chapters
   const up = () => !!(cur || picking); // the pane is in the layout
 
   const saved = () => GL.store.get("beside");
@@ -59,7 +62,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     clearTimeout(saveTimer);
     if (!cur) return;
     const at = topUnit(scroller, cur.body, 0);
-    GL.store.set("beside", { id: cur.doc.id, url: cur.doc.source_url || null, title: nameOf(cur.doc), pid: at ? at.pid : null, off: at ? at.off : 0, ratio });
+    GL.store.set("beside", { id: cur.doc.id, url: cur.doc.source_url || null, title: nameOf(cur.doc), pid: at ? at.pid : null, off: at ? at.off : 0, ratio, orig: origOn });
   }
   const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); };
 
@@ -108,8 +111,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     }
     const doc = cur.doc;
     const back = trail.length ? el("button", { type: "button", class: "bs-back", "aria-label": `Back to ${trail[trail.length - 1].title || "the page before"}`, title: "Back in this pane", html: I.prev, onclick: goBack }) : null;
-    const can = doc.collection === "scriptures" ? !!doc.book_slug : !!(doc.book && doc.book.uri);
-    const title = el("button", { type: "button", class: "bs-title", disabled: !can, "aria-haspopup": "true", "aria-expanded": "false", "aria-label": can ? `${nameOf(doc)}. Choose another chapter for this side` : nameOf(doc), onclick: toggleMenu }, [el("span", { text: nameOf(doc) })]);
+    const title = el("button", { type: "button", class: "bs-title", "aria-haspopup": "true", "aria-expanded": "false", "aria-label": `${nameOf(doc)}. Choose another chapter or page for this side`, onclick: toggleMenu }, [el("span", { text: nameOf(doc) }), el("span", { class: "bs-caret", html: I.down })]);
     const arrow = (to, word, icon) => el("button", { type: "button", class: "bs-chap", disabled: !to, "aria-label": to ? `${word}: ${to.title}` : word, title: to ? to.title : word, html: icon, onclick: () => step(to) });
     bar.replaceChildren(...[
       back, title,
@@ -153,7 +155,28 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     place(pid, off);
     paintMarks();
     save();
+    if (origOn) tilesIn(doc, body, pid, off);
     return true;
+  }
+  // The Hebrew or Greek under this pane's verses (original.js draws them; the reader's own
+  // switch is left as it is). The tiles push the verses down, so the place is found again.
+  const langOf = (doc) => (doc && window.Original && window.Original.tiles && window.Original.isBible(doc) ? (doc.volume === "Old Testament" ? "Hebrew" : "Greek") : null);
+  async function tilesIn(doc, body, pid, off) {
+    if (!langOf(doc)) return;
+    try { await window.Original.tiles(doc, body); } catch (err) { window.GLLog?.note("beside.tiles", err); return; }
+    if (cur && cur.body === body && pid) place(pid, off);
+  }
+  function setOrig(on) {
+    origOn = on;
+    if (!cur) return;
+    const at = topUnit(scroller, cur.body, 0);
+    if (on) tilesIn(cur.doc, cur.body, at ? at.pid : null, at ? at.off : null);
+    else {
+      cur.body.classList.remove("with-orig");
+      for (const n of cur.body.querySelectorAll(".orig, .orig-credit")) n.remove();
+      if (at) place(at.pid, at.off);
+    }
+    save();
   }
   // The verse asked for, a little under the bar (and marked, when it was named by a link); or
   // the saved place, to the pixel.
@@ -295,11 +318,20 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   async function toggleMenu() {
     if (menu) { shutMenu(); return; }
     const doc = cur.doc, my = seq;
-    const box = el("div", { class: "bs-menu", role: "dialog", "aria-label": "Chapters for this side" }, [el("div", { class: "status", text: "Opening…" })]);
+    // what this side can do comes first, then the chapters of the book it is in
+    const act = (icon, text, fn) => el("button", { type: "button", class: "bs-act", onclick: () => { shutMenu(); fn(); } }, [el("span", { class: "g", html: icon }), text]);
+    const lang = langOf(doc);
+    const acts = el("div", { class: "bs-acts" }, [
+      act(I.find, "Open something else", openPicker),
+      lang ? act(`<b>${lang === "Greek" ? "α" : "א"}</b>`, cur.body.classList.contains("with-orig") ? `Hide the ${lang} here` : `Show the ${lang} here`, () => setOrig(!cur.body.classList.contains("with-orig"))) : null,
+    ]);
+    const can = doc.collection === "scriptures" ? !!doc.book_slug : !!(doc.book && doc.book.uri);
+    const box = el("div", { class: "bs-menu", role: "dialog", "aria-label": "This side: open something else, or another chapter" }, [acts, can ? el("div", { class: "status", text: "Opening…" }) : null]);
     menu = box;
     under.append(box);
     bar.querySelector(".bs-title")?.setAttribute("aria-expanded", "true");
     const jump = (id) => { shutMenu(); if (id !== cur.doc.id) show(id, { how: "push" }); };
+    if (!can) return;
     try {
       if (doc.collection === "scriptures") {
         const shelf = await api("scriptures");
@@ -307,17 +339,17 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
         if (my !== seq || menu !== box) return;
         const grid = el("div", { class: "chapters" });
         for (const c of bk.chapters) grid.append(el("button", { type: "button", class: c.doc_id === doc.id ? "on" : "", text: String(c.n), disabled: !c.doc_id, "aria-label": `${bk.name} ${c.n}`, "aria-current": c.doc_id === doc.id ? "true" : null, onclick: () => jump(c.doc_id) }));
-        box.replaceChildren(el("div", { class: "bs-menu-h", text: bk.name.replace("JST, ", "") }), grid);
+        box.replaceChildren(acts, el("div", { class: "bs-menu-h", text: bk.name.replace("JST, ", "") }), grid);
       } else {
         const book = await api("book", { uri: doc.book.uri });
         if (my !== seq || menu !== box) return;
         const rows = (book.nodes || []).map((n) => n.kind === "section"
           ? el("div", { class: "toc-row section" }, [el("div", { class: "t", text: n.title })])
           : el("button", { type: "button", class: "toc-row" + (n.depth > 1 ? " sub" : "") + (n.doc_id === doc.id ? " on" : ""), disabled: !n.doc_id, onclick: () => n.doc_id && jump(n.doc_id) }, [el("div", { class: "t", text: n.title })]));
-        box.replaceChildren(el("div", { class: "bs-menu-h", text: book.title }), ...rows);
+        box.replaceChildren(acts, el("div", { class: "bs-menu-h", text: book.title }), ...rows);
       }
       box.querySelector(".on")?.scrollIntoView({ block: "center" });
-    } catch (_) { if (menu === box) box.replaceChildren(el("div", { class: "status error", text: "The chapters could not be listed." })); }
+    } catch (_) { if (menu === box) box.replaceChildren(acts, el("div", { class: "status error", text: "The chapters could not be listed." })); }
   }
   document.addEventListener("pointerdown", (e) => { if (menu && !e.target.closest?.(".bs-menu, .bs-title")) shutMenu(); }, true);
 
@@ -524,7 +556,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     if (!can()) return false;
     build();
     shutMenu();
-    if (!cur) ratio = 0.5;
+    if (!cur) { ratio = 0.5; origOn = false; }
     if (!pick) pick = el("div", { class: "bs-pick" });
     picking = true; level = [];
     under.append(pick);
@@ -539,14 +571,99 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   }
   const choose = (id, pid = null) => { if (id) show(id, { pid, how: cur ? "push" : "fresh" }); };
   const rowBtn = (t, s, fn, more) => el("button", { type: "button", class: "bs-row", onclick: fn }, [el("span", { class: "t", text: t }), s ? el("span", { class: "s", text: s }) : null, more ? el("span", { class: "go", html: I.next }) : null]);
-  function drawPick() {
+  const into = (lv) => { level.push(lv); drawPick(); };
+  // A level of the shelves: the Scriptures' books, a book's chapters, a shelf's books, a book's
+  // contents, through the calls the Library makes.
+  async function drawPick() {
     const my = ++pickSeq;
-    drawPickHome(my);
-  }
-  async function drawPickHome(my) {
-    const home = el("div", { class: "bs-home" });
-    pick.replaceChildren(home);
+    const at = level[level.length - 1] || null;
+    if (!at) { drawPickHome(my); return; }
+    const body = el("div", {}, [el("div", { class: "status", text: "Opening…" })]);
+    pick.replaceChildren(
+      el("button", { type: "button", class: "bs-up", onclick: () => { level.pop(); drawPick(); } }, [el("span", { class: "g", html: I.prev }), level.length > 1 ? level[level.length - 2].title : "All shelves"]),
+      el("h2", { class: "bs-pick-h", text: at.title }), body);
     pick.scrollTop = 0;
+    let out = [];
+    try {
+      if (at.kind === "scriptures") {
+        for (const vol of (await api("scriptures")).volumes) {
+          const chips = el("div", { class: "shelf" });
+          for (const bk of vol.books) { const name = bk.name.replace("JST, ", ""); chips.append(el("button", { type: "button", class: "chip", text: name, onclick: () => into({ kind: "chapters", slug: bk.slug, title: name }) })); }
+          out.push(el("h3", { class: "bs-sub", text: vol.name }), chips);
+        }
+      } else if (at.kind === "chapters") {
+        const bk = (await api("scriptures")).volumes.flatMap((v) => v.books).find((x) => x.slug === at.slug);
+        const grid = el("div", { class: "chapters" });
+        for (const c of bk.chapters) grid.append(el("button", { type: "button", text: String(c.n), disabled: !c.doc_id, "aria-label": `${bk.name} ${c.n}`, onclick: () => choose(c.doc_id) }));
+        out.push(grid);
+      } else if (at.kind === "shelf") {
+        const books = (await api("browse", { collection: at.slug })).books.filter((x) => x.docs > 0);
+        // a shelf of one book is that book's contents
+        if (books.length === 1) { if (my === pickSeq) { level[level.length - 1] = { kind: "book", uri: books[0].uri, title: at.title }; drawPick(); } return; }
+        for (const bk of books) out.push(rowBtn(bk.title, `${bk.docs} ${bk.docs === 1 ? "page" : "pages"}`, () => into({ kind: "book", uri: bk.uri, title: bk.title }), true));
+        if (!books.length) out.push(el("div", { class: "status", text: "Nothing on this shelf yet." }));
+      } else {
+        const book = await api("book", { uri: at.uri });
+        for (const n of book.nodes || []) out.push(n.kind === "section" ? el("h3", { class: "bs-sub", text: n.title })
+          : el("button", { type: "button", class: "bs-row" + (n.depth > 1 ? " sub" : ""), disabled: !n.doc_id, onclick: () => choose(n.doc_id) }, [el("span", { class: "t", text: n.title }), n.subtitle ? el("span", { class: "s", text: n.subtitle }) : null]));
+      }
+    } catch (_) { out = [el("div", { class: "status error", text: "That could not be listed." })]; }
+    if (my === pickSeq && picking) body.replaceChildren(...out);
+  }
+  // The first level: the box, then (until something is typed) this chapter in its own language,
+  // the places read lately and the shelves.
+  async function drawPickHome(my) {
+    const input = el("input", { type: "search", class: "bs-q", placeholder: "A reference or words, e.g. Hebrews 11", "aria-label": "Open beside: a reference or words", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false", enterkeyhint: "search" });
+    const found = el("div", { class: "bs-found", hidden: true });
+    const home = el("div", { class: "bs-home" });
+    pick.replaceChildren(...[
+      cur ? el("button", { type: "button", class: "bs-up", onclick: shutPicker }, [el("span", { class: "g", html: I.prev }), `Back to ${nameOf(cur.doc)}`]) : null,
+      el("div", { class: "bs-qrow" }, [el("span", { class: "g", html: I.find }), input]), found, home,
+    ].filter(Boolean));
+    pick.scrollTop = 0;
+    // The box asks the engine what the app's search asks it: a reference gives the card that
+    // jumps there, words give the first few passages. Return opens a reference outright.
+    let timer = null, qSeq = 0, jump = null;
+    async function run(full) {
+      const q = input.value.trim(), mine = ++qSeq;
+      jump = null;
+      if (!q) { found.hidden = true; home.hidden = false; return; }
+      let data = null;
+      try { data = await api("search", { q, typeahead: !full, light: true, limit: 6 }); } catch (_) { data = null; }
+      if (mine !== qSeq || !input.isConnected) return;
+      const rows = [];
+      const j = data && data.jump;
+      if (j) {
+        if (j.doc_id) jump = j;
+        rows.push(el("button", { type: "button", class: "bs-jump", disabled: !j.doc_id, onclick: () => choose(j.doc_id, j.pid || null) }, [el("b", { text: j.label }), el("span", { text: j.doc_id ? "Open beside" : "Not in the library yet" })]));
+      }
+      for (const h of ((data && data.hits) || []).slice(0, 5)) {
+        if (!h.doc_id) continue;
+        rows.push(el("button", { type: "button", class: "bs-hit", onclick: () => choose(h.doc_id, h.pid || null) }, [el("div", { class: "cite", text: h.citation || h.title || "" }), el("div", { class: "snip" }, [GL.sanitize(h.snippet || GL.esc(h.text || ""))])]));
+      }
+      for (const d of ((data && data.titles) || []).slice(0, 4)) if (d.doc_id) rows.push(rowBtn(d.title, d.label || d.author || "", () => choose(d.doc_id)));
+      if (!rows.length) rows.push(el("div", { class: "status", text: data ? "Nothing found. Try a reference such as Alma 32:21, or fewer words." : "The search could not be run." }));
+      found.replaceChildren(...rows);
+      found.hidden = false; home.hidden = true;
+    }
+    input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => run(false), 220); });
+    input.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault(); e.stopPropagation();
+      clearTimeout(timer);
+      await run(true);
+      if (jump && input.isConnected) { try { input.blur(); } catch (_) {} choose(jump.doc_id, jump.pid || null); }
+    });
+    // this chapter in its own language, when the reader has a Bible chapter open
+    const rd = GL.reading, lang = rd && rd.open ? langOf(rd.doc) : null;
+    const slot = el("div");
+    home.append(slot);
+    if (lang) window.Original.check().then((ok) => {
+      if (!ok || my !== pickSeq) return;
+      const main = document.querySelector("#reader");
+      slot.append(el("button", { type: "button", class: "bs-row bs-lang", onclick: () => { const at = topUnit(main, main.querySelector(".doc"), main.querySelector(".reader-bar")?.offsetHeight || 0); origOn = true; choose(rd.doc.id, at ? at.pid : null); } }, [
+        el("span", { class: "g", html: `<b>${lang === "Greek" ? "α" : "א"}</b>` }), el("span", { class: "t", text: `This chapter in ${lang}` }), el("span", { class: "s", text: nameOf(rd.doc) })]));
+    }).catch(() => {});
     // the places read lately, the page in the reader left out: it is already on the screen
     const r = GL.reading, here = r && r.open ? r.doc.id : null;
     let list = recents();
@@ -557,6 +674,15 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
       home.append(el("h3", { class: "bs-sub", text: "Recent" }));
       for (const item of list) home.append(rowBtn(item.title, item.where, async () => { const id = await sure(item); if (id) choose(id); else GL.toast("That page is not in the library."); }));
     }
+    // the shelves that hold something
+    const lib = el("div");
+    home.append(lib);
+    try {
+      const shelves = (await api("browse", {})).collections.filter((c) => c.docs > 0);
+      if (my !== pickSeq) return;
+      if (shelves.length) lib.append(el("h3", { class: "bs-sub", text: "Library" }));
+      for (const c of shelves) lib.append(rowBtn(c.title, c.slug === "scriptures" ? "" : `${c.docs} ${c.docs === 1 ? "page" : "pages"}`, () => into(c.slug === "scriptures" ? { kind: "scriptures", title: "Scriptures" } : { kind: "shelf", slug: c.slug, title: c.title }), true));
+    } catch (_) {}
   }
 
   // ---- Split, in the reader's bar ------------------------------------------------
@@ -590,7 +716,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
   }
   async function open(id, pid = null) {
     if (!can()) return false;
-    if (!cur) ratio = 0.5;
+    if (!cur) { ratio = 0.5; origOn = false; }
     return show(id, { pid, how: cur ? "push" : "fresh" });
   }
   // The pair that was open when the app was last used comes back: the page, its place, the widths.
@@ -599,6 +725,7 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     const s = saved();
     if (!s || !s.id || up() || !can()) return false;
     ratio = STOPS.some(([x]) => x === s.ratio) ? s.ratio : 0.5;
+    origOn = !!s.orig;
     let id = s.id;
     try {
       const doc = await api("doc", { id });
