@@ -5,6 +5,7 @@ import sqlite3InitModule from "./vendor/sqlite3.mjs";
 import * as S from "./lib/scriptures.js";
 import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections, quoteWords, quoteScore, alsoSpelled, spellOut, foldWord, TINY, QUESTION_WORDS, BOOK_WORDS } from "./lib/query.js";
 import { passageNamed, parallelsOf } from "./lib/names.js";
+import { findReferences } from "./lib/refs.js";
 import { esc } from "./lib/format.js";
 // Search by meaning lives in its own module; if it fails to load (a broken
 // download, an old browser), search by words carries on without it. The
@@ -869,6 +870,7 @@ async function rankedSearch(q, opts) {
     if (slot === "lex" && e.lex === null) e.lex = rank;
     if (slot === "sem" && e.sem === null) e.sem = rank;
     if (slot === "sems" && e.sems === null) e.sems = rank;
+    if (slot === "cited" && e.cited === undefined) e.cited = rank;
     if (slot === "exact") { e.exact = true; if (e.lex === null) e.lex = rank; }
     return e;
   };
@@ -958,6 +960,33 @@ async function rankedSearch(q, opts) {
         if (!db) throw new Error("the library was replaced during the search");
         if (verses) verses.forEach((r, i) => take(r, "sems", i));
       }
+      // And the verses the nearest talks and manuals cite. A verse in King James English sits far
+      // from a modern paraphrase of it, but the prophets who teach the same thing in today's words
+      // quote it: "serving others is serving God" lands on paragraphs that cite Mosiah 2:17. Each
+      // citation is a vote, the nearer paragraphs counting more.
+      if (cands && quoteLike && !exactTotal && !cq.speaker && !cq.yearFrom && !cq.bookSlug && !cq.volume && !cq.edition && (!cq.collections.length || cq.collections.includes("scriptures"))) {
+        const votes = new Map();
+        cands.slice(0, 80).forEach((r, i) => {
+          if (r.collection === "scriptures" || !r.text) return;
+          const seen = new Set();
+          for (const ref of findReferences(r.text).slice(0, 8)) {
+            if (!ref.verse) continue;
+            const key = `${ref.uri}#p${ref.verse}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            votes.set(key, (votes.get(key) || 0) + 1 / (10 + i));
+          }
+        });
+        const cited = [...votes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+        let at = 0;
+        for (const [key] of cited) {
+          const [uri, pid] = key.split("#");
+          // (by the chapter's own run of rows: the index is not searched by document)
+          const d = row("SELECT par_first, par_last FROM documents WHERE uri = ?", [uri]);
+          const r = d && d.par_first !== null ? row(`SELECT ${PASSAGE_COLS}${PASSAGE_FROM} WHERE p.rowid BETWEEN ? AND ? AND p.pid = ?`, [d.par_first, d.par_last, pid]) : null;
+          if (r) take(r, "cited", at++);
+        }
+      }
     } catch (err) { if (!db) throw err; console.warn("meaning search failed:", err?.message); }
   }
   // 4. Score. A line of three words or more is judged first by how much each passage looks like it
@@ -994,12 +1023,13 @@ async function rankedSearch(q, opts) {
     if (e.lex !== null) f += 1 / (K + e.lex);
     if (e.sem !== null) f += 1 / (K + e.sem);
     if (e.sems !== null) f += 1 / (K + e.sems);
+    if (e.cited !== undefined) f += 1 / (K + e.cited);
     if (e.exact) f += 1 / K;
     const fN = f / (3 / K);
     let s = !quoteLike ? f : lineHit ? (e.exact ? 1 : 0) + e.ql * e.ql + 0.5 * fN : 0.6 * e.ql * e.ql + fN;
     s *= prior(e.hit, scoped);
     if (boost && e.hit.book_slug && (e.hit.book_slug === boost || e.hit.book_slug.endsWith("-" + boost))) s *= 1.5;
-    const meant = e.sem !== null || e.sems !== null;
+    const meant = e.sem !== null || e.sems !== null || e.cited !== undefined;
     e.hit.why = e.exact ? "exact" : e.ql >= 0.8 ? "close" : e.lex !== null && meant ? "both" : meant ? "meaning" : "words";
     scored.push({ s, e });
   }

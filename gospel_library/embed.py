@@ -18,6 +18,7 @@ new paragraphs are embedded on the next run.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import time
 from pathlib import Path
@@ -192,6 +193,9 @@ def pack_bits(conn) -> int:
     return n
 
 
+CITED = re.compile(r"\b(?:[1-4] )?(?:[A-Z][a-z]+\.?|D&C)(?: [A-Z][a-z]+)? \d+:\d+")
+
+
 def smoke_test(conn, embedder: Embedder, queries: list[str], *, k: int = 5, chunk: int = 50000) -> list[tuple[str, list[tuple[float, str, str]]]]:
     """The top paragraphs for a few queries, scored against the int8 vectors: a check that it all fits together.
     The vectors are read in chunks, so a library of half a million paragraphs does not need them all in memory at once."""
@@ -203,6 +207,7 @@ def smoke_test(conn, embedder: Embedder, queries: list[str], *, k: int = 5, chun
         scripture = np.array([r[0] for r in conn.execute("SELECT rowid FROM paragraphs WHERE kind = 'verse'")], dtype=np.int64)
     except Exception:  # a store without verses has none to list
         scripture = np.zeros(0, dtype=np.int64)
+    scripture_set = set(scripture.tolist())
     cur = conn.execute("SELECT paragraph_id, v FROM vectors ORDER BY paragraph_id")
     while True:
         rows = cur.fetchmany(chunk)
@@ -213,8 +218,9 @@ def smoke_test(conn, embedder: Embedder, queries: list[str], *, k: int = 5, chun
         scores = mat @ qvs.T  # [n, queries]
         for qi in range(len(queries)):
             col = scores[:, qi]
-            top = np.argpartition(-col, min(k, len(col) - 1))[:k] if len(col) > k else np.arange(len(col))
-            best[qi] = sorted(best[qi] + [(float(col[i]), int(ids[i])) for i in top], key=lambda t: -t[0])[:k]
+            deep = max(k, 80)  # enough of the nearest paragraphs to read their citations
+            top = np.argpartition(-col, min(deep, len(col) - 1))[:deep] if len(col) > deep else np.arange(len(col))
+            best[qi] = sorted(best[qi] + [(float(col[i]), int(ids[i])) for i in top], key=lambda t: -t[0])[:deep]
             where = np.nonzero(np.isin(ids, scripture))[0]
             if len(where):
                 sub = col[where]
@@ -223,11 +229,21 @@ def smoke_test(conn, embedder: Embedder, queries: list[str], *, k: int = 5, chun
     out = []
     for qi, q in enumerate(queries):
         found = []
-        for score, pid in best[qi]:
+        # the verses those nearest paragraphs cite, each citation a vote (the app ranks these too)
+        votes: dict[str, float] = {}
+        for i, (_, pid) in enumerate(best[qi]):
+            if pid in scripture_set:
+                continue
+            r = conn.execute("SELECT text FROM paragraphs WHERE rowid = ?", (pid,)).fetchone()
+            for ref in set(CITED.findall(r[0] if r else "")):
+                votes[ref] = votes.get(ref, 0.0) + 1.0 / (10 + i)
+        for score, pid in best[qi][:k]:
             r = conn.execute("SELECT p.text, d.title FROM paragraphs p JOIN documents d ON d.id = p.document_id WHERE p.rowid = ?", (pid,)).fetchone()
             found.append((score, r[1] if r else "?", (r[0] if r else "")[:120]))
         for score, pid in verses[qi]:
             r = conn.execute("SELECT p.text, d.title, p.verse FROM paragraphs p JOIN documents d ON d.id = p.document_id WHERE p.rowid = ?", (pid,)).fetchone()
             found.append((score, f"verse: {r[1]}:{r[2]}" if r else "?", (r[0] if r else "")[:120]))
+        for ref, weight in sorted(votes.items(), key=lambda t: -t[1])[:k]:
+            found.append((weight, f"cited: {ref}", ""))
         out.append((q, found))
     return out
