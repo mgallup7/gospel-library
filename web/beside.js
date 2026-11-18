@@ -703,7 +703,27 @@ import { wordSpans, locate, paint, unitText, wrapWords, unwrapPhrases } from "./
     const rb = [...readerEl.children].find((n) => n.classList.contains("reader-bar"));
     if (!rb || rb.querySelector(".bs-split")) return;
     const before = rb.querySelector(".size-btns") || rb.querySelector(".pane-switch-slot");
-    if (before && before.parentNode === rb) before.before(splitButton()); else rb.append(splitButton());
+    const wrap = splitButton();
+    if (before && before.parentNode === rb) before.before(wrap); else rb.append(wrap);
+    coach(wrap);
+  }
+  // The first time the button is there to be seen, one line under it says what it is for. Any
+  // tap takes the line away for good (the tap still does what it was for).
+  let coached = false;
+  function coach(wrap) {
+    if (coached || !can() || up() || GL.store.get("besideCoach")) return;
+    wrap.append(el("span", { class: "bs-coach", role: "status", text: "New: tap Split to read two books side by side" }));
+    if (coach.armed) return;
+    coach.armed = true;
+    const done = () => {
+      const lines = [...document.querySelectorAll(".bs-coach")];
+      if (!lines.some((n) => n.offsetParent !== null)) return; // not seen yet (the page is behind the board): it waits
+      for (const n of lines) n.remove();
+      coached = true;
+      GL.store.set("besideCoach", 1);
+      document.removeEventListener("pointerdown", done, true);
+    };
+    document.addEventListener("pointerdown", done, true);
   }
   if (readerEl) {
     try { new MutationObserver(onReader).observe(readerEl, { childList: true }); } catch (_) {}
