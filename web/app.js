@@ -2603,6 +2603,18 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     sec("reading", "Reading", [
       el("p", { class: "set-sample", text: "For behold, this life is the time for men to prepare to meet God." }),
       el("p", { class: "set-note", text: "The text size above changes this sample and every page. The reader's Aa does the same while you read." }),
+      (() => {
+        // the room above the top bars: the newest iPadOS blurs the top of the screen, and how deep differs by device
+        const now = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--top-extra")) || 0;
+        const said = el("span", { class: "set-top-now", "aria-live": "polite" });
+        const say = () => { said.textContent = now() ? `${Math.round(now())} points` : "None"; };
+        const move = (d) => { store.set("topPad", Math.max(0, Math.min(64, Math.round(now()) + d))); applyTopPad(); say(); fitReaderBars(); };
+        say();
+        return el("div", { class: "set-top" }, [el("span", { text: "Space above the top bar" }), said,
+          el("button", { type: "button", class: "text-btn set-top-less", text: "Less", onclick: () => move(-6) }),
+          el("button", { type: "button", class: "text-btn set-top-more", text: "More", onclick: () => move(6) })]);
+      })(),
+      el("p", { class: "set-note", text: "If the buttons at the top of the screen look blurred, tap More until they are clear. If there is too much empty room up there, tap Less." }),
       "ontouchstart" in window ? el("label", { class: "set-check" }, [el("input", { type: "checkbox", class: "set-gestures", checked: store.get("gestures") !== false, onchange: (e) => store.set("gestures", e.currentTarget.checked) }), el("span", { text: "Touch gestures" })]) : null,
       "ontouchstart" in window ? el("p", { class: "set-note", text: "Flick a page left or right to turn the chapter. Spread or pinch two fingers on a page to change the text size. On an iPhone the bar at the top steps aside while you read down. Every one has a button that does the same; turn this off if a gesture gets in your way." }) : null,
     ].filter(Boolean));
@@ -3406,6 +3418,9 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // have changed in Settings meanwhile; the accessibility sizes reach 34px.
   function applyReadingSize() { const s = store.get("readingSize"); if (s) document.documentElement.style.setProperty("--reading-size", s + "px"); else { const sys = systemTextSize(); if (sys) document.documentElement.style.setProperty("--reading-size", Math.max(15, Math.min(34, Math.round(sys))) + "px"); } }
   applyReadingSize();
+  // The room kept above the top bars, when it was set by hand in Settings (app.css has the rule it replaces)
+  function applyTopPad() { const v = store.get("topPad"); if (Number.isFinite(v)) document.documentElement.style.setProperty("--top-extra", v + "px"); else document.documentElement.style.removeProperty("--top-extra"); }
+  applyTopPad();
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") applyReadingSize(); });
   window.addEventListener("pageshow", (e) => { if (e.persisted) applyReadingSize(); });
   function systemTextSize() {

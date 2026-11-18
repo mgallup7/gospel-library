@@ -34,7 +34,7 @@
   --r-ctl: 10px;
   --r-card: 14px;
   --ctl-h: 44px;
-  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-top: calc(env(safe-area-inset-top, 0px) + var(--top-extra, 0px)); /* --top-extra: see the end of this file */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);  /* iPhone landscape: the sensor housing and the rounded corners */
   --safe-right: env(safe-area-inset-right, 0px);
@@ -1747,3 +1747,14 @@ a.toast-action { display: inline-flex; align-items: center; }
 }
 @media (prefers-reduced-motion: reduce) { #reader > .reader-bar, #reader > .match-strip { transition: none; } }
 body.gest #reader .doc, body.gest #beside .doc { touch-action: pan-y; } /* two fingers on a page set the text size (touch.js); the page itself does not zoom */
+
+/* The newest iPadOS lays a soft blur of its own over the top of a home-screen app, deeper than
+   the safe area it reports, and the bars' words sat inside it. On an iPad running as an app,
+   where the browser is new enough to be that system (it knows anchor-name), everything that
+   keeps clear of the clock keeps clear by this much more. Settings can set the amount by hand
+   (app.js writes --top-extra on the root, which wins over this). */
+@media (display-mode: standalone) and (min-width: 760px) and (min-height: 500px) {
+  @supports (anchor-name: --a) { :root { --top-extra: 28px; } }
+}
+.set-top { display: flex; align-items: center; gap: 10px; min-height: 44px; font: var(--ui-15) var(--sans); color: var(--ink); }
+.set-top .set-top-now { color: var(--ink-2); min-width: 4.5em; }
