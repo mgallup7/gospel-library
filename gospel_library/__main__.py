@@ -183,6 +183,9 @@ def cmd_originals(args) -> int:
     conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
     have = conn.execute("SELECT value FROM meta WHERE key='originals'").fetchone()
     if have and not args.force and json.loads(have[0]).get("format") == originals.FORMAT:
+        # nothing to reload, but a lexicon loaded before a column was added is brought up to date
+        originals.ensure_schema(conn)
+        conn.commit()
         print(f"original languages already in the library: {have[0]}")
         return 0
     source = Path(args.source) if args.source else config.DATA_DIR / "originals-src"

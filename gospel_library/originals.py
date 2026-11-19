@@ -161,7 +161,28 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     have = [r[1] for r in conn.execute("PRAGMA table_info(original_lexicon)")]
     if have and "ascii" not in have:
         conn.execute("ALTER TABLE original_lexicon ADD COLUMN ascii TEXT")
+    # the same for the count of each word: a library made before it had the column is given it,
+    # and the counts are filled in below (the app reads the column whenever the typed form is there)
+    if have and "occurrences" not in have:
+        conn.execute("ALTER TABLE original_lexicon ADD COLUMN occurrences INTEGER")
     conn.executescript(SCHEMA)
+    fill_occurrences(conn)
+
+
+def fill_occurrences(conn: sqlite3.Connection, force: bool = False) -> None:
+    """How common each number is, so a transliteration several words share goes to the usual one.
+    Run after a load, and for a library whose lexicon was loaded before the column existed."""
+    # the typed form of each transliteration, where a row was loaded before that column existed
+    blank = conn.execute("SELECT strongs, translit FROM original_lexicon WHERE ascii IS NULL AND translit != ''").fetchall()
+    if blank:
+        conn.executemany("UPDATE original_lexicon SET ascii = ? WHERE strongs = ?", [(ascii_translit(t), k) for k, t in blank])
+        conn.commit()
+    if not force:
+        missing = conn.execute("SELECT 1 FROM original_lexicon WHERE occurrences IS NULL LIMIT 1").fetchone()
+        if not missing or not conn.execute("SELECT 1 FROM original_words LIMIT 1").fetchone():
+            return
+    conn.execute("UPDATE original_lexicon SET occurrences = (SELECT COUNT(*) FROM original_words w WHERE w.strongs >= original_lexicon.base AND w.strongs < original_lexicon.base || '~')")
+    conn.commit()
 
 
 def download(dest: Path) -> Path:
@@ -407,8 +428,7 @@ def ingest(conn: sqlite3.Connection, source: Path, *, force: bool = False) -> di
                         (r["base"], r["base"], r["lang"], r["lemma"], r["translit"], r["type"], r["gloss"], r["definition"], r["relation"], ascii_translit(r["translit"])),
                     )
             entries += len(rows)
-    # how common each number is, so a transliteration several words share goes to the usual one
-    conn.execute("UPDATE original_lexicon SET occurrences = (SELECT COUNT(*) FROM original_words w WHERE w.strongs >= original_lexicon.base AND w.strongs < original_lexicon.base || '~')")
+    fill_occurrences(conn, force=True)
     morphs = 0
     for group, lang in (("morph_hebrew", "he"), ("morph_greek", "gr")):
         for path in _files(source, group):

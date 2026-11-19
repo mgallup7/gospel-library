@@ -808,7 +808,9 @@ async function rankedSearch(q, opts) {
   const natural = !explicit && isNatural(raw);
   // A transliterated Hebrew or Greek word ("hesed", "logos") is looked up before the typo
   // corrector can turn it into an English word it is not; the hint leads the results.
-  const hint = !typeahead && !light ? transliterationHint(raw) : null;
+  // (a hint is an extra: whatever goes wrong in finding one must not stop the search itself)
+  let hint = null;
+  if (!typeahead && !light) { try { hint = transliterationHint(raw); } catch (err) { hint = null; console.warn("no original-language hint:", err && err.message); } }
   const fixed = !explicit && !asTyped && !hint ? correctTypos(spellOut(raw), { typeahead }) : { text: raw, changes: [] };
   const n = natural ? naturalQuery(fixed.text, speakersBySurname()) : null;
   // cqUser: only what he set himself (the scope, the Filters sheet, typed syntax). cq: that, and what
@@ -2217,7 +2219,8 @@ function finishOriginal(out, occ, info, limit, offset, scope) {
 // transliterates, so the results can offer the original word.
 let translitMap = null, lexiconAscii = null;
 function lexiconHasAscii() {
-  if (lexiconAscii === null) { try { lexiconAscii = !!value("SELECT COUNT(*) FROM pragma_table_info('original_lexicon') WHERE name = 'ascii'"); } catch (_) { lexiconAscii = false; } }
+  // both columns, or neither is used: a library can carry the typed form without the counts
+  if (lexiconAscii === null) { try { lexiconAscii = value("SELECT COUNT(*) FROM pragma_table_info('original_lexicon') WHERE name IN ('ascii', 'occurrences')") === 2; } catch (_) { lexiconAscii = false; } }
   return lexiconAscii;
 }
 function transliterationHint(q) {

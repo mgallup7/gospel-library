@@ -808,3 +808,22 @@ def test_embeddings(tmp_path):
     assert n == 1 and conn.execute("SELECT length(bits) FROM vecbits").fetchone()[0] == 48
     assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='vectors'").fetchone()
     conn.close()
+
+
+def test_an_older_lexicon_is_brought_up_to_date(tmp_path):
+    """A library whose lexicon was loaded before the typed form and the counts existed gets both
+    columns and their values, so a device that downloads it afresh can search a single word."""
+    import sqlite3
+    from gospel_library import originals
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.executescript("""
+        CREATE TABLE original_lexicon (strongs TEXT PRIMARY KEY, base TEXT, lang TEXT, lemma TEXT, translit TEXT, type TEXT, gloss TEXT, definition TEXT, relation TEXT);
+        INSERT INTO original_lexicon VALUES ('H2617', 'H2617', 'he', 'x', 'chesed', 'N', 'mercy', '', ''), ('G0026', 'G0026', 'gr', 'y', 'agapē', 'N', 'love', '', '');
+    """)
+    originals.ensure_schema(conn)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(original_lexicon)")]
+    assert "ascii" in cols and "occurrences" in cols
+    conn.executemany("INSERT INTO original_words(book, chapter, verse, seq, lang, word, strongs) VALUES (?,?,?,?,?,?,?)", [("psalms", 23, 6, 1, "he", "x", "H2617"), ("psalms", 136, 1, 1, "he", "x", "H2617A"), ("john", 15, 13, 1, "gr", "y", "G0026")])
+    originals.ensure_schema(conn)
+    got = dict((r[0], (r[1], r[2])) for r in conn.execute("SELECT strongs, ascii, occurrences FROM original_lexicon"))
+    assert got["H2617"] == ("chesed", 2) and got["G0026"] == ("agape", 1), got
