@@ -26,7 +26,14 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   const wide = () => window.matchMedia("(min-width: 760px) and (min-height: 500px)").matches;
   const monthName = (m) => (m === 4 ? "April" : m === 10 ? "October" : "");
   const BASE = new URL(".", document.baseURI);
-  const MANIFEST_URL = new URL("data/manifest.json", BASE).href;
+  // Where the library, and the search model, are fetched from. On the website that is the site
+  // itself. Inside the iPhone, iPad and Android apps (native/) the app's own files ship in the
+  // app, and native.js names the site the library is downloaded from (window.GL_HOME) and, when
+  // the model was not packed into the app, where that is (window.GL_MODEL_HOME).
+  const NATIVE = typeof window.GL_HOME === "string" && window.GL_HOME;
+  const HOME = NATIVE ? new URL(window.GL_HOME) : BASE;
+  const MODEL_HOME = NATIVE && window.GL_MODEL_HOME ? new URL(window.GL_MODEL_HOME) : NATIVE && window.GL_MODEL_LOCAL ? BASE : HOME;
+  const MANIFEST_URL = new URL("data/manifest.json", HOME).href;
   // Small preferences in localStorage. set returns false when the write did not take (the store
   // is full, or the browser refuses it) and says so once in a while, so nothing is lost unheard.
   let storeWarned = 0;
@@ -695,9 +702,12 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     box.append(head, lede, form, bar, msg, note);
     listPane.replaceChildren(box);
     const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    // inside the apps (native/): one line for a build to read, saying whether this web view can keep the library
+    if (NATIVE) { try { console.log("GL-NATIVE-CHECK " + JSON.stringify({ storage: status.mode, build: window.GL_BUILD || null, home: window.GL_HOME, modelInApp: !!window.GL_MODEL_LOCAL })); } catch (_) {} }
     if (status.mode !== "opfs") {
-      note.textContent = "This browser cannot keep the library between visits, so it downloads each time you open the app. Adding it to the home screen fixes that on iPhone and iPad.";
-    } else if (!standalone && /iPhone|iPad|Macintosh/.test(navigator.userAgent) && "ontouchend" in document) {
+      note.textContent = NATIVE ? "This device cannot keep the library between launches, so it downloads each time the app opens."
+        : "This browser cannot keep the library between visits, so it downloads each time you open the app. Adding it to the home screen fixes that on iPhone and iPad.";
+    } else if (!NATIVE && !standalone && /iPhone|iPad|Macintosh/.test(navigator.userAgent) && "ontouchend" in document) {
       // Safari and a home-screen app keep separate copies: set up where it will be used
       note.textContent = "Using this on an iPhone or iPad? Add it to the home screen first (Share, then Add to Home Screen) and open it from there, so the library downloads once, into the app you will use.";
     }
@@ -2761,7 +2771,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       ver,
       errLog,
     ]);
-    try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
+    if (NATIVE && window.GL_BUILD) ver.textContent = `App files: ${window.GL_BUILD}, in the app.`;
+    else try { caches.keys().then((keys) => { const k = keys.find((x) => /^gospel-shell-v\d+/.test(x)); if (k) ver.textContent = `App files: ${k.replace("gospel-shell-", "")}.`; }, () => {}); } catch (_) {}
     for (const id of ["status", "reading", "sync", "backup", "claude", "library", "keys", "about"]) if (secs[id]) box.append(secs[id]);
     $(".sheet-body", sheet).replaceChildren(box);
     sheet.classList.add("page", "has-done");
@@ -4012,6 +4023,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // HTTPS only; a test turns it on over http on this machine with gospel.sw in localStorage.
   function watchShell() {
     if (!("serviceWorker" in navigator)) return;
+    if (NATIVE) return; // the app's files are in the app: a new version comes as a new build, not a download
     if (location.protocol !== "https:" && !(window.isSecureContext && store.get("sw") === true)) return;
     const sw = navigator.serviceWorker;
     const hadController = !!sw.controller;
@@ -4067,7 +4079,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       f.textContent = text ? `${base} · ${text}` : base;
     };
     try {
-      await call("loadSemantic", { base: new URL("./", BASE).href }, (p) => {
+      await call("loadSemantic", { base: new URL("./", MODEL_HOME).href }, (p) => {
         if (p.phase === "model" && p.total) note(`downloading what search by meaning needs (${mb(p.loaded)} of ${mb(p.total)}, once)…`);
         else if (p.phase === "index") note("getting search by meaning ready…");
       });
@@ -4091,7 +4103,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       if (cached && cached.sha256 === entry.sha256) return;
       const passphrase = store.get("passphrase");
       if (!passphrase) return;
-      const text = await call("unseal", { url: new URL("data/" + entry.file + "?v=" + entry.sha256.slice(0, 12), BASE).href, passphrase });
+      const text = await call("unseal", { url: new URL("data/" + entry.file + "?v=" + entry.sha256.slice(0, 12), HOME).href, passphrase });
       store.set("skills", { sha256: entry.sha256, data: JSON.parse(text) });
       window.dispatchEvent(new CustomEvent("skills:change"));
     } catch (_) { /* offline, or none published: whatever is on the device stands */ }

@@ -1,0 +1,14 @@
+{
+  "appId": "io.github.mgallup7.library",
+  "appName": "Library",
+  "webDir": "www",
+  "backgroundColor": "#f3f2ef",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#f3f2ef",
+    "scrollEnabled": true
+  },
+  "android": {
+    "backgroundColor": "#f3f2ef"
+  }
+}

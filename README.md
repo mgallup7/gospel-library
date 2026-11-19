@@ -394,6 +394,42 @@ The file is JSON: `{"voice": "...", "style": "...", "skills": [{"id":
 prepended to every draft, `style` to every answer, and each `kind: "mode"`
 skill becomes a mode of its own.
 
+## The iPhone, iPad and Android apps
+
+`native/` packs the same web app into a native shell (Capacitor), for the
+owner's own devices and a few others by invitation. Nothing is rewritten:
+the app's files ship inside the app, and the library is still downloaded,
+sealed, from the site and opened with the passphrase. What the apps add is
+storage the system does not clear, no browser around the pages, and a real
+icon on Android.
+
+- `native/scripts/build-www.mjs` copies `web/` into `native/www`, adds
+  `native.js` (which names the site the library comes from), leaves out the
+  service worker, and packs in the search model so search by meaning works
+  with no signal.
+- `native/ios` and `native/android` are the two projects. They are kept in
+  the repo; `npx cap sync` refreshes the web files inside them.
+- The workflow "Native apps" builds the Android app file (a download on the
+  run's page) and builds the iOS app for Apple's simulator, starts it there,
+  and checks that the web view loads the app and can keep the library.
+
+On a Mac, for iPhone and iPad (Xcode and Node 22 or later installed):
+
+```
+cd native
+npm install
+npm run ios        # packs the web app and opens the project in Xcode
+```
+
+In Xcode: choose the App target, Signing & Capabilities, pick your team,
+then run on a connected device, or Product, Archive to send a build to
+TestFlight. For Android, `npm run android` opens Android Studio; or take
+the app file from the workflow's run page.
+
+After the web app changes, run `npm run sync` in `native/` and build again:
+the apps carry their own copy of the app's files, and get the nightly
+library on their own.
+
 ## Working on it locally
 
 ```bash

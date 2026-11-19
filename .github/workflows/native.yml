@@ -1,0 +1,117 @@
+# The iPhone, iPad and Android apps (native/): the web app packed into a native shell.
+#
+# Run by hand (Actions, "Native apps", Run workflow), or by a push that touches native/.
+#   android: builds the Android app file and keeps it as a download on the run's page.
+#   ios:     builds the iOS app for Apple's simulator, starts it there, and reads the one line the
+#            app logs on its setup screen, to prove the web view can load the app's modules and keep
+#            the library on the device. It signs nothing: the build for real devices is made on a
+#            Mac in Xcode, with the owner's Apple account.
+# Neither job touches the library, the site, or any secret.
+name: Native apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["native/**", ".github/workflows/native.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Pack the web app
+        run: |
+          npm ci --no-audit --no-fund
+          node scripts/build-www.mjs
+          npx cap sync android
+      - name: Build the Android app
+        working-directory: native/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          ls -la app/build/outputs/apk/debug/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: library-android-debug
+          path: native/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: The newest Xcode on this machine
+        run: |
+          ls -d /Applications/Xcode*.app
+          newest="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+      - name: Pack the web app
+        run: |
+          npm ci --no-audit --no-fund
+          node scripts/build-www.mjs
+          npx cap sync ios
+      - name: Build for the simulator
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO build | tail -40
+          ls -d "$RUNNER_TEMP"/dd/Build/Products/Debug-iphonesimulator/*.app
+      - name: Start it in the simulator and read what the web view can do
+        run: |
+          set -x
+          app="$(ls -d "$RUNNER_TEMP"/dd/Build/Products/Debug-iphonesimulator/*.app | head -1)"
+          # an iPad if this machine has one ready, else any iPhone
+          dev="$(xcrun simctl list devices available | grep -E 'iPad' | head -1 | grep -oE '[0-9A-F-]{36}' || true)"
+          [ -n "$dev" ] || dev="$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | grep -oE '[0-9A-F-]{36}')"
+          xcrun simctl list devices available | grep "$dev"
+          xcrun simctl boot "$dev"
+          xcrun simctl bootstatus "$dev" -b
+          xcrun simctl install "$dev" "$app"
+          # the app's own log (the web view's console is written there in a debug build)
+          xcrun simctl launch --console-pty "$dev" io.github.mgallup7.library > "$RUNNER_TEMP/app.log" 2>&1 &
+          for i in $(seq 1 30); do grep -q "GL-NATIVE-CHECK" "$RUNNER_TEMP/app.log" && break; sleep 4; done
+          xcrun simctl io "$dev" screenshot "$RUNNER_TEMP/setup.png" || true
+          xcrun simctl terminate "$dev" io.github.mgallup7.library || true
+          set +x
+          echo "---- the app's log ----"
+          grep -v "^$" "$RUNNER_TEMP/app.log" | cut -c1-400 | tail -60
+          echo "---- the check ----"
+          line="$(grep -o 'GL-NATIVE-CHECK.*' "$RUNNER_TEMP/app.log" | head -1 || true)"
+          echo "$line"
+          [ -n "$line" ] || { echo "The app never reached its setup screen: a module did not load."; exit 1; }
+          echo "$line" | grep -Eq 'storage[\\"]*:[\\"]*opfs' || { echo "The web view cannot keep the library on the device (storage is not opfs)."; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-check
+          path: |
+            ${{ runner.temp }}/app.log
+            ${{ runner.temp }}/setup.png
+          retention-days: 14
