@@ -10,6 +10,7 @@
 //   3. The search model and its runtime are packed in, so search by meaning works with no signal
 //      from the first day. They are public files, fetched here from the site.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,6 +21,12 @@ const out = path.join(root, "www");
 const HOME = (process.env.LIBRARY_HOME || "https://mgallup7.github.io/gospel-library/").replace(/\/*$/, "/");
 const wantModel = !process.argv.includes("--no-model");
 
+// the search model from the last build, kept in case the site cannot be reached this time
+const MODEL = ["model/model_quantized.onnx", "model/vocab.txt", "vendor/ort/ort.wasm.min.mjs", "vendor/ort/ort-wasm-simd-threaded.mjs", "vendor/ort/ort-wasm-simd-threaded.wasm"];
+const kept = fs.mkdtempSync(path.join(os.tmpdir(), "library-model-"));
+const hadModel = MODEL.every((f) => fs.existsSync(path.join(out, f)));
+if (hadModel) for (const f of MODEL) { fs.mkdirSync(path.dirname(path.join(kept, f)), { recursive: true }); fs.copyFileSync(path.join(out, f), path.join(kept, f)); }
+
 fs.rmSync(out, { recursive: true, force: true });
 fs.cpSync(web, out, { recursive: true });
 for (const f of ["sw.js", "manifest.webmanifest"]) fs.rmSync(path.join(out, f), { force: true });
@@ -29,7 +36,6 @@ const shell = /gospel-shell-(v\d+)/.exec(fs.readFileSync(path.join(web, "sw.js")
 const build = shell ? shell[1] : "unknown";
 
 // the search model and its runtime, from the site (public files)
-const MODEL = ["model/model_quantized.onnx", "model/vocab.txt", "vendor/ort/ort.wasm.min.mjs", "vendor/ort/ort-wasm-simd-threaded.mjs", "vendor/ort/ort-wasm-simd-threaded.wasm"];
 let modelLocal = false;
 if (wantModel) {
   try {
@@ -43,9 +49,14 @@ if (wantModel) {
     modelLocal = true;
   } catch (err) {
     for (const f of MODEL) fs.rmSync(path.join(out, f), { force: true });
-    console.warn(`The search model could not be fetched from ${HOME} (${err.message}). The app will download it on first use instead.`);
+    if (hadModel) {
+      for (const f of MODEL) { fs.mkdirSync(path.dirname(path.join(out, f)), { recursive: true }); fs.copyFileSync(path.join(kept, f), path.join(out, f)); }
+      modelLocal = true;
+      console.warn(`The search model could not be fetched from ${HOME} (${err.message}). The copy from the last build is used.`);
+    } else console.warn(`The search model could not be fetched from ${HOME} (${err.message}). The app will download it on first use instead.`);
   }
 }
+fs.rmSync(kept, { recursive: true, force: true });
 
 fs.writeFileSync(path.join(out, "native.js"), `// Written by native/scripts/build-www.mjs. Read by app.js before anything else runs.
 window.GL_HOME = ${JSON.stringify(HOME)};
