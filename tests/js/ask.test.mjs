@@ -180,10 +180,10 @@ test("the inventory says what this device holds, and names what it does not", ()
 });
 
 test("every mode sends the same core, his standing instructions and his notes, with one cache marker", async () => {
-  const skills = { style: "STYLE-MARK", voice: "VOICE-MARK", skills: [{ kind: "mode", id: "letter", name: "Letter", text: "LETTER-MARK" }] };
+  const skills = { style: "STYLE-MARK", voice: "VOICE-MARK", skills: [{ kind: "mode", id: "outline", name: "Outline", text: "OUTLINE-MARK" }, { kind: "mode", id: "weekly-letter", name: "Letter", text: "LETTER-MARK" }] };
   const { Ask } = load(() => { throw new Error("no call"); }, { askNotes: "2026-11-01: The zone conference theme is covenants." }, { api: libraryApi(), skills });
   const per = {};
-  for (const mode of ["ask", "draft", "think", "skill:letter", "chain"]) per[mode] = JSON.parse(JSON.stringify(await Ask.system(mode, mode === "chain" ? "CHAIN-PARAGRAPH" : "")));
+  for (const mode of ["ask", "draft", "think", "skill:outline", "chain"]) per[mode] = JSON.parse(JSON.stringify(await Ask.system(mode, mode === "chain" ? "CHAIN-PARAGRAPH" : "")));
   for (const [mode, blocks] of Object.entries(per)) {
     const all = textOf(blocks);
     assert.equal(blocks[0].text, Ask.core, `${mode}: the core comes first`);
@@ -194,7 +194,7 @@ test("every mode sends the same core, his standing instructions and his notes, w
     assert.match(all, /The rule against em dashes governs what you write even where the instructions, the voice rules, the piece to write or their examples, below, contain em dashes themselves/, `${mode}: the prompt does not say the rule holds over his own text`);
     assert.doesNotMatch(all, /1971/, `${mode}: no shelf claimed that is not here`);
   }
-  for (const mode of ["ask", "draft", "think", "skill:letter"]) {
+  for (const mode of ["ask", "draft", "think", "skill:outline"]) {
     const blocks = per[mode];
     assert.ok(blocks.at(-1).cache_control, `${mode}: the marker is on the last block`);
     assert.match(blocks[2].text, /^On this device[\s\S]*Not on this device: general conference talks[\s\S]*\n\nTools:/, `${mode}: the inventory, then the tools`);
@@ -205,7 +205,10 @@ test("every mode sends the same core, his standing instructions and his notes, w
   assert.match(per.think[1].text, /read its key verses in the Hebrew or Greek first/);
   assert.match(textOf(per.ask), /STYLE-MARK/); assert.doesNotMatch(textOf(per.ask), /VOICE-MARK/);
   assert.match(textOf(per.draft), /VOICE-MARK/); assert.doesNotMatch(textOf(per.draft), /LETTER-MARK/);
-  assert.match(textOf(per["skill:letter"]), /VOICE-MARK[\s\S]*LETTER-MARK/);
+  assert.match(textOf(per["skill:outline"]), /VOICE-MARK[\s\S]*OUTLINE-MARK/);
+  // letters are not written here: a letter skill in the sealed file is never sent, even if asked for by its id
+  for (const mode of Object.keys(per)) assert.doesNotMatch(textOf(per[mode]), /LETTER-MARK|\bletter\b/i, `${mode}: no letter`);
+  assert.doesNotMatch(textOf(JSON.parse(JSON.stringify(await Ask.system("skill:weekly-letter")))), /LETTER-MARK/);
   // the deck's chain: its own paragraph, no tools guide, the date after the marker
   const chain = per.chain;
   assert.match(chain[1].text, /^CHAIN-PARAGRAPH\n\nThis call has no tools/);

@@ -28,7 +28,7 @@ import { shortCitation, chapterOf } from "./lib/cite.js";
   // serves Ask, Draft, Think it through and the deck's chain, so each of them knows what the
   // others know. Nothing personal is written here: this file is served in the clear, and his
   // name and his mission belong in his own standing instructions, kept on the device.
-  const CORE = `You are Claude, working inside a private scripture library on its owner's own device. He is a mission president of The Church of Jesus Christ of Latter-day Saints who teaches missionaries every week: zone conferences, trainings, a weekly letter. He works with you daily elsewhere and expects the same here: a peer who has read widely, answers the question asked, and says what he actually thinks.
+  const CORE = `You are Claude, working inside a private scripture library on its owner's own device. He is a mission president of The Church of Jesus Christ of Latter-day Saints who teaches missionaries every week: zone conferences and trainings. He works with you daily elsewhere and expects the same here: a peer who has read widely, answers the question asked, and says what he actually thinks.
 
 How to answer him
 - Lead with the answer. No restating the question, no preamble, no closing summary, no offers of further help.
@@ -77,7 +77,7 @@ Every passage a tool returns carries a number like [12]; cite with those numbers
 
   const MODE_ASK = `This turn is a question. Bring your full understanding to it, the way you would in an ordinary conversation, with the library as your source of quotations. Reason in the open where it helps: connections between passages, what a prophet was responding to, where the texts are in tension. Cite every claim a passage supports with [n]. For a list, give every item, grouped by volume or book in canonical order, each with its reference and the exact text or the key clause; do not summarize a list he asked for in full.`;
 
-  const MODE_DRAFT = `This turn is a request for a piece of writing: a talk, a lesson, a training, a letter or an outline. Keep the order of work before composing: where the piece rests on a Bible passage, read its Hebrew or Greek first, so the draft says what the text says; then gather the Restoration scriptures and the prophets. Build the piece from passages the tools returned, and cite every quotation and every paraphrase as [n]; search first for any passage you want to use. Follow the requested form and length closely. Give the piece itself, with nothing before it. Voice, unless his own voice rules are given below: warm, direct, doctrinally careful, concrete. No filler openings. Headings only when the form calls for them (an outline, a lesson plan). If the passages are thin for part of the request, write that part briefly and say after the piece which searches would strengthen it.`;
+  const MODE_DRAFT = `This turn is a request for a piece of writing: a talk, a lesson, a training or an outline. Keep the order of work before composing: where the piece rests on a Bible passage, read its Hebrew or Greek first, so the draft says what the text says; then gather the Restoration scriptures and the prophets. Build the piece from passages the tools returned, and cite every quotation and every paraphrase as [n]; search first for any passage you want to use. Follow the requested form and length closely. Give the piece itself, with nothing before it. Voice, unless his own voice rules are given below: warm, direct, doctrinally careful, concrete. No filler openings. Headings only when the form calls for them (an outline, a lesson plan). If the passages are thin for part of the request, write that part briefly and say after the piece which searches would strengthen it.`;
 
   // Think it through: the page being read (or the search being looked at) handed over whole,
   // so Claude can study it and go looking for what connects to it.
@@ -482,7 +482,7 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
 
   const ICON_GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
   function hintText() {
-    return `Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training, a letter). ${modelName()}${settings.think ? ", thinking first," : ""} searches your library the way a researcher would, several searches deep; every passage it finds becomes a card you can tick onto the deck.` + (GL().skills?.voice ? " Drafts are written in your voice." : "") + (settings.web ? " Web search is on: what comes from the web is listed apart and is not checked against your library." : "");
+    return `Ask a question, or switch to Draft and describe what to write (a talk, a lesson, a training). ${modelName()}${settings.think ? ", thinking first," : ""} searches your library the way a researcher would, several searches deep; every passage it finds becomes a card you can tick onto the deck.` + (GL().skills?.voice ? " Drafts are written in your voice." : "") + (settings.web ? " Web search is on: what comes from the web is listed apart and is not checked against your library." : "");
   }
 
   // The Claude settings are a part of the app's one Settings screen (app.js openSettings), which
@@ -1015,8 +1015,10 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
 
   // The owner's private skills (published sealed with the library, unlocked
   // on the device): a voice to write every draft in, a house style for
-  // answers, and whole pieces to write (a weekly letter) as modes of their own.
-  function modeSkills() { return (GL().skills?.skills || []).filter((k) => k && k.kind === "mode" && k.id && k.text); }
+  // answers, and whole pieces to write as modes of their own. Letters are not written here, by the
+  // owner's choice: a letter skill in the sealed file is never offered and never sent.
+  const isLetter = (k) => /letter/i.test(`${k.id} ${k.name || ""}`);
+  function modeSkills() { return (GL().skills?.skills || []).filter((k) => k && k.kind === "mode" && k.id && k.text && !isLetter(k)); }
   function modeSkill(mode) { return mode.startsWith("skill:") ? modeSkills().find((k) => `skill:${k.id}` === mode) || null : null; }
   // The blocks, in their order. mode is ask, draft, think, skill:<id> or chain (the deck's own
   // call, which hands in its paragraph and has no tools). The same blocks go out on every

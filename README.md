@@ -247,7 +247,7 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   .md file): the passages as quotes with the highlights in bold, each
   connection, and the chain with its caption and notes.
 - Ask: a question, or in Draft mode a request (a talk, a lesson, a zone
-  conference training, a letter). Claude searches the library itself, with
+  conference training). Claude searches the library itself, with
   tools that run on the device: ranked search, every passage in any part of
   the library containing a word family or an exact phrase (for complete
   lists: "all the references to the Holy Ghost in Preach My Gospel"), and
@@ -283,8 +283,8 @@ own iPhone and iPad and searched there in a few milliseconds, online or not.
   device are kept until the app is closed (never the key or the passphrase);
   "Copy error log" in Settings, under About, puts them on the clipboard.
 - Your own voice and skills, kept private. A skills file (how drafts should
-  sound, a house style for answers, and whole pieces such as the weekly
-  letter, which appears as its own mode beside Ask and Draft) travels sealed
+  sound, a house style for answers, and whole pieces to write, each
+  appearing as its own mode beside Ask and Draft) travels sealed
   with the library, unlocked on the device with the same passphrase. It is
   never committed to the repository and never passes through the build as
   plain text: you seal it on your own machine and upload the sealed file,
@@ -389,7 +389,7 @@ The next nightly run (or one you start from the Actions tab) publishes it.
 The workflow has no input for skills: anything typed into a workflow input
 is printed in the run's log, which anyone can read on a public repository.
 The file is JSON: `{"voice": "...", "style": "...", "skills": [{"id":
-"weekly-letter", "name": "Letter", "kind": "mode", "description": "...",
+"outline", "name": "Outline", "kind": "mode", "description": "...",
 "placeholder": "...", "week1": "2026-06-28", "text": "..."}]}`. `voice` is
 prepended to every draft, `style` to every answer, and each `kind: "mode"`
 skill becomes a mode of its own.
