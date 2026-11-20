@@ -2519,7 +2519,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const data = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result).split(",")[1] || ""); r.onerror = () => reject(r.error || new Error("could not read the file")); r.readAsDataURL(blob); });
     const safe = String(name || "file").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").slice(0, 120);
     const written = await cap.nativePromise("Filesystem", "writeFile", { path: `share/${safe}`, data, directory: "CACHE", recursive: true });
-    try { await cap.nativePromise("Share", "share", { title: title || safe, files: [written.uri] }); }
+    try { await cap.nativePromise("Share", "share", { files: [written.uri] }); } // the file alone: a title or text beside it is saved as a second file
     catch (err) { if (!/cancel|abort|dismiss/i.test(String((err && err.message) || err))) throw err; } // closing the sheet is not a failure
     return true;
   }
@@ -2530,7 +2530,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       let can = false;
       try { can = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (_) {}
       if (can) {
-        try { await navigator.share({ files: [file], title }); return; }
+        try { await navigator.share({ files: [file] }); return; } // (no title: iOS saves it as a second, .txt file)
         catch (err) { if (err && err.name === "AbortError") return; } // anything else: the download below
       }
     }

@@ -1815,7 +1815,7 @@ import { database } from "./lib/idb.js";
         const file = new File([text], name, { type: "text/markdown" });
         // inside the apps: the system's share sheet (app.js nativeShare)
         try { if (await GL().nativeShare?.(file, name)) { close(); return; } } catch (err) { msg.textContent = `Could not hand the file over: ${err.message}`; return; }
-        if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); close(); return; } catch (err) { if (err.name === "AbortError") return; } }
+        if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file] }); close(); return; } catch (err) { if (err.name === "AbortError") return; } }
         const url = URL.createObjectURL(file);
         const a = el("a", { href: url, download: name }); document.body.append(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -2875,7 +2875,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     }
     if (canShareFile(p.file)) {
       say(reportLine());
-      navigator.share({ files: [p.file], title: p.name }).catch((err) => {
+      navigator.share({ files: [p.file] }).catch((err) => { // (no title: iOS saves a title beside the file as a .txt of its own)
         if (err && err.name === "AbortError") return;
         if (late && err && err.name === "NotAllowedError") { GL().toast("Tap again to share."); say(`${reportLine()} The file is ready. Tap Download PowerPoint again, then choose Save to Files, PowerPoint, Keynote or AirDrop.`); return; }
         fallbackDownload(p);
@@ -2895,8 +2895,31 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       say(`Could not hand the file over: ${err.message}`);
     }
   }
-  async function downloadFile() {
-    if (isPrepared()) { handOver(prepared); return; }
+  // The file is named first, the deck's title offered, and handed over under that name. The file
+  // is being built while the name is typed, so Save usually has it ready.
+  const cleanFileName = (v) => String(v || "").replace(/\.pptx$/i, "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || pptxName().replace(/\.pptx$/, "");
+  const named = (p, base) => { const name = `${base}.pptx`; return name === p.name ? p : { ...p, name, file: new File([p.blob], name, { type: PPTX_TYPE }) }; };
+  function downloadFile() {
+    if (!ui || !deck.items.length) return;
+    prepareSoon();
+    const input = el("input", { type: "text", class: "ask-input file-name", value: pptxName().replace(/\.pptx$/, ""), "aria-label": "File name", autocomplete: "off", autocapitalize: "words", spellcheck: "false", enterkeyhint: "done" });
+    let done = null;
+    const save = () => { const base = cleanFileName(input.value); done?.(); handPptxAs(base); };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
+    dialog("Name the file", (close) => {
+      done = close;
+      return [
+        el("h2", { text: "Name the PowerPoint" }),
+        input,
+        el("p", { class: "lede", text: "The file is saved under this name; .pptx is added for you." }),
+        el("button", { type: "button", class: "primary file-save", text: "Save", onclick: save }),
+        el("button", { type: "button", class: "text-btn", text: "Cancel", onclick: close }),
+      ];
+    });
+    setTimeout(() => { try { input.focus(); input.select(); } catch (_) {} }, 60);
+  }
+  async function handPptxAs(base) {
+    if (isPrepared()) { handOver(named(prepared, base)); return; }
     if (!ui) return;
     ui.download.disabled = true;
     say("Building the PowerPoint file…");
@@ -2907,7 +2930,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     // Built after the tap (the build began as the finger came down, so it is often a fraction of
     // a second later): the share sheet is tried, and where the browser wants a fresh tap for it,
     // a toast asks for one more tap on the same button. Elsewhere the download starts.
-    handOver(prepared, { late: true });
+    handOver(named(prepared, base), { late: true });
   }
 
   window.Deck = {
