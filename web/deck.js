@@ -1813,6 +1813,8 @@ import { database } from "./lib/idb.js";
       } }),
       el("button", { type: "button", class: "text-btn", text: "Save .md file", onclick: async () => {
         const file = new File([text], name, { type: "text/markdown" });
+        // inside the apps: the system's share sheet (app.js nativeShare)
+        try { if (await GL().nativeShare?.(file, name)) { close(); return; } } catch (err) { msg.textContent = `Could not hand the file over: ${err.message}`; return; }
         if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); close(); return; } catch (err) { if (err.name === "AbortError") return; } }
         const url = URL.createObjectURL(file);
         const a = el("a", { href: url, download: name }); document.body.append(a); a.click(); a.remove();
@@ -2865,6 +2867,12 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
   // Inside the tap: the share sheet where there is one, a download elsewhere. late: the file was
   // built after the tap, so the browser may refuse the sheet; then the button waits for one more tap.
   function handOver(p, { late = false } = {}) {
+    // inside the apps the file goes through the system's share sheet, which needs no tap of its own
+    if (window.GL_HOME && GL().nativeShare) {
+      say(reportLine());
+      GL().nativeShare(p.blob, p.name).then((ok) => { if (!ok) fallbackDownload(p); }).catch((err) => say(`Could not hand the file over: ${err.message}`));
+      return;
+    }
     if (canShareFile(p.file)) {
       say(reportLine());
       navigator.share({ files: [p.file], title: p.name }).catch((err) => {

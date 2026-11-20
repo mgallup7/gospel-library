@@ -2510,7 +2510,21 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // A JSON file handed to the device. On an iPhone or iPad the share sheet (Save to Files,
   // AirDrop) is the dependable way out of a home-screen app, as it is for the deck; a download
   // link is the way elsewhere.
+  // Inside the apps (native/) a file leaves through the system's own share sheet: Save to Files or
+  // Drive, Mail, AirDrop, Nearby. The web view cannot download, so the file is written to the app's
+  // cache and handed over from there. Resolves true when it was handled this way.
+  async function nativeShare(blob, name, title) {
+    const cap = window.Capacitor;
+    if (!NATIVE || !cap || typeof cap.nativePromise !== "function" || !cap.isPluginAvailable?.("Filesystem") || !cap.isPluginAvailable("Share")) return false;
+    const data = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result).split(",")[1] || ""); r.onerror = () => reject(r.error || new Error("could not read the file")); r.readAsDataURL(blob); });
+    const safe = String(name || "file").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").slice(0, 120);
+    const written = await cap.nativePromise("Filesystem", "writeFile", { path: `share/${safe}`, data, directory: "CACHE", recursive: true });
+    try { await cap.nativePromise("Share", "share", { title: title || safe, files: [written.uri] }); }
+    catch (err) { if (!/cancel|abort|dismiss/i.test(String((err && err.message) || err))) throw err; } // closing the sheet is not a failure
+    return true;
+  }
   async function saveFile(name, text, title) {
+    try { if (await nativeShare(new Blob([text], { type: "application/json" }), name, title)) return; } catch (err) { toast(`Could not hand the file over: ${err.message}`); return; }
     if (navigator.maxTouchPoints > 0 && typeof File === "function") {
       const file = new File([text], name, { type: "application/json" });
       let can = false;
@@ -4195,6 +4209,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     syncControls(); renderHome(); showList(); push();
   }
   window.GL = {
+    nativeShare,
     ask: askQuestion,
     resize, // touch.js: two fingers step the text size
     step: (dir) => { const d = currentDoc; if (!d || state.docId !== d.id) return; const to = dir > 0 ? d.next : d.prev; if (to) stepChapter(to); }, // touch.js: a flick turns the chapter

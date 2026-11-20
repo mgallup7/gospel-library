@@ -7,8 +7,9 @@ android {
         applicationId "io.github.mgallup7.library"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // each build made by the workflow carries a higher number, so it installs over the last
+        versionCode((System.getenv("LIBRARY_BUILD") ?: "1").toInteger())
+        versionName "1.0." + (System.getenv("LIBRARY_BUILD") ?: "1")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +17,21 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // The permanent key the apps are signed with, so a new build updates the one installed.
+    // It is never in the repo: the workflow writes it from a secret and names it here.
+    signingConfigs {
+        release {
+            if (System.getenv("LIBRARY_KEYSTORE")) {
+                storeFile file(System.getenv("LIBRARY_KEYSTORE"))
+                storePassword System.getenv("LIBRARY_KEYSTORE_PASSWORD")
+                keyAlias "library"
+                keyPassword System.getenv("LIBRARY_KEYSTORE_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (System.getenv("LIBRARY_KEYSTORE")) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
