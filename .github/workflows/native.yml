@@ -168,6 +168,12 @@ jobs:
         working-directory: .
         run: |
           if [ -n "$APPLE_TEAM_ID" ] && [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ]; then
+            # each has a known shape: a value pasted into the wrong secret is named here, not found out later
+            bad=""
+            printf '%s' "$APPLE_TEAM_ID" | grep -Eqx '[A-Z0-9]{10}' || bad="$bad APPLE_TEAM_ID(10 letters and digits, on one line; it is ${#APPLE_TEAM_ID} characters)"
+            printf '%s' "$ASC_KEY_ID" | grep -Eqx '[A-Z0-9]{10}' || bad="$bad ASC_KEY_ID(10 letters and digits; it is ${#ASC_KEY_ID} characters)"
+            printf '%s' "$ASC_ISSUER_ID" | grep -Eqix '[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}' || bad="$bad ASC_ISSUER_ID(36 characters with dashes; it is ${#ASC_ISSUER_ID} characters)"
+            if [ -n "$bad" ]; then echo "These secrets do not have the shape expected:$bad"; exit 1; fi
             echo "ok=yes" >> "$GITHUB_OUTPUT"
           else
             echo "The Apple secrets are not all set: no build is sent to TestFlight."
