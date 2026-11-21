@@ -209,7 +209,23 @@ jobs:
         if: steps.have.outputs.ok == 'yes'
         run: |
           mkdir -p "$RUNNER_TEMP/keys"
-          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8"
+          # The key as pasted may have lost its line breaks or its BEGIN and END lines: it is put
+          # back into the form Apple's tools read. Only its length is printed, never the key.
+          python3 - "$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8" <<'PY'
+          import os, re, sys, base64
+          raw = os.environ.get("ASC_KEY_P8", "")
+          body = re.sub(r"-----[A-Z ]+-----", "", raw)
+          body = re.sub(r"[^A-Za-z0-9+/=]", "", body)
+          try:
+              size = len(base64.b64decode(body, validate=True))
+          except Exception as err:
+              sys.exit(f"ASC_KEY_P8 is not a key: after cleaning it is {len(body)} characters and does not decode ({err}). Paste the whole .p8 file again.")
+          print(f"key: {len(body)} characters, {size} bytes")
+          if not 100 <= size <= 400:
+              sys.exit("ASC_KEY_P8 does not look like an App Store Connect key (a .p8 file is about 250 characters). Paste the whole .p8 file again.")
+          lines = [body[i:i + 64] for i in range(0, len(body), 64)]
+          open(sys.argv[1], "w").write("-----BEGIN PRIVATE KEY-----\n" + "\n".join(lines) + "\n-----END PRIVATE KEY-----\n")
+          PY
           cat > "$RUNNER_TEMP/export.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
