@@ -114,8 +114,16 @@ jobs:
           xcrun simctl bootstatus "$dev" -b
           xcrun simctl install "$dev" "$app"
           # the app's own log (the web view's console is written there in a debug build)
-          xcrun simctl launch --console-pty "$dev" io.github.mgallup7.library > "$RUNNER_TEMP/app.log" 2>&1 &
-          for i in $(seq 1 30); do grep -q "GL-NATIVE-CHECK" "$RUNNER_TEMP/app.log" && break; sleep 4; done
+          # (on a busy machine a launch sometimes starts with its console not attached and logs
+          # nothing at all: the app is then started again, up to three times)
+          for try in 1 2 3; do
+            xcrun simctl terminate "$dev" io.github.mgallup7.library >/dev/null 2>&1 || true
+            sleep 3
+            xcrun simctl launch --console-pty "$dev" io.github.mgallup7.library > "$RUNNER_TEMP/app.log" 2>&1 &
+            for i in $(seq 1 22); do grep -q "GL-NATIVE-CHECK" "$RUNNER_TEMP/app.log" && break; sleep 4; done
+            grep -q "GL-NATIVE-CHECK" "$RUNNER_TEMP/app.log" && break
+            echo "attempt $try: nothing from the app yet"
+          done
           xcrun simctl io "$dev" screenshot "$RUNNER_TEMP/setup.png" || true
           xcrun simctl terminate "$dev" io.github.mgallup7.library || true
           set +x
