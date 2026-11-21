@@ -226,12 +226,22 @@ jobs:
           lines = [body[i:i + 64] for i in range(0, len(body), 64)]
           open(sys.argv[1], "w").write("-----BEGIN PRIVATE KEY-----\n" + "\n".join(lines) + "\n-----END PRIVATE KEY-----\n")
           PY
+          # does Apple accept this key at all? (a wrong Key ID or Issuer ID shows here, plainly)
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          cp "$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8" "$HOME/.appstoreconnect/private_keys/"
+          if xcrun altool --list-apps --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" > "$RUNNER_TEMP/apps.txt" 2>&1; then
+            echo "Apple accepted the key. The account's apps include this one: $(grep -c 'io.github.mgallup7.library' "$RUNNER_TEMP/apps.txt")"
+          else
+            echo "Apple did not accept the key:"; grep -i -E "error|fail|unauthor|not |invalid|401|403" "$RUNNER_TEMP/apps.txt" | cut -c1-300 | head -8
+            echo "Key ID is ${#ASC_KEY_ID} characters (10 expected); Issuer ID is ${#ASC_ISSUER_ID} characters (36 expected)."
+            rm -rf "$RUNNER_TEMP/keys" "$HOME/.appstoreconnect"; exit 1
+          fi
           cat > "$RUNNER_TEMP/export.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
             <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>upload</string>
+            <key>destination</key><string>export</string>
             <key>teamID</key><string>${APPLE_TEAM_ID}</string>
             <key>signingStyle</key><string>automatic</string>
             <key>manageAppVersionAndBuildNumber</key><false/>
@@ -245,7 +255,13 @@ jobs:
             -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8" \
             -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tail -40
           status=${PIPESTATUS[0]}
-          rm -rf "$RUNNER_TEMP/keys"
+          if [ "$status" -ne 0 ]; then rm -rf "$RUNNER_TEMP/keys" "$HOME/.appstoreconnect"; echo "Signing the app for the App Store failed."; exit "$status"; fi
+          ipa="$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)"
+          ls -la "$ipa"
+          # the upload itself, by Apple's uploader, which reads the key from this folder
+          xcrun altool --upload-app --type ios --file "$ipa" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tail -30
+          status=${PIPESTATUS[0]}
+          rm -rf "$RUNNER_TEMP/keys" "$HOME/.appstoreconnect"
           [ "$status" -eq 0 ] || { echo "The upload to TestFlight failed."; exit "$status"; }
           echo "Sent to TestFlight."
 
