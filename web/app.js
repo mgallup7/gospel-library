@@ -73,7 +73,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   const settle = (id, data) => {
     const p = pending.get(id);
     if (!p) return;
-    if (data.progress) { p.onProgress && p.onProgress(data.progress); return; }
+    if (data.progress) { p.at = Date.now(); p.onProgress && p.onProgress(data.progress); return; }
     pending.delete(id);
     if (data.error) p.reject(Object.assign(new Error(data.error.message), { name: data.error.name }));
     else p.resolve(data.result);
@@ -111,7 +111,14 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     relayed.clear(); // the windows that asked send their calls again to whoever holds next
   }
   const toWorker = (id) => { const p = pending.get(id); if (p && worker) { p.sent = "worker"; worker.postMessage({ id, method: p.method, params: p.params }); } };
-  const toHolder = (id) => { const p = pending.get(id); if (p) { p.sent = "holder"; bc.postMessage({ kind: "call", from: me, id, method: p.method, params: p.params }); } };
+  const toHolder = (id) => { const p = pending.get(id); if (p) { p.sent = "holder"; p.at = Date.now(); bc.postMessage({ kind: "call", from: me, id, method: p.method, params: p.params }); } };
+  // A window the system has put to sleep while it held the library cannot answer, and nothing here
+  // can wake it: after a while the person is told which window to bring forward.
+  let saidWaiting = 0;
+  if (canShare) setInterval(() => {
+    if (role !== "asker" || document.hidden || Date.now() - saidWaiting < 60000) return;
+    for (const p of pending.values()) if (p.sent === "holder" && p.method !== "loadSemantic" && Date.now() - p.at > 12000) { saidWaiting = Date.now(); try { toast("Waiting for the library's other window. Bring it forward for a moment, or close it."); } catch (_) {} return; }
+  }, 4000);
   function send(id) {
     if (role === "holder") holderReady.then(() => toWorker(id));
     else if (role === "asker") toHolder(id);
@@ -160,7 +167,6 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   }
   async function yieldIfUnseen() {
     if (role !== "holder" || !letGo || !document.hidden) return;
-    if (Date.now() - lastAsker > 120000) return;       // no other window has asked for anything lately
     if (!(await someoneInView()) || !document.hidden || role !== "holder") return;
     stopWorker();
     role = "asker";
