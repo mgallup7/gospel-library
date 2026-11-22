@@ -48,15 +48,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(!(await page.$("#scrim")), "and remove the scrim");
   } else errors.push(`no footnote marker found (${opened || "no page with footnotes"})`);
 
-  // a second tab: the engine waits about 2.5 s for the storage before it calls it taken
+  // a second tab opens the library too, through the first (second-tab.spec covers the rest)
   const second = await ctx.newPage();
   const t0 = Date.now();
   await second.goto(BASE);
-  const told = await second.waitForFunction(() => /another tab/i.test(document.querySelector(".setup")?.textContent || ""), null, { timeout: 30000 }).catch(() => null);
-  const text = (await second.textContent(".setup").catch(() => "")) || "";
-  check(!!told, `second tab should be told the library is open elsewhere: ${text.slice(0, 80)}`);
-  const waited = (Date.now() - t0) / 1000;
-  check(!told || waited < 8, `the second tab should be told within a few seconds (took ${waited.toFixed(1)} s)`);
+  const joined = await second.waitForFunction(() => window.GL?.ready, null, { timeout: 30000 }).catch(() => null);
+  check(!!joined, `a second tab should open the library: ${((await second.textContent("body").catch(() => "")) || "").slice(0, 80)}`);
+  check(!joined || (Date.now() - t0) / 1000 < 8, `within a few seconds (took ${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   await second.screenshot({ path: SHOTS + "basics-second-tab.png" });
   await second.close();
 

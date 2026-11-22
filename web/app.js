@@ -50,39 +50,154 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   };
 
   // ------------------------------------------------------------ engine ----
-  const worker = new Worker(new URL("engine.js", BASE), { type: "module" });
-  const pending = new Map();
+  // The library is one database, and the storage it lives in lets one window hold it at a time.
+  // So one window (or tab) is the holder: it runs the engine's worker, and answers for the others,
+  // which send it their calls over a BroadcastChannel and never open the file themselves. Who
+  // holds is settled by a Web Lock: the first to ask has it, the rest wait in line, and when the
+  // holder closes, or goes out of sight while another window is in view, the next in line takes
+  // over, opens the library again, and the calls that were on their way are sent again. A browser
+  // with neither Web Locks nor BroadcastChannel keeps the old way: one window, and a notice in a second.
+  const ENGINE = "gospel-library-engine";
+  const canShare = !!(navigator.locks && typeof navigator.locks.request === "function" && typeof BroadcastChannel === "function");
+  const me = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const bc = canShare ? new BroadcastChannel(ENGINE) : null;
+  const pending = new Map();  // id -> { resolve, reject, onProgress, method, params, sent }
+  const relayed = new Map();  // the holder's own id for a call -> { from, id } of the window that asked
   let seq = 0;
-  worker.onmessage = (e) => {
-    const { id, result, error, progress } = e.data;
+  let worker = null, modelWorker = null;
+  let role = canShare ? "undecided" : "holder";   // undecided | holder | asker
+  let holderReady = Promise.resolve();            // a new holder opens the library before it answers
+  let letGo = null;                               // ends this window's hold on the lock
+  let everOpened = false, semanticAsked = false;  // what a new holder must do again: open, load the model
+  let lastAsker = 0;                              // when another window last asked this one for something
+  const settle = (id, data) => {
     const p = pending.get(id);
     if (!p) return;
-    if (progress) { p.onProgress && p.onProgress(progress); return; }
+    if (data.progress) { p.onProgress && p.onProgress(data.progress); return; }
     pending.delete(id);
-    if (error) p.reject(Object.assign(new Error(error.message), { name: error.name }));
-    else p.resolve(result);
+    if (data.error) p.reject(Object.assign(new Error(data.error.message), { name: data.error.name }));
+    else p.resolve(data.result);
   };
-  worker.onerror = (e) => { for (const p of pending.values()) p.reject(new Error(e.message || "the library engine stopped")); pending.clear(); };
-  function call(method, params = {}, onProgress = null) {
-    return new Promise((resolve, reject) => {
-      const id = ++seq;
-      pending.set(id, { resolve, reject, onProgress });
-      worker.postMessage({ id, method, params });
-    });
-  }
-  const api = (method, params) => call(method, params);
-  // The search model gets a worker of its own; the engine and it share a channel.
-  (() => {
+  function startWorker() {
+    worker = new Worker(new URL("engine.js", BASE), { type: "module" });
+    worker.onmessage = (e) => {
+      const { id, result, error, progress } = e.data;
+      const to = relayed.get(id);
+      if (to) {
+        if (!progress) relayed.delete(id);
+        try { bc.postMessage({ kind: "reply", to: to.from, id: to.id, result, error, progress }); } catch (err) { if (!progress) { try { bc.postMessage({ kind: "reply", to: to.from, id: to.id, error: { name: "Error", message: `the answer could not be passed between windows (${err.message})` } }); } catch (_) {} } }
+        return;
+      }
+      settle(id, { result, error, progress });
+    };
+    worker.onerror = (e) => {
+      for (const [id, p] of pending) if (p.sent === "worker") { pending.delete(id); p.reject(new Error(e.message || "the library engine stopped")); }
+      for (const [, to] of relayed) { try { bc.postMessage({ kind: "reply", to: to.from, id: to.id, error: { name: "Error", message: e.message || "the library engine stopped" } }); } catch (_) {} }
+      relayed.clear();
+    };
+    // The search model gets a worker of its own; the engine and it share a channel.
     try {
-      const modelWorker = new Worker(new URL("model-worker.js", BASE), { type: "module" });
+      modelWorker = new Worker(new URL("model-worker.js", BASE), { type: "module" });
       modelWorker.onerror = (e) => { console.warn("the search model's worker failed:", e?.message); call("detachModel", { why: e?.message || "worker error" }).catch(() => {}); };
       const channel = new MessageChannel();
       modelWorker.postMessage({ port: channel.port1 }, [channel.port1]);
-      const id = ++seq;
-      pending.set(id, { resolve: () => {}, reject: () => {}, onProgress: null });
-      worker.postMessage({ id, method: "attachModel", params: { port: channel.port2 } }, [channel.port2]);
+      worker.postMessage({ id: ++seq, method: "attachModel", params: { port: channel.port2 } }, [channel.port2]);
     } catch (err) { console.warn("the model runs inside the engine:", err?.message); }
-  })();
+  }
+  function stopWorker() {
+    try { worker && worker.terminate(); } catch (_) {}
+    try { modelWorker && modelWorker.terminate(); } catch (_) {}
+    worker = null; modelWorker = null;
+    relayed.clear(); // the windows that asked send their calls again to whoever holds next
+  }
+  const toWorker = (id) => { const p = pending.get(id); if (p && worker) { p.sent = "worker"; worker.postMessage({ id, method: p.method, params: p.params }); } };
+  const toHolder = (id) => { const p = pending.get(id); if (p) { p.sent = "holder"; bc.postMessage({ kind: "call", from: me, id, method: p.method, params: p.params }); } };
+  function send(id) {
+    if (role === "holder") holderReady.then(() => toWorker(id));
+    else if (role === "asker") toHolder(id);
+    // undecided: it waits in `pending`, and goes out the moment the role is known
+  }
+  function call(method, params = {}, onProgress = null) {
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve, reject, onProgress, method, params, sent: null });
+      if (method === "open") everOpened = true;
+      if (method === "loadSemantic") semanticAsked = params;
+      send(id);
+    });
+  }
+  // every call not yet answered goes out again, to whoever answers now
+  const sendAgain = () => { for (const id of [...pending.keys()]) send(id); };
+  // Is another window in view? (asked before this one lets go of the library, or keeps it unseen)
+  const someoneInView = () => new Promise((resolve) => {
+    const ask = `${me}-${++seq}`;
+    let done = false;
+    const hear = (e) => { if (e.data && e.data.kind === "here" && e.data.ask === ask && !done) { done = true; bc.removeEventListener("message", hear); resolve(true); } };
+    bc.addEventListener("message", hear);
+    bc.postMessage({ kind: "who", ask, from: me });
+    setTimeout(() => { if (!done) { done = true; bc.removeEventListener("message", hear); resolve(false); } }, 350);
+  });
+  function standInLine() {
+    navigator.locks.request(ENGINE, () => new Promise((release) => { takeHold(release); })).catch((err) => console.warn("the library could not be shared between windows:", err?.message));
+  }
+  async function takeHold(release) {
+    // unseen, with a window in view waiting: that one should hold, so this one goes to the back of the line
+    if (document.hidden && await someoneInView()) { release(); setTimeout(standInLine, 50); return; }
+    letGo = release;
+    const again = role !== "undecided"; // it was asking another window until now: the library must be opened here
+    role = "holder";
+    startWorker();
+    if (again && everOpened) {
+      holderReady = (async () => {
+        const raw = (method, params) => new Promise((resolve) => { const id = ++seq; pending.set(id, { resolve, reject: () => resolve(null), onProgress: null, method, params, sent: "worker" }); worker.postMessage({ id, method, params }); });
+        await raw("open", { slot: store.get("active")?.slot });
+        if (semanticAsked) raw("loadSemantic", semanticAsked); // not waited for: search by words is ready at once
+      })();
+    } else holderReady = Promise.resolve();
+    await holderReady;
+    try { bc.postMessage({ kind: "holder", id: me }); } catch (_) {}
+    sendAgain();
+  }
+  async function yieldIfUnseen() {
+    if (role !== "holder" || !letGo || !document.hidden) return;
+    if (Date.now() - lastAsker > 120000) return;       // no other window has asked for anything lately
+    if (!(await someoneInView()) || !document.hidden || role !== "holder") return;
+    stopWorker();
+    role = "asker";
+    const release = letGo; letGo = null;
+    release();
+    standInLine();
+    // (the window that takes over says so, and the calls waiting here are sent to it then)
+  }
+  if (canShare) {
+    bc.onmessage = (e) => {
+      const m = e.data;
+      if (!m || typeof m !== "object") return;
+      if (m.kind === "reply") { if (m.to === me) settle(m.id, m); return; }
+      if (m.kind === "holder") { if (m.id !== me && role !== "holder") { role = "asker"; sendAgain(); } return; }
+      if (m.kind === "who") { if (m.from !== me && !document.hidden) bc.postMessage({ kind: "here", ask: m.ask }); return; }
+      if (m.kind === "call" && role === "holder" && m.from !== me) {
+        lastAsker = Date.now();
+        holderReady.then(() => {
+          if (!worker) return;
+          const id = ++seq;
+          relayed.set(id, { from: m.from, id: m.id });
+          // a window that joins asks to open the library: it is open already, and is not closed and opened under the others
+          worker.postMessage({ id, method: m.method === "open" ? "openShared" : m.method, params: m.params });
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", () => { if (document.hidden) yieldIfUnseen(); });
+    // Who holds now? If nobody, this window will in a moment; if someone, ask them meanwhile.
+    navigator.locks.query().then((q) => {
+      const held = (q.held || []).some((l) => l.name === ENGINE);
+      if (held && role === "undecided") { role = "asker"; sendAgain(); }
+    }).catch(() => {});
+    standInLine();
+  } else {
+    startWorker();
+  }
+  const api = (method, params) => call(method, params);
 
   // ------------------------------------------------------------- state ----
   const state = {
@@ -194,7 +309,30 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   const rawPush = history.pushState.bind(history), rawReplace = history.replaceState.bind(history);
   let trailTimer = null;
   function writeTrail() { clearTimeout(trailTimer); try { sessionStorage.setItem("gospel.trail", JSON.stringify({ floor, mirror: mirror.slice(0, pos + 1), kept })); } catch (_) {} }
-  const noteEntry = () => { mirror[pos] = { url: location.hash || "#", state: history.state }; clearTimeout(trailTimer); trailTimer = setTimeout(writeTrail, 200); };
+  // More than one window (the iPad app): a small native piece opens another window of the app and
+  // keeps, for each window, the place it is on, so iPadOS brings every window back where it was.
+  // Absent in a browser and on a phone, and then nothing here shows or runs.
+  const Windows = {
+    multiple: false,
+    has: () => { try { return !!window.Capacitor?.isPluginAvailable?.("Windows"); } catch (_) { return false; } },
+    ask: (method, params) => window.Capacitor.nativePromise("Windows", method, params || {}),
+    async start() { // this window's remembered place, if it came back without one
+      if (!this.has()) return;
+      try {
+        const cur = await Promise.race([this.ask("current"), new Promise((_, no) => setTimeout(() => no(new Error("no answer")), 1500))]);
+        this.multiple = !!cur?.multiple;
+        if (cur?.hash && cur.hash.startsWith("#") && (!location.hash || location.hash === "#")) rawReplace(history.state, "", cur.hash);
+      } catch (_) {}
+    },
+    open(hash) { if (this.has()) this.ask("open", { hash: hash || "" }).catch((err) => toast(`Could not open another window: ${err?.message || err}`)); },
+    told: null, timer: null,
+    remember() {
+      if (!this.multiple) return;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => { const h = location.hash || "#"; if (h === this.told) return; this.told = h; this.ask("remember", { hash: h }).catch(() => {}); }, 400);
+    },
+  };
+  const noteEntry = () => { mirror[pos] = { url: location.hash || "#", state: history.state }; clearTimeout(trailTimer); trailTimer = setTimeout(writeTrail, 200); Windows.remember(); };
   history.pushState = (st, title, url) => { pos += 1; rawPush({ ...(st || {}), i: pos }, title, url); mirror.length = pos; noteEntry(); };
   history.replaceState = (st, title, url) => { rawReplace({ ...(st || {}), i: pos }, title, url); noteEntry(); };
   window.addEventListener("popstate", () => { if (Number.isInteger(history.state?.i)) pos = history.state.i; if (pos < floor) floor = pos; noteEntry(); }, true);
@@ -543,6 +681,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   }
   // Which of the four places is current: marked in the tab bar, named in the head (a real h1) and
   // in the document's title, and on the body for app.css, which shows each place its own head.
+  const ICON_WINDOW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M8 6V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-3"/></svg>';
   const ICON_GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.3.9a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.3-.9-2 3.4 1.9 1.5a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.3-.9a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.3.9 2-3.4z"/></svg>';
   let actsFor = null;
   function syncPlace() {
@@ -2633,6 +2772,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     sec("status", "", el("div", { class: "set-rows set-status" }, [
       row("Library", libNow),
       window.Sync?.status ? el("div", { class: "set-row" }, [el("span", { class: "set-lb", text: "Sync" }), el("span", { class: "set-val set-sync" }, [syncSaid, syncNow, syncSet])]) : null,
+      Windows.multiple ? row("Windows", el("button", { type: "button", class: "text-btn set-window", text: "Open another window", onclick: () => Windows.open("") })) : null,
       row("Text size", el("span", { class: "set-size" }, [
         el("button", { type: "button", "aria-label": "Smaller text", onclick: () => step(-1), html: "<span style='font-size:14px;font-weight:600'>A</span>" }),
         sizeLb,
@@ -3383,6 +3523,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       el("button", { type: "button", role: "menuitem", class: "menu-think", onclick: () => { shut(); thinkHere(); } }, [el("span", { class: "g", html: ICON_THINK }), "Think it through"]),
       // the Hebrew or Greek switch (original.js puts it in the bar) when the bar has no room for it
       el("button", { type: "button", role: "menuitem", class: "menu-orig", onclick: (e) => { const ob = e.currentTarget.closest(".reader-bar")?.querySelector(".orig-btn"); shut(); ob?.click(); } }, [el("span", { class: "g", html: "<b></b>" }), el("span", { class: "orig-name", text: "" })]),
+      Windows.multiple ? el("button", { type: "button", role: "menuitem", class: "menu-window", onclick: () => { shut(); Windows.open(location.hash); } }, [el("span", { class: "g", html: ICON_WINDOW }), "Open in a new window"]) : null,
       jsp ? el("button", { type: "button", role: "menuitem", class: "menu-cite", onclick: () => { shut(); citePapers(doc); } }, [el("span", { class: "g", html: "<b>“”</b>" }), "Cite this page"]) : null,
       // a phone has no rail and, over a page, no head: Settings is here, two taps from any page
       el("button", { type: "button", role: "menuitem", class: "menu-settings", onclick: () => { shut(); openSettings(); } }, [el("span", { class: "g", html: ICON_GEAR }), "Settings"]),
@@ -3416,6 +3557,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   function fitReaderBar(bar) {
     bar.classList.toggle("has-orig", !!bar.querySelector(".orig-btn")); // the menu offers the Hebrew or Greek only where the bar has the switch to fold
     if (!bar.querySelector(".size-pop")) return;
+    bar.classList.toggle("has-windows", Windows.multiple); // the iPad app: Aa is always a menu, since "Open in a new window" lives in it
     bar.classList.remove(...BAR_LEVELS);
     if (bar.offsetParent === null) return;
     for (const level of BAR_LEVELS) {
@@ -4210,6 +4352,9 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   }
   window.GL = {
     nativeShare,
+    newWindow: (hash) => Windows.open(hash),
+    get windows() { return Windows.multiple; },
+    engineRole: () => role, // holder | asker | undecided: which window has the library open (tests read it)
     ask: askQuestion,
     resize, // touch.js: two fingers step the text size
     step: (dir) => { const d = currentDoc; if (!d || state.docId !== d.id) return; const to = dir > 0 ? d.next : d.prev; if (to) stepChapter(to); }, // touch.js: a flick turns the chapter
@@ -4234,6 +4379,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       await new Promise((done) => { const t = setTimeout(done, 800); window.addEventListener("popstate", () => { clearTimeout(t); done(); }, { once: true }); history.back(); });
       if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href);
     }
+    await Windows.start();
     readUrl();
     if (!history.state || !Number.isInteger(history.state.n)) history.replaceState({ n: 0, label: null, prev: null }, "", location.href);
     syncControls();

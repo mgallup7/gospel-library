@@ -226,6 +226,13 @@ const methods = {
     const syncMethods = syncAccess ? await Promise.race([probeSyncHandle(), new Promise((r) => setTimeout(() => r(null), 2000))]) : false;
     return { syncAccess, syncMethods };
   },
+  // Asked for by another window through the one that holds the library (app.js): the library is
+  // open already, and is answered for as it stands, not closed and opened again under everyone.
+  async openShared({ slot }) {
+    await boot();
+    if (db && current && (!slot || slot === current.slot)) return { hasLibrary: true, mode, ...current };
+    return methods.open({ slot });
+  },
   async open({ slot }) {
     await boot();
     // the page asks again every few seconds while another tab holds the storage: once that tab

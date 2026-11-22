@@ -456,6 +456,8 @@ main {
 .size-menu .g { display: inline-flex; justify-content: center; width: 22px; color: var(--accent); }
 .size-menu .g svg { width: 20px; height: 20px; }
 .size-menu .menu-extra { display: none; }
+.reader-bar.has-windows .size-btns { display: none; }
+.reader-bar.has-windows .size-pop { display: inline-flex; }
 .reader-bar.compact .size-btns { display: none; }
 .reader-bar.compact .size-pop { display: inline-flex; }
 /* the match stepper keeps its count in words: where the bar cannot hold it whole it has a strip
