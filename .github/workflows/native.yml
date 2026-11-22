@@ -151,6 +151,8 @@ jobs:
   # says so and stops, green.
   testflight:
     needs: ios
+    # only what is on main goes to people's devices: a branch run by hand stops at the simulator check
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-latest
     timeout-minutes: 60
     defaults:
