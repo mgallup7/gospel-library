@@ -162,7 +162,8 @@ jobs:
           sleep 3
           rest="$RUNNER_TEMP/restore.log"
           xcrun simctl launch --console-pty "$dev" "$id" > "$rest" 2>&1 &
-          for i in $(seq 1 25); do [ "$(grep -c 'GL-WINDOWS-CHECK {' "$rest")" -ge 2 ] && break; sleep 4; done
+          # (the system may bring back only the window that was in front)
+          for i in $(seq 1 25); do grep -q 'GL-WINDOWS-CHECK {' "$rest" && break; sleep 4; done
           sleep 10
           xcrun simctl terminate "$dev" "$id" || true
           set +x
