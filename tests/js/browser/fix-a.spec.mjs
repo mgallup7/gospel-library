@@ -354,7 +354,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.goBack(); await page.waitForTimeout(600);
     if (!(await page.isVisible("#q"))) { await tapOn(page, "#searchTab"); await page.waitForTimeout(500); }
     await page.fill("#q", "charity never faileth"); await page.press("#q", "Enter");
-    await page.waitForSelector("#list .hit", { timeout: 20000 });
+    await page.waitForFunction(() => /charity/i.test(document.querySelector("#list .hit")?.textContent || ""), null, { timeout: 20000 }); // this search's results, not the list it replaces
+    await page.waitForTimeout(400);
     await page.evaluate(() => document.querySelector("#list .hit").scrollIntoView({ block: "center" })); await page.waitForTimeout(200); // clear of the bar at the foot of the phone
     await tapOn(page, "#list .hit"); await page.waitForSelector("#reader .doc .verse", { timeout: 10000 }); await page.waitForTimeout(600);
     check((await page.locator("#reader .doc mark.hl").count()) > 0, "a search for words should still mark them on the page");
