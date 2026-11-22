@@ -6,7 +6,7 @@ const SCOPES = {
   conference: ["general-conference"], talks: ["general-conference"], gc: ["general-conference"],
   handbook: ["handbook"], cfm: ["come-follow-me"], pmg: ["preach-my-gospel"], standards: ["missionary-standards"], "missionary-standards": ["missionary-standards"],
   manuals: ["manuals", "come-follow-me", "handbook", "preach-my-gospel", "missionary-standards"], manual: ["manuals", "come-follow-me", "handbook", "preach-my-gospel", "missionary-standards"],
-  helps: ["study-helps"], all: [],
+  helps: ["study-helps"], hymns: ["hymns"], hymn: ["hymns"], all: [],
   jsp: ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"], papers: ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"], "joseph-smith-papers": ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"],
 };
 const FILTER = /(speaker|by|year|book|in|scope):("[^"]+"|\S+)/gi;

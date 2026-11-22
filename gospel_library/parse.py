@@ -69,7 +69,7 @@ def parse_content(payload: dict, uri: str) -> ParsedDoc:
 
     header = root.find("header")
     title = _text(root.find("h1")) or _clean(meta.get("title")) or uri
-    subtitle = _text(root.select_one("header .subtitle, header .title-number"))
+    subtitle = _text(root.select_one("header .subtitle, header .title-number, header .song-number"))
     author_node = root.select_one(".byline .author-name, .author-name")
     author = _BYLINE_LEAD.sub("", _text(author_node)) if author_node else None
     author_role = _text(root.select_one(".byline .author-role, .author-role")) or None
@@ -129,6 +129,25 @@ def _extract_paragraphs(root: Tag) -> list[Paragraph]:
             continue
         if el.name == "li" and el.find(["p", "li", "h2", "h3", "h4"]):
             continue  # its children will be collected on their own
+        # A hymn: a verse or a chorus is one unit (found and quoted whole), kept
+        # under its first line's id; "[Chorus]" and the like are labels, not text.
+        song = _song_block(el)
+        if song is not None:
+            lines = [p for p in song.find_all("p") if "line" in (p.get("class") or [])]
+            if "label" in (el.get("class") or []) or not lines:
+                continue
+            if el is not lines[0]:
+                continue
+            text = _clean(" ".join(_unit_text(p) for p in lines))
+            if not text:
+                continue
+            pid = el.get("id") or el.get("data-aid")
+            if not pid or pid in seen_ids:
+                pid = f"x{seq + 1}"
+            seen_ids.add(pid)
+            seq += 1
+            units.append(Paragraph(seq=seq, pid=pid, kind="para", text=text))
+            continue
         if el.name == "tr":
             if el.find(["p", "li"]):
                 continue
@@ -153,6 +172,22 @@ def _extract_paragraphs(root: Tag) -> list[Paragraph]:
     return units
 
 
+def _song_block(el: Tag):
+    """The verse or chorus of a hymn this element is a line of, if it is one."""
+    if el.name != "p":
+        return None
+    parent = el.parent
+    if isinstance(parent, Tag) and set(parent.get("class") or []) & {"stanza", "chorus"} and _inside_class(parent, "poetry"):
+        for up in parent.parents:
+            if isinstance(up, Tag) and up.name == "figure" and "music" in (up.get("class") or []):
+                return parent
+    return None
+
+
+def _inside_class(el: Tag, name: str) -> bool:
+    return any(isinstance(p, Tag) and name in (p.get("class") or []) for p in el.parents)
+
+
 def _kind(el: Tag) -> str:
     classes = set(el.get("class") or [])
     if el.name == "h1":
@@ -163,7 +198,7 @@ def _kind(el: Tag) -> str:
         return "verse"
     if classes & {"study-summary", "study-intro", "intro", "summary"}:
         return "summary"
-    if classes & {"subtitle", "title-number", "dominant"}:
+    if classes & {"subtitle", "title-number", "dominant", "song-number"}:
         return "subtitle"
     if classes & {"author-name", "author-role"}:
         return "byline"

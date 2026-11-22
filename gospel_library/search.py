@@ -38,6 +38,8 @@ _SCOPES = {
     "manuals": ["manuals", "come-follow-me", "handbook", "preach-my-gospel"],
     "manual": ["manuals", "come-follow-me", "handbook", "preach-my-gospel"],
     "helps": ["study-helps"],
+    "hymns": ["hymns"],
+    "hymn": ["hymns"],
     "jsp": ["jsp-journals", "jsp-revelations", "jsp-histories", "jsp-documents", "jsp-administrative", "jsp-legal", "jsp-financial"],
     "all": [],
 }
@@ -287,7 +289,7 @@ def doc_label(r) -> str:
     if r["volume"]:
         return r["volume"]
     return {"handbook": "General Handbook", "come-follow-me": "Come, Follow Me", "preach-my-gospel": "Preach My Gospel",
-            "manuals": "Manual", "study-helps": "Study Helps", "scriptures": "Scriptures"}.get(coll, coll or "")
+            "manuals": "Manual", "study-helps": "Study Helps", "hymns": "Hymns", "scriptures": "Scriptures"}.get(coll, coll or "")
 
 
 def _citation(r: sqlite3.Row) -> str:

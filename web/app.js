@@ -667,7 +667,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   }
 
   // The shelf a home tab opens is the shelf the search box searches, until All is chosen again.
-  const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", jsp: "jsp" };
+  const TAB_SCOPE = { conference: "conference", scriptures: "scriptures", "preach-my-gospel": "pmg", "missionary-standards": "standards", "come-follow-me": "cfm", handbook: "handbook", manuals: "manuals", "study-helps": "helps", hymns: "hymns", jsp: "jsp" };
   const SCOPE_NAME = { scriptures: "the scriptures", conference: "general conference", pmg: "Preach My Gospel", standards: "Missionary Standards", handbook: "the handbook", cfm: "Come, Follow Me", manuals: "the manuals", helps: "the study helps", jsp: "the Joseph Smith Papers" };
   function syncControls() {
     input.value = state.q;
@@ -1441,6 +1441,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ["handbook", "General Handbook", (st) => `${count(st, "handbook")} ${count(st, "handbook") === 1 ? "chapter" : "chapters"}`, (st) => `${count(st, "handbook")} ${count(st, "handbook") === 1 ? "chapter" : "chapters"}`],
     ["come-follow-me", "Come, Follow Me", () => "This year and last", () => "This year and last"],
     ["manuals", "Books and manuals", (st) => `${count(st, "manuals")} pages`, (st) => `${count(st, "manuals")} pages`],
+    ["hymns", "Hymns", (st) => count(st, "hymns") ? `${count(st, "hymns")} hymns: the 1985 hymnbook and Hymns for Home and Church` : "Not downloaded yet", (st) => count(st, "hymns") ? `${count(st, "hymns")} hymns` : "Not downloaded yet"],
     ["study-helps", "Study helps", () => "Topical Guide, Bible Dictionary, Guide to the Scriptures", () => "Topical Guide and more"],
     ["jsp", "Joseph Smith Papers", (st) => { const n = jspPages(st); return n ? `${n.toLocaleString()} pages: journals, revelations, histories, documents` : "Not downloaded yet"; }, (st) => jspPages(st) ? "Journals, revelations…" : "Not downloaded yet"],
     // the two that are his own: rows under the shelves, not tiles among them
@@ -3329,7 +3330,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       if (v) v.classList.add("is-target");
     }
   }
-  const TAB_OF = { "general-conference": "conference", scriptures: "scriptures", "preach-my-gospel": "preach-my-gospel", "missionary-standards": "missionary-standards", handbook: "handbook", "come-follow-me": "come-follow-me", manuals: "manuals", "study-helps": "study-helps" };
+  const TAB_OF = { "general-conference": "conference", scriptures: "scriptures", "preach-my-gospel": "preach-my-gospel", "missionary-standards": "missionary-standards", handbook: "handbook", "come-follow-me": "come-follow-me", manuals: "manuals", "study-helps": "study-helps", hymns: "hymns" };
   function openBook(res) {
     hideNote();
     rememberScroll();

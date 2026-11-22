@@ -827,3 +827,30 @@ def test_an_older_lexicon_is_brought_up_to_date(tmp_path):
     originals.ensure_schema(conn)
     got = dict((r[0], (r[1], r[2])) for r in conn.execute("SELECT strongs, ascii, occurrences FROM original_lexicon"))
     assert got["H2617"] == ("chesed", 2) and got["G0026"] == ("agape", 1), got
+
+
+def test_a_hymn_is_cut_into_verses_and_choruses():
+    # invented words in the site's markup for a hymn: a verse or a chorus is one unit
+    from gospel_library import parse
+    body = """<header><p class="song-number" id="song_number1">7</p><h1 id="title1">A Made-Up Song</h1></header>
+<div class="body-block"><figure class="music" id="figure1"><p class="label" id="figure1_p1">Brightly</p>
+<div class="poetry"><div class="stanza">
+<p class="line" id="figure1_p2"><span class="verse-number">1. </span>The lantern on the hill is lit,</p>
+<p class="line" id="figure1_p3">And every window glows;</p></div>
+<div class="chorus"><p class="label" id="figure1_p4">[Chorus]</p>
+<p class="line" id="figure1_p5">Sing out, sing out, the day is near,</p>
+<p class="line" id="figure1_p6">Sing out across the snows.</p></div>
+<div class="stanza">
+<p class="line" id="figure1_p7"><span class="verse-number">2. </span>The river keeps its quiet road,</p>
+<p class="line" id="figure1_p8">And so the traveler goes.</p></div></div>
+<div class="citation-info"><p id="figure1_p9"><em>Text:</em> Nobody, b. 2026</p></div></figure>
+<p id="p1"><a class="scripture-ref" href="/study/scriptures/nt/matt/5?lang=eng&amp;id=p14#p14">Matthew 5:14</a></p></div>"""
+    doc = parse.parse_content({"meta": {"title": "A Made-Up Song"}, "content": {"body": body}}, "/manual/hymns/a-made-up-song")
+    assert doc.title == "A Made-Up Song" and doc.subtitle == "7"
+    texts = {p.pid: p.text for p in doc.paragraphs}
+    assert texts["figure1_p2"] == "The lantern on the hill is lit, And every window glows;"
+    assert texts["figure1_p5"] == "Sing out, sing out, the day is near, Sing out across the snows."
+    assert texts["figure1_p7"] == "The river keeps its quiet road, And so the traveler goes."
+    assert "figure1_p3" not in texts and "figure1_p4" not in texts  # a later line, the [Chorus] label
+    assert texts["figure1_p1"] == "Brightly" and texts["p1"] == "Matthew 5:14"
+    assert any(c["slug"] == "hymns" for c in __import__("gospel_library.config", fromlist=["x"]).COLLECTIONS)

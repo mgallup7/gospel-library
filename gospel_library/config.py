@@ -154,6 +154,14 @@ COLLECTIONS: list[dict] = [
         ],
     },
     {
+        "slug": "hymns",
+        "title": "Hymns",
+        "kind": "books",
+        # The 1985 hymnbook and Hymns for Home and Church (which grows as the
+        # Church releases more of it; the nightly sync picks the new ones up).
+        "roots": ["/manual/hymns", "/music/hymns-for-home-and-church"],
+    },
+    {
         "slug": "study-helps",
         "title": "Study Helps",
         "kind": "books",

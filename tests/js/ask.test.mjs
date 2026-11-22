@@ -305,9 +305,9 @@ test("the planner does not wait on a busy server, and names every shelf and what
   const sys = calls[0].body.system;
   assert.match(sys, /standards \(Missionary Standards for Disciples of Jesus Christ/);
   assert.match(sys, /jsp \(the Joseph Smith Papers/);
-  assert.match(sys, /scope is one of: all, scriptures, conference, pmg, standards, handbook, cfm, helps, jsp\./);
+  assert.match(sys, /scope is one of: all, scriptures, conference, pmg, standards, handbook, cfm, hymns, helps, jsp\./);
   assert.match(sys, /The original text comes first/);
-  assert.match(sys, /\n\nOn this device: scriptures, jsp\. Not on this device: conference, pmg, standards, cfm, handbook, helps\.(\n\n|$)/);
+  assert.match(sys, /\n\nOn this device: scriptures, jsp\. Not on this device: conference, pmg, standards, cfm, handbook, hymns, helps\.(\n\n|$)/);
   // his own instructions go with the plan too, in brief
   assert.match(sys, /\n\nHis standing instructions, for choosing what to search \(plan searches only; do not answer him\):\nNo em dashes/);
   assert.doesNotMatch(sys, /1971/);
