@@ -1863,13 +1863,17 @@ function browse(slug) {
 function bookToc(uri, id) {
   const b = id !== undefined && id !== null ? row("SELECT * FROM books WHERE id=?", [Number(id)]) : row("SELECT * FROM books WHERE uri=?", [normalizeUri(uri || "")]);
   if (!b) return { error: "no such book" };
-  const docs = new Map(rows("SELECT id, uri, title, author FROM documents WHERE book_id=?", [b.id]).map((d) => [d.uri, d]));
+  let found;
+  try { found = rows("SELECT id, uri, title, author, subtitle FROM documents WHERE book_id=?", [b.id]); }
+  catch (_) { found = rows("SELECT id, uri, title, author FROM documents WHERE book_id=?", [b.id]); } // a library from before subtitles were kept
+  const docs = new Map(found.map((d) => [d.uri, d]));
   const nodes = b.toc_json ? JSON.parse(b.toc_json) : [];
   for (const n of nodes) {
     // a long paper of the Joseph Smith Papers is stored one document per page; the entry opens its first page
     const d = docs.get(n.uri) || (n.uri ? docs.get(n.uri + "/1") : undefined);
     n.doc_id = d ? d.id : null;
     if (d && !n.subtitle && d.author) n.subtitle = d.author;
+    if (d && !n.subtitle && /^\d+$/.test(d.subtitle || "")) n.subtitle = d.subtitle; // a hymn's number, on the right of its row
   }
   return { id: b.id, uri: b.uri, title: b.title, year: b.year, month: b.month, nodes, status: b.status };
 }
