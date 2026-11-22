@@ -110,6 +110,7 @@ jobs:
           dev="$(xcrun simctl list devices available | grep -E 'iPad' | head -1 | grep -oE '[0-9A-F-]{36}' || true)"
           [ -n "$dev" ] || dev="$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | grep -oE '[0-9A-F-]{36}')"
           xcrun simctl list devices available | grep "$dev"
+          echo "GL_SIM=$dev" >> "$GITHUB_ENV"
           xcrun simctl boot "$dev"
           xcrun simctl bootstatus "$dev" -b
           xcrun simctl install "$dev" "$app"
@@ -134,6 +135,59 @@ jobs:
           echo "$line"
           [ -n "$line" ] || { echo "The app never reached its setup screen: a module did not load."; exit 1; }
           echo "$line" | grep -Eq 'storage[\\"]*:[\\"]*opfs' || { echo "The web view cannot keep the library on the device (storage is not opfs)."; exit 1; }
+      # More than one window (iPad): a debug build's page asks the Windows plugin through the bridge
+      # and logs GL-WINDOWS-CHECK. Started with -GLWindowsOpenTest the first window opens a second
+      # one (GL-WINDOWS-SCENES 2) and the second reports what the two web views share. Then the app
+      # is put in the background, stopped and started again, to see each window come back.
+      - name: Open a second window and read what the two windows share
+        run: |
+          set -x
+          dev="$GL_SIM"
+          id=io.github.mgallup7.library
+          win="$RUNNER_TEMP/windows.log"
+          for try in 1 2 3; do
+            xcrun simctl terminate "$dev" "$id" >/dev/null 2>&1 || true
+            sleep 3
+            xcrun simctl launch --console-pty "$dev" "$id" -GLWindowsOpenTest > "$win" 2>&1 &
+            for i in $(seq 1 30); do grep -q "GL-WINDOWS-SHARED" "$win" && break; sleep 4; done
+            grep -q "GL-WINDOWS-CHECK" "$win" && break
+            echo "attempt $try: nothing from the app yet"
+          done
+          sleep 8
+          xcrun simctl io "$dev" screenshot "$RUNNER_TEMP/windows.png" || true
+          # background (another app comes forward) so each window saves its place, then stop and start again
+          xcrun simctl launch "$dev" com.apple.Preferences || true
+          sleep 10
+          xcrun simctl terminate "$dev" "$id" || true
+          sleep 3
+          rest="$RUNNER_TEMP/restore.log"
+          xcrun simctl launch --console-pty "$dev" "$id" > "$rest" 2>&1 &
+          # (the system may bring back only the window that was in front)
+          for i in $(seq 1 25); do grep -q 'GL-WINDOWS-CHECK {' "$rest" && break; sleep 4; done
+          sleep 10
+          xcrun simctl terminate "$dev" "$id" || true
+          set +x
+          echo "---- the windows test (first launch) ----"
+          grep -E "GL-WINDOWS|Windows:|Loading app|rror" "$win" | cut -c1-500 | head -40
+          echo "---- after being stopped and started again ----"
+          grep -E "GL-WINDOWS|Windows:|Loading app|rror" "$rest" | cut -c1-500 | head -30
+          echo "---- the checks ----"
+          check="$(grep -o 'GL-WINDOWS-CHECK.*' "$win" | head -1 || true)"
+          echo "$check"
+          [ -n "$check" ] || { echo "No GL-WINDOWS-CHECK: the page could not reach the Windows plugin."; exit 1; }
+          echo "$check" | grep -Eq 'multiple[\\"]*:' || { echo "Windows.current did not answer with multiple."; exit 1; }
+          for p in plugin filesystem share; do
+            echo "$check" | grep -Eq "$p"'[\\"]*:true' || { echo "Capacitor.isPluginAvailable is false for $p."; exit 1; }
+          done
+          if echo "$check" | grep -Eq 'multiple[\\"]*:true'; then
+            grep -m1 -E "GL-WINDOWS-SCENES [2-9]" "$win" || { echo "Windows.open did not bring a second window."; exit 1; }
+            grep -m1 -E "GL-WINDOWS-CHECK.*gl-window-test" "$win" || { echo "The second window did not get the place it was opened with."; exit 1; }
+            grep -m1 -E "GL-WINDOWS-SHARED" "$win" || echo "(the second window did not report what it shares)"
+            grep -m1 -E "GL-WINDOWS-BROADCAST" "$win" || echo "(the first window logged no BroadcastChannel message: it may have been in the background)"
+            grep -m2 -E 'GL-WINDOWS-CHECK.*restored[\\"]*:true' "$rest" || echo "(no window came back restored after the stop and start)"
+          else
+            echo "This simulator shows one window only (multiple is false): the second-window check is skipped."
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -141,6 +195,9 @@ jobs:
           path: |
             ${{ runner.temp }}/app.log
             ${{ runner.temp }}/setup.png
+            ${{ runner.temp }}/windows.log
+            ${{ runner.temp }}/windows.png
+            ${{ runner.temp }}/restore.log
           retention-days: 14
 
   # The iPhone and iPad app, built for real devices and sent to TestFlight. It runs only when the

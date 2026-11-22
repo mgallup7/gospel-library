@@ -41,4 +41,26 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         config.delegateClass = SceneDelegate.self
         return config
     }
+
+    // File > New Window (Cmd+N) on an iPad with a keyboard. When the system already offers its
+    // own New Window item the app leaves it alone (two commands on one key would clash).
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == .main, UIApplication.shared.supportsMultipleScenes else { return }
+        if builder.menu(for: .newScene) != nil {
+            #if DEBUG
+            print("GL-WINDOWS-MENU the system's own New Window item is kept")
+            #endif
+            return
+        }
+        guard builder.menu(for: .file) != nil else { return }
+        let command = UIKeyCommand(title: "New Window",
+                                   action: #selector(LibraryViewController.newLibraryWindow(_:)),
+                                   input: "n",
+                                   modifierFlags: .command)
+        builder.insertChild(UIMenu(title: "", options: .displayInline, children: [command]), atStartOfMenu: .file)
+        #if DEBUG
+        print("GL-WINDOWS-MENU New Window (Cmd+N) added to the File menu")
+        #endif
+    }
 }
