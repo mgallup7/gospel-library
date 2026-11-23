@@ -1210,7 +1210,13 @@ import { database } from "./lib/idb.js";
       const same = ui.cards.querySelector(`.bcard[data-id="${it.id}"] .bc-menu [data-k="${k}"]:not(:disabled)`);
       refocus(it.id, same ? `.bc-menu [data-k="${k}"]` : ".bc-menu button:not(:disabled)");
     } })));
-    menu.append(el("button", { type: "button", role: "menuitem", class: "danger", text: "Remove from the deck", onclick: (e) => { e.stopPropagation(); menuFor = null; removeCard(it); } }));
+    menu.append(el("button", { type: "button", role: "menuitem", class: "danger", text: "Remove from the deck", onclick: (e) => {
+      e.stopPropagation();
+      // the menu is closed in full (its outside-tap listener too) before the card goes
+      if (menuOutside) { document.removeEventListener("pointerdown", menuOutside, true); menuOutside = null; }
+      menuFor = null;
+      removeCard(it);
+    } }));
     menu.addEventListener("keydown", (e) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
       const items = [...menu.querySelectorAll("button:not(:disabled)")];

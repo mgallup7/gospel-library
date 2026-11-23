@@ -338,6 +338,15 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       this.timer = setTimeout(() => { const h = location.hash || "#"; if (h === this.told) return; this.told = h; this.ask("remember", { hash: h }).catch(() => {}); }, 400);
     },
   };
+  // The iPad and iPhone apps: when the keyboard goes away the page is nudged by a pixel and back,
+  // which makes the web view line up what it draws with where taps land again.
+  if (NATIVE) document.addEventListener("focusout", (e) => {
+    if (!e.target?.matches?.("input, textarea, [contenteditable]")) return;
+    setTimeout(() => {
+      if (document.activeElement?.matches?.("input, textarea, [contenteditable]")) return; // moved to another field: the keyboard stays
+      try { const y = window.scrollY; window.scrollTo(window.scrollX, y + 1); window.scrollTo(window.scrollX, y); } catch (_) {}
+    }, 350);
+  });
   const noteEntry = () => { mirror[pos] = { url: location.hash || "#", state: history.state }; clearTimeout(trailTimer); trailTimer = setTimeout(writeTrail, 200); Windows.remember(); };
   history.pushState = (st, title, url) => { pos += 1; rawPush({ ...(st || {}), i: pos }, title, url); mirror.length = pos; noteEntry(); };
   history.replaceState = (st, title, url) => { rawReplace({ ...(st || {}), i: pos }, title, url); noteEntry(); };

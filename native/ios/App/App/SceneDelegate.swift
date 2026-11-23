@@ -79,6 +79,60 @@ class LibraryViewController: CAPBridgeViewController {
 
     private let windowsPlugin = WindowsPlugin()
 
+    // The page draws edge to edge and keeps clear of the clock by itself. After the keyboard had
+    // been up, the web view was left pushed in from the top and bottom by the safe area (bars of
+    // the background showed, and taps no longer landed where the page drew). So the scroll view
+    // is held to no insets of its own, and put back in place once the keyboard is gone.
+    private var keyboardUp = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(keyboardCame), name: UIResponder.keyboardWillShowNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardWent), name: UIResponder.keyboardDidHideNotification, object: nil)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if !keyboardUp { keepEdgeToEdge(settle: false) }
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        if !keyboardUp { keepEdgeToEdge(settle: false) }
+    }
+
+    @objc private func keyboardCame() { keyboardUp = true }
+
+    @objc private func keyboardWent() {
+        keyboardUp = false
+        keepEdgeToEdge(settle: true)
+        for wait in [0.3, 0.9] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                guard let self = self, !self.keyboardUp else { return }
+                self.keepEdgeToEdge(settle: true)
+            }
+        }
+    }
+
+    private func keepEdgeToEdge(settle: Bool) {
+        guard let web = webView else { return }
+        let scroll = web.scrollView
+        if scroll.contentInsetAdjustmentBehavior != .never { scroll.contentInsetAdjustmentBehavior = .never }
+        if scroll.contentInset != .zero { scroll.contentInset = .zero }
+        guard settle else { return }
+        let most = max(0, scroll.contentSize.height - scroll.bounds.height)
+        let y = min(max(0, scroll.contentOffset.y), most)
+        if y != scroll.contentOffset.y || scroll.contentOffset.x != 0 {
+            scroll.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+        }
+        web.setNeedsLayout()
+        web.layoutIfNeeded()
+        #if DEBUG
+        print("GL-EDGES settled after the keyboard: insets \(scroll.adjustedContentInset), offset \(scroll.contentOffset.y)")
+        #endif
+    }
+
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
         // registered on this window's bridge before the page loads: the plugin's script is added
