@@ -4072,7 +4072,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const page = r.pages[i], it = r.items[i];
     page.replaceChildren(el("div", { class: "status", text: "Opening…" }));
     let nodes = null;
-    try { nodes = await refView(it, r); } catch (_) { nodes = null; }
+    try { nodes = await refView(it.href, it.label, r, page); } catch (_) { nodes = null; }
     if (refs !== r) return; // another note, or the sheet has gone
     page.replaceChildren(...(nodes || [el("div", { class: "nm", text: it.label }), el("p", { class: "fn-quiet", text: "Could not open that just now." })]));
     const aim = page.querySelector(".peek .focus");
@@ -4081,7 +4081,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // What one reference shows: its verses; or the opening of a Topical Guide or dictionary entry
   // the library holds; or, for a page it does not hold, a plain line and a real link to the web.
   // Nothing is ever said in a toast over the sheet.
-  async function refView(it, r) {
+  async function refView(href, label, r, page) {
+    const it = { href, label };
     const u = linkUrl(it.href, r.doc && r.doc.source_url);
     const outside = (text, href) => [
       el("div", { class: "nm", text: it.label }),
@@ -4108,18 +4109,52 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       const nodes = await passageView(res, { open, focus, same });
       if (nodes) return nodes;
     }
-    // an entry or a page with no verse named: how it begins, and the way in
+    // An entry of the Topical Guide, the Bible Dictionary or the Guide to the Scriptures (or any
+    // page with no verse named): the entry itself is read here, in the sheet. A reference in it
+    // shows its verse in place of the entry, with a way back to the entry above it; "See also"
+    // goes to that entry the same way. Nothing leaves the chapter until Open is tapped.
     let doc = null;
     try { doc = await api("doc", { id: res.doc_id }); } catch (_) { doc = null; }
-    const paras = ((doc && doc.paragraphs) || []).filter((x) => x.kind !== "heading" && x.kind !== "title" && (x.text || "").trim()).slice(0, 8);
+    const shelf = HELP_NAME.find(([re]) => re.test(u.pathname));
+    const title = res.title || it.label;
+    const body = el("div", { class: "fn-entry" }, [sanitize((doc && doc.body_html) || "")]);
+    for (const junk of body.querySelectorAll("header, .page-break, sup.marker")) junk.remove();
+    body.addEventListener("click", async (e) => {
+      let a = e.target.closest("a[href]");
+      if (!a) { const row = e.target.closest("p.entry"); const links = row ? row.querySelectorAll("a[href]") : []; if (links.length === 1) a = links[0]; } // a line with one reference: the whole line is the target
+      if (!a || !body.contains(a)) return;
+      e.preventDefault(); e.stopPropagation();
+      const hrefIn = a.getAttribute("href") || "";
+      if (!hrefIn || hrefIn.startsWith("#")) return;
+      const name = (a.textContent || "").replace(/\s+/g, " ").trim();
+      a.classList.add("going");
+      let nodes = null;
+      try { nodes = await refView(new URL(hrefIn, (doc && doc.source_url) || CHURCH_SITE).href, name, r, page); } catch (_) { nodes = null; }
+      a.classList.remove("going");
+      if (refs !== r || !body.isConnected) return;
+      pagePush(page, nodes || [el("div", { class: "nm", text: name }), el("p", { class: "fn-quiet", text: "Could not open that just now." })], title);
+    });
     return [
-      el("div", { class: "nm", text: res.title || it.label }),
-      el("div", { class: "peek" }, paras.map((x) => el("p", { class: x.kind === "verse" ? "verse" : "para" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean)))),
+      el("div", { class: "nm" }, [shelf ? el("span", { class: "fn-shelf", text: shelf[1] }) : null, document.createTextNode(title)].filter(Boolean)),
+      body,
       el("div", { class: "peek-row" }, [
-        el("button", { type: "button", class: "primary", text: `Open ${res.title || it.label}`, onclick: open }),
+        el("button", { type: "button", class: "primary", text: `Open ${title}`, onclick: open }),
         window.Beside?.button?.(res) || null,
       ].filter(Boolean)),
     ];
+  }
+  const HELP_NAME = [[/\/scriptures\/tg\//, "Topical Guide"], [/\/scriptures\/bd\//, "Bible Dictionary"], [/\/scriptures\/gs\//, "Guide to the Scriptures"], [/\/scriptures\/triple-index\//, "Index"]];
+  // One step inside a reference's page (an entry, then a verse it lists): what was there is kept
+  // under a plain way back, at the place it was scrolled to.
+  function pagePush(page, nodes, backTo) {
+    const under = { nodes: [...page.childNodes], top: page.scrollTop };
+    const back = el("button", { type: "button", class: "fn-back", onclick: () => { page.replaceChildren(...under.nodes); page.scrollTop = under.top; say(`Back to ${backTo}`); } }, [el("span", { class: "g", html: ICON_BACK }), backTo]);
+    page.replaceChildren(back, ...nodes);
+    page.scrollTop = 0;
+    const aim = page.querySelector(".peek .focus");
+    if (aim && aim.previousElementSibling) page.scrollTop = Math.max(0, aim.offsetTop - page.offsetTop - 8);
+    const nm = page.querySelector(".nm");
+    if (nm) say(nm.textContent);
   }
   window.addEventListener("resize", () => { const r = refs; if (r && !sheet.hidden && r.at > 0) r.track.scrollLeft = r.pages[r.at].offsetLeft - r.pages[0].offsetLeft; }); // a window resized (iPadOS) keeps its page
   let sheetOpener = null;
