@@ -566,6 +566,37 @@ import { database } from "./lib/idb.js";
     return item;
   }
 
+  /** A chase from the reader's footnote sheet, as a chain: each verse in order (those already on
+   *  the deck are used where they are), the word that was tapped in it highlighted, and an arrow
+   *  from that word to the next verse. One step to undo. steps: [{doc_id, pid, kind, verse, text,
+   *  citation, collection, title, word}]. Returns { added, links }. */
+  function addChain(steps) {
+    let added = 0, links = 0, prev = null;
+    const list = (steps || []).filter((x) => x && x.doc_id && x.pid && (x.text || "").trim());
+    if (list.length < 2) return { added: 0, links: 0 };
+    batch(() => {
+      for (const x of list) {
+        const was = find(x.doc_id, x.pid);
+        const card = was || addPassage(x);
+        if (!card) continue;
+        if (!was) {
+          added++;
+          if (prev) { // right after the verse it follows from
+            const i = deck.items.indexOf(card);
+            if (i >= 0 && deck.items[i - 1] !== prev.card) { deck.items.splice(i, 1); deck.items.splice(deck.items.indexOf(prev.card) + 1, 0, card); }
+          }
+        }
+        const r = x.word ? findPhrase(card, x.word) : null;
+        const at = r ? hlAt(card, r.s) : null;
+        const hl = r ? (at && at.s === r.s && at.e === r.e ? at : setHighlight(card, r.s, r.e)) : null;
+        if (prev) { const before = deck.links.length; addLink({ id: prev.card.id, hl: prev.hl ? prev.hl.id : null }, { id: card.id, hl: null }); if (deck.links.length > before) links++; }
+        prev = { card, hl };
+      }
+      save();
+    });
+    if (added || links) did(`The chase is on the deck: ${plural(list.length, "verse")} in order, each joined to the next.`);
+    return { added, links };
+  }
   function citationFor(doc, verses) {
     if (doc.collection === "general-conference") {
       return { citation: doc.author || "", where: `“${doc.title}”`, label: doc.label || "" };
@@ -3125,6 +3156,7 @@ Rules. "add": the passages from the library that belong in this chain, strongest
   }
 
   window.Deck = {
+    addChain, tally: () => ({ passages: deck.items.filter((i) => i.type === "passage").length, links: deck.links.length, order: deck.items.filter((i) => i.type === "passage").map((i) => i.citation), marked: deck.items.filter((i) => i.type === "passage").map((i) => (i.hl || []).map((h) => phraseOf(i, h)).join("|")) }), // tally: for tests
     render, board: boardEl, showBoard, addFromDoc, addPassage, addSection, has, remove, removeIds, lastAdded, toggle, count, updateBadge,
     saysWhere: () => !!placed, // this turn's add will say where it landed in a toast of its own: the caller keeps its plain one back
     shouldAsk, askAboutDeck, present: presentDeck, chunksOf, build, THEMES, reportLine,

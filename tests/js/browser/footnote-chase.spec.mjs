@@ -46,6 +46,24 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(trail.length === 1 && /Alma 32:13/.test(trail[0]) && /endureth/.test(trail[0]), `${name}: the trail above the names says where this came from, and by which word (${JSON.stringify(trail)})`);
     const crumbH = await page.evaluate(() => Math.round(document.querySelector(".fn-crumb").getBoundingClientRect().height));
     check(crumbH >= 44, `${name}: a step of the trail takes a thumb (${crumbH})`);
+    // the chase as a chain on the deck: the start, the step, the verse in view; words marked; arrows between
+    {
+      const before = await page.evaluate(() => window.Deck.tally());
+      const inView = (await st()).nm;
+      const db = await page.locator(".fn-trail-deck").boundingBox();
+      await page.touchscreen.tap(db.x + db.width / 2, db.y + db.height / 2); await page.waitForTimeout(1200);
+      const after = await page.evaluate(() => window.Deck.tally());
+      const mine = after.order.slice(-3);
+      check(after.passages === before.passages + 3 && after.links === before.links + 2 && mine[0] === "Alma 32:13" && mine[1] === "Alma 38:2" && inView.startsWith(mine[2]), `${name}: + Deck puts the chase on the deck in order, joined (${JSON.stringify(mine)}, in view ${inView}; links ${before.links} to ${after.links})`);
+      check(/endureth/.test(after.marked[after.marked.length - 3]) && /endureth/.test(after.marked[after.marked.length - 2]), `${name}: with the tapped word marked in each (${JSON.stringify(after.marked.slice(-3))})`);
+      check((await st()).open && (await st()).deep, `${name}: and the chase stays up`);
+      await page.touchscreen.tap(db.x + db.width / 2, db.y + db.height / 2); await page.waitForTimeout(1000);
+      const again = await page.evaluate(() => window.Deck.tally());
+      check(again.passages === after.passages && again.links === after.links, `${name}: a second tap adds nothing twice (${again.passages}, ${again.links})`);
+      await page.evaluate(() => window.Deck.undo()); await page.waitForTimeout(400);
+      const undone = await page.evaluate(() => window.Deck.tally());
+      check(undone.passages === before.passages && undone.links === before.links, `${name}: one Undo takes the whole chain off (${undone.passages}, ${undone.links})`);
+    }
     await page.screenshot({ path: `${SHOTS}footnote-chase-${name}-2.png` });
     // sideways still means the next reference of the note at the top
     if (b.chips > 1) {

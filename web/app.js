@@ -3446,7 +3446,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const notes = md && marks ? new Set((md.doc.footnotes || []).map((x) => x.note_id)) : null;
     const chapter = String(res.title || "");
     const wordsOf = (x) => { const got = notes ? verseMarked(md.holder, x.pid, notes) : null; return got || [document.createTextNode(x.text)]; };
-    const peek = el("div", { class: "peek" + (aim ? " has-focus" : "") }, [
+    const peek = el("div", { class: "peek" + (aim ? " has-focus" : ""), "data-doc": String(res.doc_id), "data-pid": aim || from }, [
       ...verses.map((x) => el("p", { class: (x.kind === "verse" ? "verse" : "para") + (aim && x.pid === aim ? " focus" : ""), "data-pid": x.pid, "data-verse": x.verse ? String(x.verse) : "" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, ...wordsOf(x)].filter(Boolean))),
       cut ? el("p", { class: "peek-cut", text: `Verses ${start} to ${start + PEEK_MOST} are shown. Open the chapter for the rest, to verse ${end}.` }) : null,
       last && md ? el("p", { class: "peek-cut", text: `Three steps in. To follow a footnote from here, open ${chapter}.` }) : null,
@@ -4071,7 +4071,30 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     return el("nav", { class: "fn-trail", "aria-label": "How you got here" }, chase.flatMap((l, k) => [
       el("button", { type: "button", class: "fn-crumb", "aria-label": `Back to ${l.step.cite}${l.step.word ? `, ${l.step.word}` : ""}`, onclick: () => chaseTo(k) }, [el("span", { class: "fn-crumb-cite", text: l.step.cite || "Start" }), l.step.word ? el("span", { class: "fn-crumb-word", text: l.step.word }) : null].filter(Boolean)),
       el("span", { class: "fn-crumb-sep", "aria-hidden": "true", text: "›" }),
-    ]));
+    ]).concat(window.Deck?.addChain ? [el("button", { type: "button", class: "fn-trail-deck", text: "+ Deck", "aria-label": "Add this chase to the deck, each verse joined to the next", onclick: (e) => chaseToDeck(e.currentTarget) })] : []));
+  }
+  // The chase as a chain on the deck: the verse it began in, each verse a word was tapped in, and
+  // the verse now in view, in that order; the tapped words highlighted, an arrow from each to the
+  // next. It is what he builds by hand, in one tap, and one Undo takes it off.
+  async function chaseToDeck(btn) {
+    if (!window.Deck?.addChain) return;
+    const steps = [...chase.map((l) => l.step), step].filter((x) => x.key);
+    const peek = refs && refs.pages[refs.at] ? refs.pages[refs.at].querySelector(".peek[data-doc]") : null;
+    const wanted = steps.map((x) => ({ key: x.key, word: x.word }));
+    if (peek && !wanted.some((x) => x.key === `${peek.dataset.doc}:${peek.dataset.pid}`)) wanted.push({ key: `${peek.dataset.doc}:${peek.dataset.pid}`, word: "" });
+    if (btn) btn.disabled = true;
+    const out = [];
+    try {
+      for (const x of wanted) {
+        const cut = x.key.indexOf(":"), id = Number(x.key.slice(0, cut)), pid = x.key.slice(cut + 1);
+        const ctx = await api("context", { doc_id: id, pid, before: 0, after: 0 });
+        const v = ctx && ctx.paragraphs ? ctx.paragraphs.find((p) => p.pid === pid) : null;
+        if (v) out.push({ doc_id: id, pid, kind: v.kind, verse: v.verse, text: v.text, citation: ctx.citation, collection: ctx.collection, title: ctx.title, word: x.word });
+      }
+      const got = out.length >= 2 ? window.Deck.addChain(out) : { added: 0, links: 0 };
+      if (!got.added && !got.links) toast(out.length >= 2 ? "This chase is already on the deck." : "There is no chase to add yet.");
+    } catch (_) { toast("Could not add that just now."); }
+    if (btn) btn.disabled = false;
   }
   function levelKeep() {
     const bodyEl = $(".sheet-body", sheet);

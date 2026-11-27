@@ -679,6 +679,9 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .fn-crumb-word { font: italic var(--ui-13) var(--serif); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .fn-crumb-sep { flex: none; color: var(--ink-3); font: var(--ui-13) var(--sans); }
 .fn-crumb:active { opacity: .6; }
+.fn-trail-deck { flex: none; margin: -8px 0 -8px auto; height: 44px; padding: 0 2px 0 10px; font: 600 var(--ui-13) var(--sans); color: var(--accent); }
+.fn-trail-deck:active { opacity: .6; }
+.fn-trail-deck:disabled { opacity: .5; }
 /* a reference already read in this note goes quiet; one that leads back onto the trail is marked */
 .fn-chip.seen { color: var(--ink-2); font-weight: 500; border-color: var(--rule); }
 .fn-chip.loop::before { content: "\21A9\00A0"; }
