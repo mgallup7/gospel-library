@@ -46,7 +46,7 @@ jobs:
             CREATE TABLE paras(uri TEXT, seq INT, pid TEXT, kind TEXT, verse INT, text TEXT);
           """)
           n = {"scriptures": 0, "study-helps": 0, "notes": 0, "paras": 0}
-          rows = src.execute("""SELECT d.id, d.uri, c.slug, b.uri AS book_uri, b.title AS book_title, d.title, d.subtitle, d.body_html
+          rows = src.execute("""SELECT d.id, d.uri, c.slug, b.uri AS book_uri, b.title AS book_title, d.title, d.subtitle, d.body_html, d.par_first, d.par_last
                                 FROM documents d JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id
                                 WHERE c.slug IN ('scriptures', 'study-helps')""").fetchall()
           for r in rows:
@@ -54,8 +54,9 @@ jobs:
               n[r["slug"]] += 1
               for f in src.execute("SELECT note_id, marker, pid, html, text, refs FROM footnotes WHERE document_id = ?", (r["id"],)):
                   out.execute("INSERT INTO notes VALUES (?,?,?,?,?,?,?)", (r["uri"], *f)); n["notes"] += 1
-              if r["slug"] == "study-helps":
-                  for p in src.execute("SELECT seq, pid, kind, verse, text FROM paragraphs WHERE document_id = ?", (r["id"],)):
+              if r["slug"] == "study-helps" and r["par_first"] is not None:
+                  # by the page's own run of rows: the index is not searched by document
+                  for p in src.execute("SELECT seq, pid, kind, verse, text FROM paragraphs WHERE rowid BETWEEN ? AND ?", (r["par_first"], r["par_last"])):
                       out.execute("INSERT INTO paras VALUES (?,?,?,?,?,?)", (r["uri"], *p)); n["paras"] += 1
           out.commit(); out.execute("VACUUM"); out.close()
           print("slice:", n, os.path.getsize("slice.sqlite"), "bytes")
