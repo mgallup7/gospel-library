@@ -1839,14 +1839,19 @@ import { database } from "./lib/idb.js";
   // Each is accepted one at a time; nothing changes until it is.
   const CHAIN_SYSTEM = `You are helping a mission president finish a scripture chain for a presentation. He has chosen the passages, highlighted key phrases in some, and drawn arrows between some of them. Study the whole chain as a careful teacher would: what each passage contributes, which words or ideas carry from one to another (the same word, a definition, a promise and its keeping, a cause and its effect, a contrast), and what the chain says when it is read from the first passage to the last, in the order given.
 
-Answer with JSON only, no prose around it, in this shape:
-{"caption": "one or two sentences: how the chain reads from start to finish, for the slide",
+First, look for what the chain is missing. A chain like this usually turns on one phrase, and somewhere in scripture is the verse that settles it: the one that says the same thing in nearly the same words and adds the fact the chain needs (who is meant, what the word means, when it happens, how it is done), or the verse the others are quoting. Below the chain are passages the library found for him that are not on the deck yet: verses that share a run of words with a highlighted phrase, verses near in meaning, and the cross-references printed in the footnotes of his passages. Read every one of them against the chain. You can also search the library yourself and read a chapter; do it when a candidate opens a second step (it names a title, a place or an act that another verse explains), or when the idea should be looked for in other words. A few searches are enough; do not search for what is already in front of you.
+
+Passages from the library carry a number like [L7]. A passage of the chain carries a plain number like [2].
+
+Then answer with JSON only, no prose around it, in this shape:
+{"add": [{"library": 7, "words": "exact words from that library passage", "to": {"passage": 1, "words": "exact words from that chain passage"}, "label": "two to four words", "why": "one sentence: what this verse settles for the chain"}],
+ "caption": "one or two sentences: how the chain reads from start to finish, for the slide",
  "labels": [{"link": 1, "label": "two to four words"}],
  "connections": [{"from": {"passage": 1, "words": "exact words from that passage"}, "to": {"passage": 3, "words": "exact words from that passage"}, "label": "two to four words", "why": "one sentence"}],
  "key_phrases": [{"passage": 2, "words": "exact words from that passage"}],
  "notes": "speaker notes, 120 to 220 words: how to walk the room through the chain, passage by passage"}
 
-Rules. "labels" only for arrows that have no label or a weak one. "connections" only for arrows worth drawing that are not drawn; three at most; each must join two different passages and be something the words themselves support. "key_phrases" only for passages that have no highlighted phrase: the short phrase (three to eight words) a teacher would underline. Every "words" value must be copied exactly from the passage text given, with its punctuation; never paraphrase, never quote from memory. Plain, warm, doctrinally precise prose; no em dashes.`;
+Rules. "add": the passages from the library that belong in this chain, strongest first, six at most, and none at all when nothing found truly belongs; each joins one passage of the chain (or, for a second step, write "to": {"library": 7, "words": "..."} to join it to another passage you are adding). Only passages numbered [L..] may be added: never a reference from memory. Write the caption and the notes for the chain as it will read with your additions in it. "labels" only for arrows that have no label or a weak one. "connections" only for arrows worth drawing that are not drawn; three at most; each must join two different passages and be something the words themselves support. "key_phrases" only for passages that have no highlighted phrase: the short phrase (three to eight words) a teacher would underline. Every "words" value must be copied exactly from the passage text given, with its punctuation; never paraphrase, never quote from memory. Plain, warm, doctrinally precise prose; no em dashes.`;
 
   function chainUser(context = new Map()) {
     const passages = deck.items.filter((i) => i.type === "passage");
@@ -1889,25 +1894,164 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     }
     return best;
   }
+  // What the library holds that the chain does not. Looked up here, before Claude is asked, so
+  // that the verse which says nearly the same as a highlighted phrase is in front of it whether
+  // or not it thinks to search: each highlighted phrase (or the passage, when nothing is marked)
+  // is run through the search for its parallels and its nearest in meaning, and the footnotes of
+  // each passage give their cross-references. found: the passages by number, as Claude cites them.
+  function libraryFinds() {
+    const list = [], byKey = new Map();
+    const add = (h, how) => {
+      if (!h || !h.doc_id || !h.pid || !(h.text || "").trim() || has(h.doc_id, h.pid)) return null;
+      const key = `${h.doc_id}:${h.pid}`;
+      let e = byKey.get(key);
+      if (!e) {
+        e = { n: list.length + 1, doc_id: h.doc_id, pid: h.pid, kind: h.kind === "verse" ? "verse" : "para", verse: h.verse || null, text: String(h.text).replace(/\s+/g, " ").trim(), citation: h.citation || h.title || "", collection: h.collection || "", author: h.author || "", title: h.title || "", label: h.label || "", how: [] };
+        list.push(e); byKey.set(key, e);
+      }
+      if (how && !e.how.includes(how)) e.how.push(how);
+      return e;
+    };
+    const line = (e, max = 900) => `[L${e.n}] ${e.citation}${e.collection === "general-conference" && e.author ? `, ${e.author}` : ""}${e.how.length ? ` (${e.how.join("; ")})` : ""}\n${e.text.length > max ? e.text.slice(0, max) + " […]" : e.text}`;
+    return { list, add, line, get: (n) => list[Number(n) - 1] || null };
+  }
+  async function gatherFinds(finds, say) {
+    const api = GL().api;
+    const passages = deck.items.filter((i) => i.type === "passage" && i.doc_id && i.pid).slice(0, 10);
+    const docs = new Map();
+    for (const p of passages) {
+      say(`Looking in the library around ${p.citation}…`);
+      const words = wordsOf(p);
+      const phrases = (p.hl || []).map((h) => words.slice(h.s, h.e + 1).map((x) => x.w).join(" ")).filter((t) => t.split(/\s+/).length >= 3).slice(0, 3);
+      const whole = (p.verses ? p.verses.map((v) => v.text).join(" ") : p.text || "").replace(/\s+/g, " ").trim();
+      // and the passage itself, a stretch at a time (twelve words, each sharing six with the last,
+      // so any run of seven lies whole in one of them), since the phrase that has a parallel may
+      // not be the one he marked, or nothing may be marked at all
+      const marked = phrases.length;
+      const all = whole.split(" ");
+      const step = Math.max(6, Math.ceil((all.length - 12) / 11));
+      for (let i = 0; i < all.length && phrases.length < marked + 12; i += step) { const part = all.slice(i, i + 12); if (part.length >= 5 || !i) phrases.push(part.join(" ")); }
+      for (const [k, phrase] of phrases.entries()) {
+        let r = null;
+        try { r = await api("search", { q: phrase, scope: "scriptures", limit: 12, asTyped: true, light: k >= marked }); } catch (_) { r = null; }
+        let meant = 0;
+        for (const h of (r && r.hits) || []) {
+          for (const x of [h, ...(h.more || [])]) {
+            if (x.why === "exact" || x.why === "close") finds.add(x, x.shares ? `shares the words “${x.shares}” with ${p.citation}` : `reads nearly as “${phrase.length > 60 ? phrase.slice(0, 60) + "…" : phrase}” in ${p.citation}`);
+            else if ((x.why === "both" || x.why === "meaning") && meant < 4) { meant++; finds.add(x, `near in meaning to ${p.citation}`); }
+          }
+        }
+      }
+      // the whole passage by its meaning, when the phrase searched was only part of it
+      if (whole.split(" ").length > 6) {
+        let r = null;
+        try { r = await api("search", { q: whole.slice(0, 400), scope: "scriptures", limit: 8, asTyped: true }); } catch (_) { r = null; }
+        let meant = 0;
+        for (const h of (r && r.hits) || []) if ((h.why === "both" || h.why === "meaning" || h.why === "close") && meant < 3) { meant++; finds.add(h, `near in meaning to ${p.citation}`); }
+      }
+      // the cross-references printed with the passage
+      try {
+        if (!docs.has(p.doc_id)) docs.set(p.doc_id, await api("doc", { id: p.doc_id }));
+        const doc = docs.get(p.doc_id);
+        const pids = new Set([p.pid, ...(p.verses || []).map((v) => `p${v.n}`)]);
+        const hrefs = [];
+        for (const n of (doc && doc.footnotes) || []) {
+          if (!n.html || !(pids.has(n.pid) || [...pids].some((x) => new RegExp(`^note${x.slice(1)}[a-z_]`).test(n.note_id || "")))) continue;
+          const holder = new DOMParser().parseFromString(n.html, "text/html").body; // inert: nothing in it can run or load
+          for (const a of holder.querySelectorAll("a[href]")) { const href = a.getAttribute("href") || ""; if (/\/scriptures\/(?!tg\/|bd\/|gs\/|triple-index\/)/.test(href)) hrefs.push(href); }
+        }
+        for (const href of [...new Set(hrefs)].slice(0, 8)) {
+          const res = await api("resolve", { href: new URL(href, "https://www.churchofjesuschrist.org").href });
+          if (!res || !res.found || !res.pid || !/^p\d+$/.test(res.pid)) continue;
+          const ctx = await api("context", { doc_id: res.doc_id, pid: res.pid, before: 0, after: 0 });
+          const v = ctx && ctx.paragraphs && ctx.paragraphs.find((x) => x.pid === res.pid);
+          if (v) finds.add({ doc_id: res.doc_id, pid: res.pid, kind: v.kind, verse: v.verse, text: v.text, citation: ctx.citation, collection: ctx.collection, title: ctx.title }, `a footnote of ${p.citation} points here`);
+        }
+      } catch (_) { /* no footnotes, no harm */ }
+    }
+    return finds;
+  }
+  // The two things Claude may do while it studies the chain: search, and read a place.
+  const CHAIN_TOOLS = [
+    { name: "search", description: "Search the library. Returns the best passages, each with an [L..] number. A phrase as it reads finds the verse and the verses that say nearly the same; a few plain words find a subject.",
+      input_schema: { type: "object", properties: { query: { type: "string" }, scope: { type: "string", enum: ["scriptures", "conference", "all"], description: "Default scriptures." }, limit: { type: "integer", description: "5 to 20. Default 10." } }, required: ["query"] } },
+    { name: "read", description: "Read a place by its reference (\"2 Nephi 9:10-27\", \"John 5:22\"). Returns its verses, each with an [L..] number.",
+      input_schema: { type: "object", properties: { reference: { type: "string" } }, required: ["reference"] } },
+  ];
+  async function chainTool(finds, name, input) {
+    const api = GL().api;
+    if (name === "search") {
+      const scope = input.scope === "all" ? null : input.scope === "conference" ? "conference" : "scriptures";
+      const r = await api("search", { q: String(input.query || ""), scope, limit: Math.max(5, Math.min(20, input.limit || 10)), asTyped: true });
+      const out = [];
+      for (const h of (r && r.hits) || []) { const e = finds.add(h, null); if (e) out.push(finds.line(e)); else if (has(h.doc_id, h.pid)) out.push(`${h.citation} (already on the deck)`); }
+      return out.length ? out.join("\n\n") : "Nothing matched. Try the phrase as it reads, or fewer words.";
+    }
+    if (name === "read") {
+      const r = await api("search", { q: String(input.reference || ""), limit: 1 });
+      const j = r && r.jump;
+      if (!j || !j.doc_id) return `Nothing found for "${input.reference}". Give a reference such as "2 Nephi 9:26".`;
+      const from = j.pid || "p1";
+      const after = j.pid ? Math.max(0, (j.verse_end || 0) - parseInt(from.slice(1), 10)) : 60;
+      const ctx = await api("context", { doc_id: j.doc_id, pid: from, before: 0, after: Math.min(60, after) });
+      if (!ctx || !ctx.paragraphs) return "Not found.";
+      const chapter = String(ctx.citation || j.title || "").replace(/:\d+.*$/, "");
+      const out = [];
+      for (const x of ctx.paragraphs) {
+        if (x.kind !== "verse" && x.kind !== "para") continue;
+        const cite = x.verse ? `${chapter}:${x.verse}` : chapter;
+        const e = finds.add({ doc_id: j.doc_id, pid: x.pid, kind: x.kind, verse: x.verse, text: x.text, citation: cite, collection: ctx.collection, title: ctx.title }, null);
+        out.push(e ? finds.line(e, 600) : `${cite} (already on the deck) ${x.text}`);
+      }
+      return out.join("\n\n") || "Not found.";
+    }
+    return "No such tool.";
+  }
+  const CHAIN_MAX_CALLS = 8;
   async function thinkChain() {
     const Ask = window.Ask;
     if (!Ask || !Ask.hasKey()) { GL().toast("Add your Claude API key under Ask first."); return; }
     if (count() < 2) { GL().toast("Put at least two passages on the deck first."); return; }
     const box = ui.thinkBox;
     box.hidden = false;
-    const status = el("div", { class: "think-status", text: `${Ask.modelName()} is studying the chain…` });
+    const status = el("div", { class: "think-status", text: "Looking in the library for what the chain is missing…" });
     box.replaceChildren(el("div", { class: "think-head" }, [el("b", { text: "Thinking it through" }), el("button", { type: "button", class: "text-btn small", text: "Close", onclick: () => { box.hidden = true; box.replaceChildren(); } })]), status);
     ui.think.disabled = true;
+    const say = (t) => { status.textContent = t; };
     try {
-      const system = await Ask.system("chain", CHAIN_SYSTEM); // the blocks Ask sends: who he is, his standing instructions, the house style, his notes
-      let thought = "";
-      const context = await contextAround();
-      const text = await Ask.complete({ model: Ask.settings.model, system, messages: [{ role: "user", content: chainUser(context) }], max_tokens: 16000, stream: true, thinking: Ask.settings.think,
-        onThinking: (t) => { thought = (thought + t).slice(-2000); status.textContent = `Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`; },
-        onDelta: () => { status.textContent = "Writing…"; } });
+      const finds = libraryFinds();
+      const [context] = await Promise.all([contextAround(), gatherFinds(finds, say).catch(() => finds)]);
+      const first = finds.list.slice();
+      say(`${Ask.modelName()} is studying the chain${first.length ? ` and ${plural(first.length, "passage")} the library found` : ""}…`);
+      const system = await Ask.system("chain", CHAIN_SYSTEM, { tools: true }); // the blocks Ask sends: who he is, his standing instructions, the house style, his notes
+      const found = first.length ? `Passages the library found that are not on the deck yet:\n\n${first.map((e) => finds.line(e)).join("\n\n")}` : "The library's own search found no passage near these that is not already on the deck. Search for the idea in other words before you conclude that nothing is missing.";
+      const messages = [{ role: "user", content: `${chainUser(context)}\n\n${found}` }];
+      let text = "", calls = 0;
+      for (let round = 0; round < 6; round++) {
+        let thought = "";
+        const spent = calls >= CHAIN_MAX_CALLS || round === 5;
+        const res = await Ask.complete({ model: Ask.settings.model, system, messages, max_tokens: 16000, stream: true, thinking: Ask.settings.think, tools: CHAIN_TOOLS, ...(spent ? { tool_choice: { type: "none" } } : {}),
+          onThinking: (t) => { thought = (thought + t).slice(-2000); say(`Thinking: ${thought.replace(/\s+/g, " ").trim().slice(-160)}`); },
+          onDelta: () => { say("Writing…"); } });
+        text = res.text || "";
+        if (!res.tool_uses || !res.tool_uses.length || res.stop_reason !== "tool_use") break;
+        messages.push({ role: "assistant", content: res.blocks });
+        const results = [];
+        for (const tu of res.tool_uses) {
+          let content = "";
+          if (calls >= CHAIN_MAX_CALLS) content = "That is enough searching. Write the JSON now from what has been found.";
+          else {
+            calls++;
+            say(tu.name === "search" ? `Searching: ${String(tu.input?.query || "").slice(0, 80)}…` : `Reading ${String(tu.input?.reference || "").slice(0, 60)}…`);
+            try { content = await chainTool(finds, tu.name, tu.input || {}); } catch (err) { content = `That did not work (${err.message}).`; }
+          }
+          results.push({ type: "tool_result", tool_use_id: tu.id, content });
+        }
+        messages.push({ role: "user", content: results });
+      }
       const m = String(text).match(/\{[\s\S]*\}/);
       if (!m) throw new Error("no JSON in the reply");
-      renderThought(JSON.parse(m[0]), box);
+      renderThought(JSON.parse(m[0]), box, finds);
     } catch (err) {
       status.textContent = `Could not think it through: ${err.message}`;
     } finally { ui.think.disabled = count() < 2; }
@@ -1927,7 +2071,7 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
     }));
     return out;
   }
-  function renderThought(r, box) {
+  function renderThought(r, box, finds = null) {
     const passages = deck.items.filter((i) => i.type === "passage");
     const byNum = (n) => passages[Number(n) - 1] || null;
     const list = el("div", { class: "think-list" });
@@ -1949,6 +2093,47 @@ Rules. "labels" only for arrows that have no label or a weak one. "connections" 
       return line;
     };
     const applied = [];
+    // A passage the library holds and the chain lacks: it goes on the deck after the passage it
+    // answers to, its words highlighted, joined to that passage's words by an arrow. One Undo
+    // takes all of that off again.
+    const addedAs = new Map(); // library number -> the deck card it became
+    const cardFor = (e) => (addedAs.get(e.n) && byId(addedAs.get(e.n))) || find(e.doc_id, e.pid) || null;
+    const seenAdd = new Set();
+    for (const x of (finds && Array.isArray(r.add) ? r.add : []).slice(0, 6)) {
+      const e = finds.get(x.library);
+      if (!e || seenAdd.has(e.n) || has(e.doc_id, e.pid)) continue;
+      seenAdd.add(e.n);
+      const t0 = x.to && x.to.passage ? byNum(x.to.passage) : null;
+      const tLib = x.to && x.to.library ? finds.get(x.to.library) : null;
+      const toName = t0 ? t0.citation : tLib ? tLib.citation : "";
+      const quote = String(x.words || "").trim();
+      const shown = quote && e.text.toLowerCase().includes(quote.toLowerCase().replace(/[“”"]/g, "").slice(0, 40)) ? quote : e.text.length > 220 ? e.text.slice(0, 220) + "…" : e.text;
+      const text = `<b>Add ${esc(e.citation)}</b> “${esc(shown)}”${toName ? ` → ${esc(toName)}${x.to.words ? ` “${esc(x.to.words)}”` : ""}` : ""}${x.label ? `, <i>${esc(x.label)}</i>` : ""}${x.why ? `<br><span class="why">${esc(x.why)}</span>` : ""}`;
+      applied.push(row(text, "Add", () => {
+        const target = t0 ? byId(t0.id) : tLib ? cardFor(tLib) : null;
+        let ok = true;
+        batch(() => {
+          const card = addPassage({ doc_id: e.doc_id, pid: e.pid, kind: e.kind, verse: e.verse, text: e.text, citation: e.citation, collection: e.collection, author: e.author, title: e.title, label: e.label });
+          if (!card) { ok = false; return; }
+          if (target) { // right after the passage it answers, wherever a new card would otherwise have gone
+            const i = deck.items.indexOf(card);
+            if (i >= 0 && deck.items[i - 1] !== target) { deck.items.splice(i, 1); deck.items.splice(deck.items.indexOf(target) + 1, 0, card); }
+          }
+          addedAs.set(e.n, card.id);
+          const mine = quote ? findPhrase(card, quote) : null;
+          const from = { id: card.id, hl: mine ? setHighlight(card, mine.s, mine.e).id : null };
+          if (target) {
+            const theirs = x.to.words ? findPhrase(target, x.to.words) : null;
+            const at = theirs ? hlAt(target, theirs.s) : null;
+            const to = { id: target.id, hl: theirs ? (at && at.s === theirs.s && at.e === theirs.e ? at.id : setHighlight(target, theirs.s, theirs.e).id) : null };
+            addLink(to, from, String(x.label || "").trim());
+          }
+          save();
+        });
+        return ok;
+      }, `${e.citation} added to the chain.`));
+    }
+    if (finds && !seenAdd.size) list.append(el("div", { class: "deck-hint", text: finds.list.length ? `The library was searched (${plural(finds.list.length, "passage")} read); none of them belonged in this chain.` : "The library was searched; nothing near these passages was found that is not already here." }));
     if (r.caption) { const cap = String(r.caption).trim(); applied.push(row(`<b>Caption for the chain slide:</b> ${esc(cap)}`, "Use", () => { deck.chain = { ...(deck.chain || {}), caption: cap }; save({ redraw: false }); }, "Caption added to the chain slide.")); }
     for (const x of r.labels || []) {
       const l0 = deck.links[Number(x.link) - 1];

@@ -212,6 +212,9 @@ test("every mode sends the same core, his standing instructions and his notes, w
   // the deck's chain: its own paragraph, no tools guide, the date after the marker
   const chain = per.chain;
   assert.match(chain[1].text, /^CHAIN-PARAGRAPH\n\nThis call has no tools/);
+  // the deck's Think it through searches the library now: then the paragraph stands alone
+  const looking = await Ask.system("chain", "CHAIN-PARAGRAPH", { tools: true });
+  assert.equal(looking[1].text, "CHAIN-PARAGRAPH");
   assert.doesNotMatch(textOf(chain), /\nTools:/);
   assert.match(textOf(chain), /On this device/); // the deck's call is told what the library holds, as the others are
   assert.match(textOf(chain), /STYLE-MARK/);

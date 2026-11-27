@@ -75,3 +75,13 @@ test("a passage is scored by how much it looks like the line typed", () => {
   const half = quoteWords("search these thi");
   assert.ok(quoteScore(half, [1, 1, 1], "that ye search these things diligently", true) > quoteScore(half, [1, 1, 1], "that ye search these things diligently", false));
 });
+
+test("sharedRun: the longest run of the line a passage has word for word", async () => {
+  const { sharedRun, quoteWords } = await import("../../web/lib/query.js");
+  const typed = quoteWords("taken home to that God who gave them life");
+  const r = sharedRun(typed, "and they are restored to that God who gave them breath, which is the Holy One of Israel.");
+  assert.equal(r.len, 6);
+  assert.equal(typed.slice(r.at, r.at + r.len).join(" "), "to that god who gave them");
+  assert.equal(sharedRun(typed, "Nothing alike here at all").len, 0);
+  assert.equal(sharedRun(typed, "God gave life").len, 1);
+});

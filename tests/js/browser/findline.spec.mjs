@@ -91,6 +91,26 @@ export default async function run(browser, { BASE, PASS }) {
   await page.evaluate(() => document.querySelector("#reader .twin-open")?.click());
   await page.waitForFunction(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .doc h1")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
   check(await page.evaluate(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .doc h1")?.textContent || "")), "the twin did not open beside");
+  // A phrase lifted from one verse is usually typed to find the verses that say nearly the same.
+  // The verse itself leads; its parallel (a rare run of the same words) stands right under it.
+  for (const [q, own, parallel] of [
+    ["taken home to that God who gave them life", "Alma 40:11", "2 Nephi 9:26"],
+    ["that God who gave them life", "Alma 40:11", "2 Nephi 9:26"],
+    ["restored to that God who gave them breath", "2 Nephi 9:26", "Alma 40:11"],
+  ]) {
+    const r = await search(q, false);
+    const cites = (r.hits || []).map((h) => h.citation);
+    const at = cites.indexOf(parallel) + 1;
+    check(cites[0] === own && at >= 2 && at <= 3, `${JSON.stringify(q)} should lead with ${own} and show its parallel ${parallel} in the first three: ${cites.slice(0, 5).join(", ")}`);
+    const hit = (r.hits || []).find((h) => h.citation === parallel);
+    check(!!hit && hit.why === "close" && /god who gave them/.test(hit.shares || ""), `${parallel} is marked as nearly these words, with the run it shares: ${hit ? hit.why + " / " + hit.shares : "missing"}`);
+  }
+  // and a run of everyday words proves nothing: no verse is called a parallel for sharing it
+  {
+    const r = await search("and it came to pass that I Nephi did go forth", false);
+    const junk = (r.hits || []).filter((h) => /it came to pass/.test(h.shares || "") && !/nephi/.test(h.shares || ""));
+    check(!junk.length, `"it came to pass" alone makes no parallel: ${junk.slice(0, 3).map((h) => h.citation + " / " + h.shares).join("; ")}`);
+  }
   await ctx.close();
   // a phone has no second pane: the twin opens in the reader
   {

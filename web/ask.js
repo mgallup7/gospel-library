@@ -1024,12 +1024,12 @@ Rules for queries: 3 to 7 of them. Use distinctive words, not stop words. Put ex
   // The blocks, in their order. mode is ask, draft, think, skill:<id> or chain (the deck's own
   // call, which hands in its paragraph and has no tools). The same blocks go out on every
   // request of a turn, so this is built once per question.
-  async function systemFor(mode, paragraph = "", { web = false } = {}) {
+  async function systemFor(mode, paragraph = "", { web = false, tools = false } = {}) {
     const sk = GL().skills || {};
     const chain = mode === "chain";
     const drafting = mode !== "ask" && mode !== "think" && !chain;
     const blocks = [CORE];
-    blocks.push(chain ? `${paragraph}\n\n${NO_TOOLS}` : mode === "ask" ? MODE_ASK : mode === "think" ? MODE_THINK : MODE_DRAFT);
+    blocks.push(chain ? (tools ? paragraph : `${paragraph}\n\n${NO_TOOLS}`) : mode === "ask" ? MODE_ASK : mode === "think" ? MODE_THINK : MODE_DRAFT);
     // what is on the device goes with every mode; the deck's call has no tools, so it gets the list without their guide
     blocks.push(chain ? await inventory() : `${await inventory()}\n\n${TOOLS_GUIDE}`);
     if (web && !chain) blocks.push(MODE_WEB);

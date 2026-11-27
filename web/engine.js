@@ -3,7 +3,7 @@
 // server does: search, document, resolve, browse. Mirrors gospel_library/search.py.
 import sqlite3InitModule from "./vendor/sqlite3.mjs";
 import * as S from "./lib/scriptures.js";
-import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections, quoteWords, quoteScore, alsoSpelled, spellOut, foldWord, TINY, QUESTION_WORDS, BOOK_WORDS } from "./lib/query.js";
+import { compileQuery, ftsPhrase, isNatural, naturalQuery, scopeCollections, quoteWords, quoteScore, sharedRun, alsoSpelled, spellOut, foldWord, TINY, QUESTION_WORDS, BOOK_WORDS } from "./lib/query.js";
 import { passageNamed, parallelsOf } from "./lib/names.js";
 import { findReferences } from "./lib/refs.js";
 import { esc } from "./lib/format.js";
@@ -927,6 +927,23 @@ async function rankedSearch(q, opts) {
       }
     }
   }
+  // 2b. The line was found word for word: then the passages that say nearly the same are still
+  //     wanted (a phrase taken from one verse is usually typed to find its parallels). Each run of
+  //     four of its words, and of three, is looked for on its own, a few passages apiece, so a
+  //     verse that shares "that God who gave them" is fetched however common its single words are.
+  if (quoteLike && exactTotal && !typeahead && typed.length >= 4) {
+    const seen = new Set();
+    for (const size of [4, 3]) {
+      for (let i = 0; i + size <= typed.length && seen.size < 14; i++) {
+        const g = typed.slice(i, i + size);
+        if (g.filter((w) => !TINY.has(w)).length < (size === 4 ? 1 : 2)) continue;
+        const phrase = ftsPhrase(g.join(" "));
+        if (!phrase || seen.has(phrase)) continue;
+        seen.add(phrase);
+        gather(phrase, 12);
+      }
+    }
+  }
   if (n) {
     const tiers = [n.phrase, n.strict, n.loose].filter(Boolean).filter((m, i, arr) => arr.indexOf(m) === i);
     for (const match of tiers) {
@@ -1021,6 +1038,36 @@ async function rankedSearch(q, opts) {
       e.ql = best;
       e.hit.span = pair;
       e.hit.citation = String(e.hit.citation).replace(/:\d+$/, `:${pair[0]}\u2013${pair[1]}`);
+    }
+  }
+  // A passage that has a run of the line word for word, when that run is rare in the library, is
+  // a parallel: it stands just under the line itself ("nearly these words"), above passages that
+  // only share its words here and there. Rare is counted, not guessed: "and it came to pass" is
+  // in thousands of verses and proves nothing; "that God who gave them" is in two.
+  if (quoteLike && !typeahead) {
+    const runs = new Map(); // the run's words -> the entries that have it
+    for (const e of ranked.values()) {
+      if (e.exact || e.ql >= 0.8) continue;
+      const r = sharedRun(typed, e.hit.text);
+      if (r.len < 3 || r.len < Math.min(4, typed.length - 1)) continue;
+      const words = typed.slice(r.at, r.at + r.len);
+      if (words.filter((w) => !TINY.has(w)).length < 2) continue;
+      const key = words.join(" ");
+      if (!runs.has(key)) runs.set(key, []);
+      runs.get(key).push({ e, len: r.len });
+    }
+    const longest = [...runs.entries()].sort((a, b) => b[0].split(" ").length - a[0].split(" ").length).slice(0, 16);
+    for (const [key, list] of longest) {
+      let count = Infinity;
+      try { count = countRows(ftsPhrase(key), { collections: ["scriptures"] }); } catch (_) { count = Infinity; }
+      if (!(count <= 40)) continue;
+      for (const { e, len } of list) {
+        e.echo = key;
+        // with the line itself found, its parallels follow it; without, the line is still being
+        // looked for, and a shared run only keeps a passage in view, under the nearer quotations
+        e.ql = Math.max(e.ql, exactTotal ? Math.min(0.95, 0.8 + 0.03 * (len - 3) + (count <= 5 ? 0.04 : 0)) : 0.62);
+        e.hit.shares = key;
+      }
     }
   }
   // The line itself was found (or nearly): then it leads and the rest follow by likeness. Otherwise

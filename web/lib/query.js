@@ -332,3 +332,22 @@ export function naturalQuery(raw, speakers = []) {
   out.loose = groups.length > 1 ? groups.join(" OR ") : null;
   return out;
 }
+
+// The longest run of the typed line's words that a passage has word for word, small words and
+// all: { len, at } (at: where the run starts in the line). "that God who gave them life" and
+// "that God who gave them breath" share five words running, which no weighing of single words
+// shows, since the words that differ are the heavy ones.
+export function sharedRun(typed, text) {
+  const q = typed.map(foldWord), p = quoteWords(text).map(foldWord);
+  let best = { len: 0, at: 0 };
+  if (!q.length || !p.length) return best;
+  let prev = new Uint16Array(p.length + 1), cur = new Uint16Array(p.length + 1);
+  for (let i = 1; i <= q.length; i++) {
+    for (let j = 1; j <= p.length; j++) {
+      cur[j] = q[i - 1] === p[j - 1] ? prev[j - 1] + 1 : 0;
+      if (cur[j] > best.len) best = { len: cur[j], at: i - cur[j] };
+    }
+    const t = prev; prev = cur; cur = t; cur.fill(0);
+  }
+  return best;
+}
