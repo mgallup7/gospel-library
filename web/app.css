@@ -564,7 +564,15 @@ main {
 /* the verse you arrived at: a rule in the margin, not a pale yellow that reads as a yellow highlight */
 .doc .is-target { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent); padding-left: 12px; margin-left: -12px; border-radius: 0; }
 .doc a:not(.study-note-ref) { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 2px; }
-.doc .page-break { display: none; }
+/* The printed page: the Church marks where each page of the printed book begins, and the number
+   shows there, small, so a passage can be found in the physical copy (Preach My Gospel, the
+   scriptures, the conference issue). It is drawn, not text: selecting, highlighting and copying
+   pass over it. */
+.doc .page-break { display: inline; }
+.doc .page-break[data-page]::before { content: "p. " attr(data-page); display: inline-block; font: 600 11px/1 var(--sans); letter-spacing: .02em; color: var(--ink-2); padding: 3px 5px; margin: 0 .4em; border: 1px solid var(--rule); border-radius: 4px; vertical-align: .12em; white-space: nowrap; -webkit-user-select: none; user-select: none; }
+.doc .page-break[data-page=""]::before { content: none; }
+.doc header > .page-break, .doc .body-block > .page-break { display: block; margin: 0 0 .5em; line-height: 1; }
+.doc header > .page-break::before, .doc .body-block > .page-break::before { margin-left: 0; }
 .doc .aside, .doc aside { background: var(--chrome); padding: 12px 14px; border-radius: var(--r-ctl); margin: 1em 0; }
 .doc .notes { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--rule); font-size: .88em; }
 .doc .notes h2 { font-family: var(--sans); font-size: var(--ui-13); color: var(--ink-2); margin: 0 0 .8em; }
