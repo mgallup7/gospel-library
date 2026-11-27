@@ -661,6 +661,17 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 /* a finger dragged on the head or the row of names moves nothing behind the sheet */
 .sheet.refs .fn-head { touch-action: none; }
 .sheet.refs .fn-chips { touch-action: pan-x; }
+/* the chase: a footnoted word inside the sheet (the chapter's own dotted line), the way back up, the verse it belongs to */
+.fn-mk { border-bottom: 1px dotted var(--ink-3); padding: 9px 0 1px; cursor: pointer; -webkit-touch-callout: none; }
+.fn-mk:active { background: var(--chrome-2); border-radius: 4px; }
+.fn-up { margin-left: -10px; }
+.fn-cite { flex: 0 1 auto; min-width: 3em; font: 600 var(--ui-13) var(--sans); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.sheet.deep .fn-word { flex: 0 1 auto; min-width: 2em; }
+@media (max-width: 759px) { .sheet.deep .fn-count { display: none; } }
+/* a level arrives and leaves on the other axis from the swipe between references: a short rise or fall */
+.sheet-body.level-in > :not(.fn-head) { animation: rise .2s cubic-bezier(.2, .8, .2, 1); }
+.sheet-body.level-up > :not(.fn-head) { animation: fall .2s cubic-bezier(.2, .8, .2, 1); }
+@keyframes fall { from { opacity: 0; translate: 0 -14px; } }
 .fn-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
 .fn-word { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
 .fn-mark { flex: none; font-size: var(--ui-12); font-weight: 600; color: var(--accent); }
