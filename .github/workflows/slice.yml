@@ -1,0 +1,89 @@
+name: Test slice
+
+# For the app's own tests: the scriptures and study helps as they really are (their page markup
+# and footnotes), sealed to a key held only by the test bench, and left on the branch
+# "test-slice". Nothing is published in the clear, the saved state is only read, and the library
+# on the devices is not touched. Run by hand.
+on:
+  workflow_dispatch:
+
+env:
+  GOSPEL_LIBRARY_DATA: ${{ github.workspace }}/data
+
+jobs:
+  slice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write   # to read the "state" release and push the sealed slice to its own branch
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -q -r requirements.txt
+
+      - name: Restore the saved library (read only)
+        env:
+          LIBRARY_PASSPHRASE: ${{ secrets.LIBRARY_PASSPHRASE }}
+          GH_TOKEN: ${{ github.token }}
+        run: bin/ci-restore.sh
+
+      - name: Cut the slice
+        run: |
+          python3 - <<'PY'
+          import os, sqlite3
+          src = sqlite3.connect(os.path.join(os.environ["GOSPEL_LIBRARY_DATA"], "library.sqlite"))
+          src.row_factory = sqlite3.Row
+          out = sqlite3.connect("slice.sqlite")
+          out.executescript("""
+            CREATE TABLE docs(uri TEXT PRIMARY KEY, collection TEXT, book_uri TEXT, book_title TEXT, title TEXT, subtitle TEXT, body_html BLOB);
+            CREATE TABLE notes(uri TEXT, note_id TEXT, marker TEXT, pid TEXT, html TEXT, text TEXT, refs TEXT);
+            CREATE TABLE paras(uri TEXT, seq INT, pid TEXT, kind TEXT, verse INT, text TEXT);
+          """)
+          n = {"scriptures": 0, "study-helps": 0, "notes": 0, "paras": 0}
+          rows = src.execute("""SELECT d.id, d.uri, c.slug, b.uri AS book_uri, b.title AS book_title, d.title, d.subtitle, d.body_html
+                                FROM documents d JOIN collections c ON c.id = d.collection_id LEFT JOIN books b ON b.id = d.book_id
+                                WHERE c.slug IN ('scriptures', 'study-helps')""").fetchall()
+          for r in rows:
+              out.execute("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?)", (r["uri"], r["slug"], r["book_uri"], r["book_title"], r["title"], r["subtitle"], r["body_html"]))
+              n[r["slug"]] += 1
+              for f in src.execute("SELECT note_id, marker, pid, html, text, refs FROM footnotes WHERE document_id = ?", (r["id"],)):
+                  out.execute("INSERT INTO notes VALUES (?,?,?,?,?,?,?)", (r["uri"], *f)); n["notes"] += 1
+              if r["slug"] == "study-helps":
+                  for p in src.execute("SELECT seq, pid, kind, verse, text FROM paragraphs WHERE document_id = ?", (r["id"],)):
+                      out.execute("INSERT INTO paras VALUES (?,?,?,?,?,?)", (r["uri"], *p)); n["paras"] += 1
+          out.commit(); out.execute("VACUUM"); out.close()
+          print("slice:", n, os.path.getsize("slice.sqlite"), "bytes")
+          PY
+
+      - name: Seal it and leave it on its branch
+        run: |
+          cat > pub.pem <<'KEY'
+          -----BEGIN PUBLIC KEY-----
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAiULZI3Z0l/dvcTN9FxTt
+          gT2OvrV6uUcIfXZ8fJCmrkEgnp3NASO1JyJS5qAIbwc+9da5ZJCIeQVId0yW63+U
+          UuvlpWX4Bo/sbA6C6zD0NOnGE1dzbrRk9f7Rj317qCLFHrZTwaDA0E4G2beYOum8
+          Toj9HFvrKsqDzPNG1r77/LOn8zlneS/4HoJr4Att69yvxTwmMpdoRR+mrzBrJQ7O
+          pL17nX/eyVP6ejTbqtGyuoJO+RGV6D0/rXvfxI82mEqv01tC97J1LwvVXbYn7++y
+          yLzTNSJCjDgU1FAgN5cg6q0ZRrJoRw1k0541ZUGgfrQUgZFK9D3PjWOHJHdyh3np
+          wF05AXswPbImuWpqqJarMszjwouPcAwZfISK9cvR1dfSD9AIiXi3gM9eZiSpWrkq
+          r+CqJ61vi7lMbS+QEf2GZTcUnQUTRzQGn3vwfzUP3o2QUnc1AbrZJkbVclv+ICe0
+          kV/dG6jS+zmFqkCWxrCDTaeXqGJ77Bu6z1CjzFxCJpl7AgMBAAE=
+          -----END PUBLIC KEY-----
+          KEY
+          sed -i 's/^ *//' pub.pem
+          gzip -9 slice.sqlite
+          openssl rand -hex 32 > k
+          openssl enc -aes-256-ctr -pbkdf2 -pass file:k -in slice.sqlite.gz -out slice.enc
+          openssl pkeyutl -encrypt -pubin -inkey pub.pem -in k -out k.enc -pkeyopt rsa_padding_mode:oaep
+          ls -la slice.enc k.enc
+          mkdir out && mv slice.enc k.enc out/ && cd out
+          git init -q -b test-slice
+          git config user.name "github-actions" && git config user.email "actions@users.noreply.github.com"
+          git add slice.enc k.enc && git commit -q -m "A sealed slice of the library, for the app's tests"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" test-slice
