@@ -678,6 +678,21 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .fn-page .peek { margin-top: 0; }
 .fn-page .peek.has-focus p:not(.focus) { color: var(--ink-2); }
 .fn-page .peek-cut, .fn-quiet { font-family: var(--sans); font-size: var(--ui-15); color: var(--ink-2); margin: 0 0 10px; }
+/* an entry of the Topical Guide or a dictionary, read in the sheet: a line and its reference to a row */
+.fn-shelf { display: block; font-size: var(--ui-12); font-weight: 600; color: var(--ink-2); letter-spacing: .02em; }
+.fn-entry { margin: 0 0 10px; font-size: calc(var(--reading-size) - 1px); line-height: 1.45; }
+.fn-entry ul { list-style: none; margin: 0; padding: 0; }
+.fn-entry nav.index + nav.index { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--rule); }
+.fn-entry p { margin: 0 0 10px; }
+.fn-entry p.entry { margin: 0; padding: 11px 0; min-height: 44px; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
+.fn-entry p.title { font-family: var(--sans); font-size: var(--ui-15); color: var(--ink-2); line-height: 2; }
+.fn-entry a { font-family: var(--sans); font-size: var(--ui-15); font-weight: 600; text-decoration: none; white-space: nowrap; padding: 10px 0; }
+.fn-entry a.going { opacity: .5; }
+.fn-entry .key-word { font-style: italic; }
+.fn-back { flex: none; align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; min-height: 44px; margin: -6px 0 2px -8px; padding: 0 10px 0 4px; border-radius: var(--r-ctl); font: 600 var(--ui-15) var(--sans); color: var(--accent); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fn-back .g { display: inline-flex; }
+.fn-back svg { width: 20px; height: 20px; }
+.fn-back:active { background: var(--chrome-2); }
 .sheet.refs .peek-row { bottom: 0; margin-top: auto; margin-bottom: 0; padding-bottom: calc(12px + var(--safe-bottom)); }
 .sheet.refs .peek-row a.primary { display: inline-flex; align-items: center; text-decoration: none; }
 @media (min-width: 760px) and (min-height: 500px) { .sheet.refs { height: min(520px, 62vh); } .sheet.refs.one { height: auto; max-height: min(520px, 62vh); } .sheet.refs.one .fn-page { max-height: calc(min(520px, 62vh) - 70px); } }
