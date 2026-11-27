@@ -855,6 +855,12 @@ async function rankedSearch(q, opts) {
       if (r) out.jump = { label: `${named.name} · ${ref.label}`, uri: ref.uri, pid: ref.pid, doc_id: r.id, title: r.title, verse_end: ref.verseEnd, named: true };
     }
   }
+  // a printed page asked for by its book ("PMG p. 28", "Book of Mormon page 288"): where that page begins
+  if (!out.jump && !explicit && !typeahead) {
+    let at = null;
+    try { at = await pageJump(raw); } catch (err) { at = null; console.warn("no page lookup:", err && err.message); }
+    if (at) out.jump = { label: `${at.book}, page ${at.page}`, uri: at.uri, pid: at.pid, doc_id: at.doc_id, title: at.title, page: at.page };
+  }
   const placed = !!out.jump && !out.jump.named; // a reference typed: the search is that place
   const terms = (n ? n.terms : cq.terms) || [];
   // The line as typed, word by word (the question around it taken off): what a passage is scored against.
@@ -1385,6 +1391,61 @@ function passageRows(match, cq, limit, offset) {
   const out = [];
   for (const t of top) { const r = details.get(t.id); if (r) { r.rank = t.rank; r.snip = marks.get(t.id) ?? null; out.push(r); } }
   return out;
+}
+// The printed page. The Church marks in each page of a book where a page of the printed copy
+// begins (<span class="page-break" data-page="28">), so "PMG p. 28" can open the place page 28
+// starts. A book's pages are read once, the first time one is asked for, and kept while the
+// library is open: { page -> { doc_id, uri, title, pid } }, pid being the paragraph the page
+// begins in (or the next one), null when it begins at the head of a chapter.
+const PAGE_ASK = /^(.*?)[\s,]*\b(?:p|pg|pp|page|pages)\b\.?\s*(\d{1,4})\s*$/i;
+const PAGE_SHELF = [[/^(pmg|preach my gospel)$/i, "preach-my-gospel"], [/^((general )?handbook)$/i, "handbook"], [/^(missionary standards|standards)$/i, "missionary-standards"]];
+const PAGE_ALIAS = { bom: "book of mormon", "d&c": "doctrine and covenants", dc: "doctrine and covenants", ot: "old testament", nt: "new testament", pgp: "pearl of great price", bd: "bible dictionary", tg: "topical guide", gs: "guide to the scriptures" };
+let pageBooks = new Map(), pageBooksOf = null;
+async function pagesOf(bookId) {
+  if (pageBooksOf !== db) { pageBooks = new Map(); pageBooksOf = db; } // another library: its pages are its own
+  if (pageBooks.has(bookId)) return pageBooks.get(bookId);
+  const pages = new Map();
+  const docs = rows("SELECT id, uri, title, body_html FROM documents WHERE book_id = ? ORDER BY sort_key, id", [bookId]);
+  for (const d of docs) {
+    const html = await inflate(d.body_html);
+    if (!html || html.indexOf("page-break") < 0) continue;
+    const body = html.indexOf("body-block");
+    const mark = /<span[^>]*\bpage-break\b[^>]*>/g;
+    let m;
+    while ((m = mark.exec(html))) {
+      const num = (/data-page="([^"]+)"/.exec(m[0]) || [])[1];
+      if (!num || pages.has(num)) continue;
+      let pid = null;
+      if (body >= 0 && m.index > body) {
+        // the paragraph it sits in, when the last one opened before it is still open; else the next one
+        const before = html.slice(Math.max(0, m.index - 20000), m.index);
+        const opens = [...before.matchAll(/<(p|li|h[1-6])\b[^>]*\bid="([^"]+)"[^>]*>/g)];
+        const last = opens[opens.length - 1];
+        if (last && before.indexOf(`</${last[1]}>`, last.index) < 0) pid = last[2];
+        else { const next = /<(?:p|li|h[1-6])\b[^>]*\bid="([^"]+)"/.exec(html.slice(m.index, m.index + 20000)); pid = next ? next[1] : null; }
+      }
+      pages.set(num, { doc_id: d.id, uri: d.uri, title: d.title, pid });
+    }
+  }
+  pageBooks.set(bookId, pages);
+  return pages;
+}
+async function pageJump(raw) {
+  const m = PAGE_ASK.exec(String(raw || "").trim());
+  if (!m) return null;
+  let name = m[1].trim().replace(/[.,:;]+$/, "").replace(/^(?:the|in|from)\s+/i, "").trim().toLowerCase();
+  const page = String(Number(m[2]));
+  if (!name || name.length > 60) return null;
+  name = PAGE_ALIAS[name] || name;
+  const shelf = PAGE_SHELF.find(([re]) => re.test(name));
+  const books = shelf
+    ? rows("SELECT b.id, b.title FROM books b JOIN collections c ON c.id = b.collection_id WHERE c.slug = ? ORDER BY b.year DESC, b.sort, b.id LIMIT 4", [shelf[1]])
+    : rows("SELECT b.id, b.title FROM books b WHERE lower(b.title) LIKE ? ORDER BY (lower(b.title) = ?) DESC, length(b.title), b.id LIMIT 4", [`%${name}%`, name]);
+  for (const b of books) {
+    const at = (await pagesOf(b.id)).get(page);
+    if (at) return { ...at, book: b.title, page };
+  }
+  return null;
 }
 // How many paragraphs match, counted without the joins when no filter needs them.
 function countRows(match, cq) {
