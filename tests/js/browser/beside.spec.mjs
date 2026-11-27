@@ -28,8 +28,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     }));
     return { ctx, page, ids };
   }
-  const h1 = (page, pane) => page.evaluate((p) => document.querySelector(`${p} .doc h1`)?.textContent || "", pane);
-  const waitTitle = (page, pane, re) => page.waitForFunction(([p, s]) => new RegExp(s).test(document.querySelector(`${p} .doc h1`)?.textContent || ""), [pane, re.source], { timeout: 8000 }).then(() => true, () => false);
+  const h1 = (page, pane) => page.evaluate((p) => document.querySelector(p === "#beside" ? "#beside .bs-title:not(.bs-title-plain)" : `${p} .reader-bar .crumb`)?.textContent || "", pane);
+  const waitTitle = (page, pane, re) => page.waitForFunction(([p, s]) => new RegExp(s).test(document.querySelector(p === "#beside" ? "#beside .bs-title:not(.bs-title-plain)" : `${p} .reader-bar .crumb`)?.textContent || ""), [pane, re.source], { timeout: 8000 }).then(() => true, () => false);
   const openMain = async (page, id, pid, re) => { await page.evaluate(([id, pid]) => GL.openDoc(id, pid), [id, pid]); await waitTitle(page, "#reader", re); };
   const plant = (page) => page.evaluate((h) => { document.querySelector("#inj")?.remove(); const a = document.createElement("a"); a.id = "inj"; a.setAttribute("href", h); a.textContent = "LINK "; document.querySelector("#reader .doc #p21").prepend(a); document.querySelector("#inj").scrollIntoView({ block: "center" }); }, HEB);
   const layout = (page) => page.evaluate(() => {
@@ -248,7 +248,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(500);
     const kept = (await layout(page)).saved;
     await page.reload();
-    await page.waitForSelector("#beside .doc h1", { timeout: 60000 }).catch(() => check(false, "the pair did not come back after a reload"));
+    await page.waitForSelector("#beside .bs-title:not(.bs-title-plain)", { timeout: 60000 }).catch(() => check(false, "the pair did not come back after a reload"));
     await page.waitForTimeout(600);
     l = await layout(page);
     check(l.open && l.beside && near(share(l, "w"), 2 / 3) && /Alma 32/.test(await h1(page, "#beside")), "after a reload: the same page beside, at two thirds");
@@ -389,7 +389,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     l = await layout(page);
     check(near(share(l, "h"), 1 / 3) && near(l.saved.ratio, 1 / 3, 0.001), `portrait: the divider did not snap to one third (${share(l, "h").toFixed(3)})`);
     await page.reload();
-    await page.waitForSelector("#beside .doc h1", { timeout: 60000 }).catch(() => check(false, "portrait: the pair did not come back after a reload"));
+    await page.waitForSelector("#beside .bs-title:not(.bs-title-plain)", { timeout: 60000 }).catch(() => check(false, "portrait: the pair did not come back after a reload"));
     await page.waitForTimeout(600);
     l = await layout(page);
     check(l.open && l.beside && near(share(l, "h"), 1 / 3), "portrait: the ratio did not persist");
@@ -417,7 +417,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.keyboard.press("Escape");
     await page.evaluate((id) => GL.store.set("beside", { id, pid: "p1", off: 0, ratio: 0.5, title: "Hebrews 11" }), ids.heb);
     await page.reload();
-    await page.waitForSelector("#reader .doc h1", { timeout: 60000 });
+    await page.waitForSelector("#reader .reader-bar .crumb", { timeout: 60000 });
     await page.waitForTimeout(800);
     check(!(await page.$("#beside")) && !(await page.evaluate(() => document.body.classList.contains("beside-open"))), "a saved pair opened a pane on the phone");
     await page.screenshot({ path: OUT + "07-phone.png" });

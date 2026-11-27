@@ -45,7 +45,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check((await page.getAttribute("#toast a.toast-action", "href").catch(() => "")) === "https://example.com/history?x=1" && left.length === 0, `the web address was followed without the offer: ${left.join(", ")}`);
   // a Markdown link to a chapter the library holds opens it here
   await page.click(".ask-card .ask-a a:has-text('the chapter')");
-  await page.waitForFunction(() => /Alma 33/.test(document.querySelector("#reader .doc h1, #panel .doc h1, .doc h1")?.textContent || document.title), null, { timeout: 8000 }).catch(() => errors.push(`a Markdown link to a chapter did not open it`));
+  await page.waitForFunction(() => /Alma 33/.test(document.querySelector("#reader .reader-bar .crumb, #panel .doc h1, .doc h1")?.textContent || document.title), null, { timeout: 8000 }).catch(() => errors.push(`a Markdown link to a chapter did not open it`));
   check(left.length === 0, `a request left the app: ${left.join(", ")}`);
   // the thread drawn again after a reload keeps its links
   await page.reload();

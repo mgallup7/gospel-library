@@ -21,7 +21,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
         await box(page, ref); await page.press("#q", "Enter");
         await page.waitForTimeout(700);
         const jump = await page.$("#list .jump"); if (jump && await jump.isVisible()) await jump.click();
-        await page.waitForFunction((t) => document.querySelector("#reader .doc h1")?.textContent.includes(t), ref, { timeout: 15000 });
+        await page.waitForFunction((t) => document.querySelector("#reader .reader-bar .crumb")?.textContent.includes(t), ref, { timeout: 15000 });
         // the tiles come back by themselves once shown (the choice is remembered); give them a moment first
         if (!(await page.waitForSelector("#reader .orig .ow", { timeout: 3000 }).catch(() => null))) {
           const top = await page.$("#reader .reader-bar .orig-btn");

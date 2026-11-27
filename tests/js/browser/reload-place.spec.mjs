@@ -33,7 +33,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       await page.click("#deckBtn");
       await page.waitForSelector(".bcard .bc-cite", { timeout: 8000 });
       await page.click(".bcard button.bc-cite");
-      await page.waitForFunction(() => /Hebrews 11/.test(document.querySelector("#reader .doc h1")?.textContent || "") && document.querySelector("#reader").offsetParent !== null, null, { timeout: 8000 }).catch(() => check(false, "the card's citation did not open its page"));
+      await page.waitForFunction(() => /Hebrews 11/.test(document.querySelector("#reader .reader-bar .crumb")?.textContent || "") && document.querySelector("#reader").offsetParent !== null, null, { timeout: 8000 }).catch(() => check(false, "the card's citation did not open its page"));
       const seen = () => page.evaluate(() => ({ hash: location.hash, page: !!document.querySelector("#reader .doc") && document.querySelector("#reader").offsetParent !== null && !document.querySelector("#reader").hidden, board: !!document.querySelector("#panel .board") && !document.querySelector("#panel").hidden, on: [...document.querySelectorAll(".pane-switch button.on")].filter((b) => b.offsetParent !== null).map((b) => b.textContent).join(","), back: [...document.querySelectorAll(".trail-back")].filter((b) => b.offsetParent !== null).map((b) => b.textContent.trim()).join("|") }));
       await page.waitForTimeout(900);
       const before = await seen();

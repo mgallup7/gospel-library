@@ -10,8 +10,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     for (let i = 1; i <= 4; i++) await touches(cdp, "touchMove", [[x1 + ((x2 - x1) * i) / 4, y]]);
     await touches(cdp, "touchEnd", []);
   };
-  const h1 = (page, root) => page.evaluate((r) => document.querySelector(`${r} .doc h1`)?.textContent || "", root);
-  const waitH1 = (page, root, re) => page.waitForFunction(([r, s]) => new RegExp(s).test(document.querySelector(`${r} .doc h1`)?.textContent || ""), [root, re.source], { timeout: 8000 }).then(() => true, () => false);
+  const h1 = (page, root) => page.evaluate((r) => document.querySelector(r === "#beside" ? "#beside .bs-title:not(.bs-title-plain)" : `${r} .reader-bar .crumb`)?.textContent || "", root);
+  const waitH1 = (page, root, re) => page.waitForFunction(([r, s]) => new RegExp(s).test(document.querySelector(r === "#beside" ? "#beside .bs-title:not(.bs-title-plain)" : `${r} .reader-bar .crumb`)?.textContent || ""), [root, re.source], { timeout: 8000 }).then(() => true, () => false);
   const firstVisit = async (page, BASE, PASS) => {
     await page.goto(BASE);
     await page.fill("div.setup input", PASS);
@@ -60,7 +60,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check((await size(page)) === s0, `pinching two fingers did not bring the text back (${await size(page)}, was ${s0})`);
     // the page beside turns on its own
     await page.evaluate((id) => window.Beside.open(id), id);
-    await page.waitForSelector("#beside .doc h1", { timeout: 10000 });
+    await page.waitForSelector("#beside .bs-title:not(.bs-title-plain)", { timeout: 10000 });
     const bb = await page.evaluate(() => { const r = document.querySelector("#beside .bs-scroll").getBoundingClientRect(); return { x: r.left, w: r.width }; });
     await flick(cdp, bb.x + bb.w * 0.8, 400, bb.x + bb.w * 0.2);
     check(await waitH1(page, "#beside", /Alma 33/), "a flick in the page beside did not turn its chapter");
@@ -87,7 +87,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await firstVisit(page, BASE, PASS);
     const id = await page.evaluate(async () => (await GL.api("resolve", { href: "https://www.churchofjesuschrist.org/study/scriptures/bofm/alma/32?lang=eng" })).doc_id);
     await page.evaluate((id) => GL.openDoc(id), id);
-    await page.waitForSelector("#reader .doc h1", { timeout: 10000 });
+    await page.waitForSelector("#reader .reader-bar .crumb", { timeout: 10000 });
     await page.waitForTimeout(400);
     const top = () => page.evaluate(() => document.querySelector("#reader > .reader-bar").getBoundingClientRect().bottom);
     for (const y of [150, 300, 450, 600]) { await page.evaluate((y) => window.scrollTo(0, y), y); await page.waitForTimeout(120); }

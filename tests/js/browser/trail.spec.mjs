@@ -11,7 +11,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.press("div.setup input", "Enter");
     await page.waitForSelector("#homeBody .shelf-grid", { timeout: 120000 });
     const back = () => page.evaluate(() => { const b = [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null); return b ? b.querySelector(".lb").textContent : null; });
-    const where = () => page.evaluate(() => ({ hash: decodeURIComponent(location.hash), n: history.state?.n, reader: !document.querySelector("#reader").hidden, list: !document.querySelector("#list").hidden, title: document.querySelector("#reader .doc h1")?.textContent?.trim() || null, board: !!document.querySelector("#panel") && !document.querySelector("#panel").hidden, fab: !document.querySelector(".fab-think")?.hidden, fabText: document.querySelector(".fab-think .lb")?.textContent }));
+    const where = () => page.evaluate(() => ({ hash: decodeURIComponent(location.hash), n: history.state?.n, reader: !document.querySelector("#reader").hidden, list: !document.querySelector("#list").hidden, title: document.querySelector("#reader .reader-bar .crumb")?.textContent?.trim() || null, board: !!document.querySelector("#panel") && !document.querySelector("#panel").hidden, fab: !document.querySelector(".fab-think")?.hidden, fabText: document.querySelector(".fab-think .lb")?.textContent }));
     // each step says where it should land: the address, and what Back should say
     const wide = viewport.width >= 760;
     const expect = {

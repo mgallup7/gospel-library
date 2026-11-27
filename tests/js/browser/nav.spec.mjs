@@ -151,8 +151,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await box(page, "Alma 32:999"); await page.waitForTimeout(900);
     let j = await page.evaluate(() => document.querySelector("#list .jump")?.textContent || null);
     if (!j || !/^Alma 32 /.test(j) || !/no verse 999/.test(j)) errors.push(`${name}: Alma 32:999 offers “${j}”`);
-    await page.press("#q", "Enter"); await page.waitForSelector("#reader:not([hidden]) .doc h1"); await page.waitForTimeout(500);
-    const at = await page.evaluate(() => ({ t: document.querySelector("#reader .doc h1").textContent.trim(), hash: location.hash, target: !!document.querySelector("#reader .doc .is-target") }));
+    await page.press("#q", "Enter"); await page.waitForSelector("#reader:not([hidden]) .reader-bar .crumb"); await page.waitForTimeout(500);
+    const at = await page.evaluate(() => ({ t: document.querySelector("#reader .reader-bar .crumb").textContent.trim(), hash: location.hash, target: !!document.querySelector("#reader .doc .is-target") }));
     if (at.t !== "Alma 32" || /p=p999/.test(at.hash) || at.target) errors.push(`${name}: Enter on Alma 32:999 gave ${JSON.stringify(at)}`);
     await box(page, "Alma 32:43"); await page.waitForTimeout(900);
     j = await page.evaluate(() => document.querySelector("#list .jump")?.textContent || null);

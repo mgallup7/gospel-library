@@ -20,7 +20,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       const chapter = async (ref, title, lang) => {
         const at = await page.evaluate((r) => window.GL.api("locate", { ref: r }), ref);
         await page.evaluate((d) => window.GL.openDoc(d.doc_id, d.pid), at);
-        await page.waitForFunction((t) => document.querySelector("#reader .doc h1")?.textContent.includes(t), title, { timeout: 15000 });
+        await page.waitForFunction((t) => document.querySelector("#reader .reader-bar .crumb")?.textContent.includes(t), title, { timeout: 15000 });
         if (!(await page.waitForSelector("#reader .orig .ow", { timeout: 3000 }).catch(() => null))) {
           const top = await page.$("#reader .reader-bar .orig-btn");
           if (top && await top.isVisible()) await top.click(); else { await page.click("#reader .reader-bar .size-pop-btn"); await page.click("#reader .reader-bar .size-menu .menu-orig"); } // in the bar's menu on a phone

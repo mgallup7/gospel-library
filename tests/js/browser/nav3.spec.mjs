@@ -31,8 +31,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const check = (name, c, m) => { if (!c) errors.push(`${name}: ${m}`); };
   const backLabel = (page) => page.evaluate(() => { const b = [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null); return b ? b.querySelector(".lb").textContent : null; });
   const tapBack = async (page) => { await page.evaluate(() => [...document.querySelectorAll(".trail-back")].find((x) => x.offsetParent !== null)?.click()); await page.waitForTimeout(700); };
-  const title = (page) => page.evaluate(() => document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim() || null);
-  const titled = (page, t) => page.waitForFunction((x) => document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim() === x, t, { timeout: 15000 }).catch(() => {});
+  const title = (page) => page.evaluate(() => document.querySelector("#reader:not([hidden]) .reader-bar .crumb")?.textContent.trim() || null);
+  const titled = (page, t) => page.waitForFunction((x) => document.querySelector("#reader:not([hidden]) .reader-bar .crumb")?.textContent.trim() === x, t, { timeout: 15000 }).catch(() => {});
   const depth = (page) => page.evaluate(() => history.state.n);
   const open = async (page, ref) => { await box(page, ref); await page.press("#q", "Enter"); await titled(page, ref); await page.waitForTimeout(400); };
 
@@ -54,7 +54,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await box(page, "faith hope"); await page.press("#q", "Enter"); await page.waitForTimeout(1000);
     check(name, (await backLabel(page)) === "Results", `beside Alma 33, after a new search, Back says ${await backLabel(page)}`);
     await tapBack(page);
-    const b = await page.evaluate(() => ({ q: document.querySelector("#q").value, t: document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim() }));
+    const b = await page.evaluate(() => ({ q: document.querySelector("#q").value, t: document.querySelector("#reader:not([hidden]) .reader-bar .crumb")?.textContent.trim() }));
     check(name, b.q === "Alma 33" && b.t === "Alma 33", `Back from the new results gave ${JSON.stringify(b)}`);
     // the Deck and Ask are places of their own: no step is made, no Back leads out of them, and the
     // page is where it was when its own tab is tapped again
@@ -78,7 +78,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(name, ((await scopes()) === "none") === (pageTab !== "#searchTab"), `the scope row should show in Search alone (${pageTab}: ${await scopes()})`);
     const back0 = await backLabel(page);
     await page.click("#reader .reader-bar .chap[data-dir=next]"); await titled(page, "Alma 34"); await page.waitForTimeout(200);
-    let at = await page.evaluate(() => ({ t: document.querySelector("#reader .doc h1")?.textContent.trim(), n: history.state.n, crumb: document.querySelector("#reader .reader-bar .crumb").textContent, focus: document.activeElement?.dataset?.dir || null }));
+    let at = await page.evaluate(() => ({ t: document.querySelector("#reader .reader-bar .crumb")?.textContent.trim(), n: history.state.n, crumb: document.querySelector("#reader .reader-bar .crumb").textContent, focus: document.activeElement?.dataset?.dir || null }));
     check(name, at.t === "Alma 34" && at.crumb === "Alma 34" && at.n === n0 && at.focus === "next", `the next arrow gave ${JSON.stringify(at)} (depth was ${n0})`);
     await page.evaluate(() => document.activeElement.blur());
     await page.keyboard.press("ArrowLeft"); await titled(page, "Alma 33");
@@ -94,7 +94,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(name, await page.evaluate(() => document.activeElement?.id === "q"), "Cmd+F did not focus the search box");
     await page.keyboard.press("Escape");
     await page.click("#reader .reader-bar .crumb"); await page.waitForSelector("#homeBody .chapters", { timeout: 8000 }).catch(() => {});
-    at = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), grid: document.querySelectorAll("#homeBody .chapters button").length, t: document.querySelector("#reader:not([hidden]) .doc h1")?.textContent.trim(), n: history.state.n }));
+    at = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), grid: document.querySelectorAll("#homeBody .chapters button").length, t: document.querySelector("#reader:not([hidden]) .reader-bar .crumb")?.textContent.trim(), n: history.state.n }));
     check(name, /^#scriptures\?b\.book=alma&doc=\d+$/.test(at.hash) && at.grid === 63 && at.t === "Alma 32" && at.n === n0 + 1, `the crumb led to ${JSON.stringify(at)}`);
     await page.keyboard.press("Control+["); await page.waitForTimeout(700);
     at = await page.evaluate(() => ({ hash: decodeURIComponent(location.hash), n: history.state.n }));
@@ -214,7 +214,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.click("#reader .select-bar >> text=Note");
     await page.waitForSelector("#sheet:not([hidden]) textarea");
     await page.reload({ waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelector("#reader:not([hidden]) .doc h1"), null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelector("#reader:not([hidden]) .reader-bar .crumb"), null, { timeout: 30000 });
     await page.waitForTimeout(600);
     const before = await page.evaluate(() => location.hash);
     await tapBack(page);

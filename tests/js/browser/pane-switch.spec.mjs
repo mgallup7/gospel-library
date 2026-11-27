@@ -24,7 +24,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       reader: vis(reader), board: vis(panel) && vis(panel.querySelector(".board")),
       cards: panel ? panel.querySelectorAll(".bcard").length : 0,
       sw: sw ? [...sw.querySelectorAll("button")].map((b) => b.textContent + (b.classList.contains("on") ? "*" : "")).join("|") : null,
-      title: reader.querySelector(".doc h1")?.textContent?.trim() || "",
+      title: reader.querySelector(".reader-bar .crumb")?.textContent?.trim() || "",
       target: reader.querySelector(".doc .is-target")?.id || null,
       sel: [...reader.querySelectorAll(".doc .sel")].map((n) => n.id),
       scroll: reader.scrollTop,

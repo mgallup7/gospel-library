@@ -251,11 +251,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   async function inChapter(href) {
     await clearToast();
     await page.evaluate((id) => GL.openDoc(id), alma30.doc_id);
-    await page.waitForFunction(() => /Alma 30/.test(document.querySelector("#reader .doc h1")?.textContent || ""), null, { timeout: 8000 });
+    await page.waitForFunction(() => /Alma 30/.test(document.querySelector("#reader .reader-bar .crumb")?.textContent || ""), null, { timeout: 8000 });
     await page.evaluate((h) => { document.querySelector("#inj")?.remove(); const a = document.createElement("a"); a.id = "inj"; a.setAttribute("href", h); a.textContent = "LINK "; document.querySelector("#reader .doc .verse").prepend(a); }, href);
     await page.click("#inj");
   }
-  const docTitle = (re) => page.waitForFunction((s) => new RegExp(s).test(document.querySelector("#reader .doc h1")?.textContent || ""), re.source, { timeout: 8000 }).then(() => true, () => false);
+  const docTitle = (re) => page.waitForFunction((s) => new RegExp(s).test(document.querySelector("#reader .reader-bar .crumb")?.textContent || ""), re.source, { timeout: 8000 }).then(() => true, () => false);
   await inChapter("../alma/33"); // against the chapter's own address: /study/scriptures/bofm/alma/33
   check(await docTitle(/Alma 33/), "chapter relative link did not open Alma 33");
   check((await page.evaluate(() => location.pathname)) === new URL(BASE).pathname, `chapter relative link moved the app to ${await page.evaluate(() => location.pathname)}`);

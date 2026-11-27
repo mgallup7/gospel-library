@@ -94,7 +94,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // Open goes to the chapter
     const open = await page.locator("#sheet .peek-row .primary").first().boundingBox();
     await page.touchscreen.tap(open.x + open.width / 2, open.y + open.height / 2);
-    await page.waitForFunction(() => document.querySelector("#sheet").hidden && /Alma 34/.test(document.querySelector("#reader .doc h1, #reader .reader-bar")?.textContent || document.title), null, { timeout: 15000 }).catch(() => {});
+    await page.waitForFunction(() => document.querySelector("#sheet").hidden && /Alma 34/.test(document.querySelector("#reader .reader-bar .crumb, #reader .reader-bar")?.textContent || document.title), null, { timeout: 15000 }).catch(() => {});
     check(await page.evaluate(() => document.querySelector("#sheet").hidden), `${name}: Open takes the sheet down and goes to the chapter`);
     await ctx.close();
   }

@@ -89,8 +89,8 @@ export default async function run(browser, { BASE, PASS }) {
   await page.waitForSelector("#reader .twin-line .twin-open", { timeout: 8000 }).catch(() => {});
   check(/This chapter quotes Isaiah 2\./.test((await page.textContent("#reader .twin-line").catch(() => "")) || ""), "2 Nephi 12 does not say it quotes Isaiah 2");
   await page.evaluate(() => document.querySelector("#reader .twin-open")?.click());
-  await page.waitForFunction(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .doc h1")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
-  check(await page.evaluate(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .doc h1")?.textContent || "")), "the twin did not open beside");
+  await page.waitForFunction(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .bs-title:not(.bs-title-plain)")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
+  check(await page.evaluate(() => document.body.classList.contains("beside-open") && /Isaiah 2/.test(document.querySelector("#beside .bs-title:not(.bs-title-plain)")?.textContent || "")), "the twin did not open beside");
   // A phrase lifted from one verse is usually typed to find the verses that say nearly the same.
   // The verse itself leads; its parallel (a rare run of the same words) stands right under it.
   for (const [q, own, parallel] of [
@@ -126,8 +126,8 @@ export default async function run(browser, { BASE, PASS }) {
     const box = await pp.evaluate(() => { const r = document.querySelector("#reader .twin-line")?.getBoundingClientRect(); return r ? { l: r.left, r: r.right, w: innerWidth } : null; });
     check(box && box.l >= 0 && box.r <= box.w, `the twin line runs off the phone: ${JSON.stringify(box)}`);
     await pp.evaluate(() => document.querySelector("#reader .twin-open")?.click());
-    await pp.waitForFunction(() => /Isaiah 53/.test(document.querySelector("#reader .doc h1")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
-    check(/Isaiah 53/.test(await pp.evaluate(() => document.querySelector("#reader .doc h1")?.textContent || "")), "the twin did not open on the phone");
+    await pp.waitForFunction(() => /Isaiah 53/.test(document.querySelector("#reader .reader-bar .crumb")?.textContent || ""), null, { timeout: 8000 }).catch(() => {});
+    check(/Isaiah 53/.test(await pp.evaluate(() => document.querySelector("#reader .reader-bar .crumb")?.textContent || "")), "the twin did not open on the phone");
     await phone.close();
   }
   return errors;
