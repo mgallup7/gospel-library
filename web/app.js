@@ -3167,7 +3167,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (!toastEl) return;
     const vh = window.innerHeight;
     let top = vh;
-    for (const n of [wide() ? null : $("#tabs"), $(".select-bar", readerPane), $(".phrase-bar", readerPane), listPane.querySelector(".ask-dock")]) {
+    for (const n of [$("#sheet:not([hidden])"), wide() ? null : $("#tabs"), $(".select-bar", readerPane), $(".phrase-bar", readerPane), listPane.querySelector(".ask-dock")]) {
       if (!n || n.offsetParent === null && getComputedStyle(n).position !== "fixed") continue;
       const r = n.getBoundingClientRect();
       if (r.height > 0 && r.bottom > vh - 120 && r.top < vh) top = Math.min(top, r.top);
@@ -3291,7 +3291,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const href = a.getAttribute("href") || "";
     if (a.classList.contains("study-note-ref") || /^#note/.test(href) || a.dataset.scrollId) {
       e.preventDefault();
-      showNote(a.dataset.scrollId || href.split("#").pop());
+      showNote(a.dataset.scrollId || href.split("#").pop(), a);
       return;
     }
     if (href.startsWith("#")) { e.preventDefault(); focusParagraph(href.slice(1)); return; }
@@ -3385,32 +3385,48 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     noteUnder = !sheet.hidden && sheet.getAttribute("aria-label") === "Footnote" ? { label: "Footnote", url: location.href, nodes: [...bodyEl.childNodes] } : null;
     bodyEl.replaceChildren(el("div", { class: "status", text: "Opening…" }));
     openSheet("Passage");
-    let ctx = null;
-    // a list of verses (21, 23-25) shows those and no others; a range shows the run
+    const open = async () => { noteUnder = null; hideNote(); await openDoc(res.doc_id, res.pid); markListed(res); };
+    const nodes = await passageView(res, { open });
+    if (sheet.hidden || sheet.getAttribute("aria-label") !== "Passage") return;
+    if (!nodes) { open(); return; }
+    bodyEl.replaceChildren(...nodes);
+  }
+  // The verses a link names, as they are read in the sheet: its citation, the words, and what can
+  // be done with them. A list of verses (21, 23-25) shows those and no others; a range shows the
+  // run. focus: the verse the link is about when it sits in a range of context ("Alma 42:14
+  // (12-16)"): it is in full ink and the rest lighter. same: the link is to the open chapter.
+  const PEEK_MOST = 60;
+  async function passageView(res, { open, focus = null, same = false } = {}) {
     const listed = res.pids && res.pids.length ? res.pids : null;
     const from = listed ? listed[0] : res.pid;
     const start = Number(from.slice(1)), end = listed ? Number(listed[listed.length - 1].slice(1)) : res.pid_end && /^p\d+$/.test(res.pid_end) ? Number(res.pid_end.slice(1)) : start;
-    try { ctx = await api("context", { doc_id: res.doc_id, pid: from, before: 0, after: Math.max(0, Math.min(listed ? 40 : 12, end - start)) }); } catch (_) { ctx = null; }
-    if (sheet.hidden) return;
-    const open = async () => { noteUnder = null; hideNote(); await openDoc(res.doc_id, res.pid); markListed(res); };
-    if (!ctx) { open(); return; }
+    let ctx = null;
+    try { ctx = await api("context", { doc_id: res.doc_id, pid: from, before: 0, after: Math.max(0, Math.min(PEEK_MOST, end - start)) }); } catch (_) { ctx = null; }
+    if (!ctx) return null;
     const verses = ctx.paragraphs.filter((x) => x.kind !== "heading" && (!listed || listed.includes(x.pid)));
-    bodyEl.replaceChildren(
+    const aim = focus && verses.length > 1 && verses.some((x) => x.pid === focus) ? focus : null;
+    const cut = !listed && end - start > PEEK_MOST;
+    const toDeck = aim && !listed ? verses.filter((x) => x.pid === aim) : verses;
+    const aimVerse = aim && !listed ? verses.find((x) => x.pid === aim)?.verse : null;
+    return [
       el("div", { class: "nm", text: listed ? `${res.title}:${verseList(listed)}` : ctx.citation || res.title }),
-      el("div", { class: "peek" }, verses.map((x) => el("p", { class: x.kind === "verse" ? "verse" : "para" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean)))),
+      el("div", { class: "peek" + (aim ? " has-focus" : "") }, [
+        ...verses.map((x) => el("p", { class: (x.kind === "verse" ? "verse" : "para") + (aim && x.pid === aim ? " focus" : ""), "data-pid": x.pid }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean))),
+        cut ? el("p", { class: "peek-cut", text: `Verses ${start} to ${start + PEEK_MOST} are shown. Open the chapter for the rest, to verse ${end}.` }) : null,
+      ].filter(Boolean)),
       el("div", { class: "peek-row" }, [
-        el("button", { type: "button", class: "primary", text: `Open ${res.title}`, onclick: open }),
-        window.Beside?.button?.(res) || null, // beside.js: "Open beside", on an iPad
-        window.Deck ? el("button", { type: "button", class: "text-btn", text: "Add to deck", onclick: async () => {
+        el("button", { type: "button", class: "primary", text: same ? `Go to verse ${verseList(listed || [from])}` : `Open ${res.title}`, onclick: open }),
+        same ? null : window.Beside?.button?.(res) || null, // beside.js: "Open beside", on an iPad
+        window.Deck ? el("button", { type: "button", class: "text-btn", text: aimVerse ? `Add verse ${aimVerse} to deck` : "Add to deck", onclick: async () => {
           try {
             const doc = await api("doc", { id: res.doc_id });
-            const units = verses.filter((x) => x.kind === "verse" || x.kind === "para").map((x) => ({ pid: x.pid, kind: x.kind, verse: x.verse, text: x.text }));
+            const units = toDeck.filter((x) => x.kind === "verse" || x.kind === "para").map((x) => ({ pid: x.pid, kind: x.kind, verse: x.verse, text: x.text }));
             const added = window.Deck.addFromDoc(doc, units);
             deckToast(added, added === 1 ? "On the deck." : `${added} passages on the deck.`);
           } catch (_) { toast("Could not add that just now."); }
         } }) : null,
       ].filter(Boolean)),
-    );
+    ];
   }
   // A page the library does not hold. Nothing is opened from here: by the time the library has
   // answered, the tap is over (a tap inside a study's frame never reached this window at all),
@@ -3926,21 +3942,185 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
 
   // ---------------------------------------------------------- footnotes ----
   const sheet = $("#sheet");
-  function showNote(noteId) {
+  // A footnote and what it points to. A note is mostly a run of references ("Luke 6:20; 7:22.
+  // TG Poor."), and reading them used to be a tap and a Back for each. Now each reference is a
+  // page of the sheet: the first shows at once, a swipe left or right (or its name in the row
+  // above, or the arrows) moves to the next, and the chapter behind never moves. Moving between
+  // them adds nothing to history: Back, the close button, a pull down and a tap outside all
+  // close the sheet. A note with words of its own (a Hebrew reading, an explanation) shows them
+  // above the references.
+  let refs = null; // the references of the note that is up: { items, at, track, pages, chips, count, prev, next }
+  const HELP_KIND = [[/\/scriptures\/tg\//, "TG"], [/\/scriptures\/bd\//, "BD"], [/\/scriptures\/gs\//, "GS"], [/\/scriptures\/triple-index\//, "Index"]];
+  function noteRefs(frag) {
+    const items = [];
+    let book = "";
+    for (const a of frag.querySelectorAll("a[href]")) {
+      const href = a.getAttribute("href") || "";
+      if (!href || href.startsWith("#")) continue;
+      let label = (a.textContent || "").replace(/\s+/g, " ").trim().replace(/[.;,]+$/, "");
+      if (!label) continue;
+      const help = HELP_KIND.find(([re]) => re.test(href));
+      if (help) { if (!new RegExp(`^${help[1]}\\b`, "i").test(label)) label = `${help[1]} ${label}`; }
+      else {
+        const m = label.match(/^(.*?)\s*\d+:\d/); // "Luke 6:20" names its book; "7:22" after it means Luke too
+        if (m && m[1]) book = m[1];
+        else if (/^\d+:\d/.test(label) && book) label = `${book} ${label}`;
+      }
+      items.push({ href, label, a });
+    }
+    return items;
+  }
+  function showNote(noteId, from) {
     if (!currentDoc) return;
     const n = (currentDoc.footnotes || []).find((x) => x.note_id === noteId) || null;
     const bodyEl = $(".sheet-body", sheet);
+    const word = from && from.classList?.contains("study-note-ref") ? (from.textContent || "").replace(/\s+/g, " ").trim() : "";
+    refs = null;
+    sheet.classList.remove("refs", "one");
     if (!n) {
       const inline = readerPane.querySelector(`#${CSS.escape(noteId)}`);
       if (inline) { inline.scrollIntoView({ block: "center" }); return; }
       bodyEl.replaceChildren(el("div", { text: "That note is not in the local copy." }));
-    } else {
-      bodyEl.replaceChildren(...[n.marker ? el("div", { class: "nm", text: `Note ${n.marker}` }) : null, el("div", {}, [sanitize(n.html || esc(n.text))])].filter(Boolean));
+      openSheet("Footnote");
+      return;
+    }
+    const noteEl = el("div", { class: "fn-note" }, [sanitize(n.html || esc(n.text))]);
+    const items = noteRefs(noteEl);
+    const head = el("div", { class: "fn-head" }, [
+      el("div", { class: "fn-title" }, [word ? el("span", { class: "fn-word", text: word }) : null, el("span", { class: "fn-mark", text: n.marker ? (word ? n.marker : `Note ${n.marker}`) : word ? "" : "Note" })].filter(Boolean)),
+    ]);
+    if (!items.length) { // words only: the note is the whole of it
+      bodyEl.replaceChildren(head, noteEl);
+      openSheet("Footnote");
+      return;
+    }
+    // does the note say anything beyond naming its references?
+    const bare = noteEl.cloneNode(true);
+    for (const a of bare.querySelectorAll("a[href]")) a.remove();
+    const hasWords = /[a-z]{2}/i.test(bare.textContent || "");
+    const many = items.length > 1;
+    const count = many ? el("span", { class: "fn-count" }) : null;
+    const prev = many ? el("button", { type: "button", class: "fn-step fn-prev", "aria-label": "Previous reference", html: ICON_BACK }) : null;
+    const next = many ? el("button", { type: "button", class: "fn-step fn-next", "aria-label": "Next reference", html: ICON_BACK }) : null;
+    if (many) head.append(count, prev, next);
+    const chips = many ? el("nav", { class: "fn-chips", "aria-label": "References" }, items.map((it, i) => el("button", { type: "button", class: "fn-chip", text: it.label, onclick: () => refGo(i, true) }))) : null;
+    const track = el("div", { class: "fn-track" }, items.map((it, i) => el("section", { class: "fn-page", role: "group", "aria-label": many ? `${it.label}, ${i + 1} of ${items.length}` : it.label, tabindex: "-1" })));
+    bodyEl.replaceChildren(...[head, hasWords ? noteEl : null, chips, track].filter(Boolean));
+    const mine = refs = { items, at: -1, track, pages: [...track.children], chips: chips ? [...chips.children] : [], strip: chips, count, prev, next, loaded: new Set(), doc: currentDoc, quiet: true };
+    sheet.classList.add("refs");
+    sheet.classList.toggle("one", !many);
+    if (hasWords) noteEl.addEventListener("click", (e) => { // a reference named in the note's own words goes to its page
+      const a = e.target.closest("a");
+      const i = a ? items.findIndex((it) => it.a === a) : -1;
+      if (i < 0) return;
+      e.preventDefault(); e.stopPropagation();
+      refGo(i, true);
+    });
+    if (many) {
+      prev.onclick = () => refGo(mine.at - 1, true);
+      next.onclick = () => refGo(mine.at + 1, true);
+      let settle = 0;
+      track.addEventListener("scroll", () => { // a swipe: the page it comes to rest nearest is the one in view
+        clearTimeout(settle);
+        settle = setTimeout(() => { if (refs === mine && track.clientWidth) refAt(Math.round(Math.abs(track.scrollLeft) / track.clientWidth)); }, 90);
+      }, { passive: true });
     }
     openSheet("Footnote");
+    sheet.setAttribute("aria-label", `Footnote ${n.marker || ""}${word ? `, ${word}` : ""}`.trim());
+    refAt(0);
+    mine.quiet = false;
   }
+  // The page in view: its name is filled in the row, the count and arrows follow, it and its
+  // neighbours are fetched, and the others are out of reach of Tab and VoiceOver.
+  function refAt(i) {
+    const r = refs;
+    if (!r) return;
+    i = Math.max(0, Math.min(r.items.length - 1, i));
+    refLoad(i); refLoad(i + 1); refLoad(i - 1);
+    if (i === r.at) return;
+    r.at = i;
+    r.pages.forEach((pg, k) => { pg.inert = k !== i; });
+    r.chips.forEach((c, k) => { if (k === i) c.setAttribute("aria-current", "true"); else c.removeAttribute("aria-current"); });
+    if (r.strip && r.chips[i]) { // its name is brought to the middle of the row (never by scrollIntoView, which would move the page too)
+      const c = r.chips[i];
+      const left = c.offsetLeft - (r.strip.clientWidth - c.offsetWidth) / 2;
+      try { r.strip.scrollTo({ left: Math.max(0, left), behavior: r.quiet || still() ? "auto" : "smooth" }); } catch (_) { r.strip.scrollLeft = Math.max(0, left); }
+    }
+    if (r.count) r.count.textContent = `${i + 1} of ${r.items.length}`;
+    if (r.prev) r.prev.disabled = i === 0;
+    if (r.next) r.next.disabled = i === r.items.length - 1;
+    if (!r.quiet && r.items.length > 1) say(`${r.items[i].label}, ${i + 1} of ${r.items.length}`);
+  }
+  const still = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Go to a reference by its name, an arrow or a key: the row of pages is moved there.
+  function refGo(i, focus) {
+    const r = refs;
+    if (!r || i < 0 || i >= r.items.length) return;
+    const left = r.pages[i].offsetLeft - r.pages[0].offsetLeft;
+    try { r.track.scrollTo({ left, behavior: still() ? "auto" : "smooth" }); } catch (_) { r.track.scrollLeft = left; }
+    refAt(i);
+    if (focus) { try { r.pages[i].focus({ preventScroll: true }); } catch (_) {} }
+  }
+  async function refLoad(i) {
+    const r = refs;
+    if (!r || i < 0 || i >= r.items.length || r.loaded.has(i)) return;
+    r.loaded.add(i);
+    const page = r.pages[i], it = r.items[i];
+    page.replaceChildren(el("div", { class: "status", text: "Opening…" }));
+    let nodes = null;
+    try { nodes = await refView(it, r); } catch (_) { nodes = null; }
+    if (refs !== r) return; // another note, or the sheet has gone
+    page.replaceChildren(...(nodes || [el("div", { class: "nm", text: it.label }), el("p", { class: "fn-quiet", text: "Could not open that just now." })]));
+    const aim = page.querySelector(".peek .focus");
+    if (aim && aim.previousElementSibling) page.scrollTop = Math.max(0, aim.offsetTop - page.offsetTop - 8); // the verse the note is about, not the first of its context
+  }
+  // What one reference shows: its verses; or the opening of a Topical Guide or dictionary entry
+  // the library holds; or, for a page it does not hold, a plain line and a real link to the web.
+  // Nothing is ever said in a toast over the sheet.
+  async function refView(it, r) {
+    const u = linkUrl(it.href, r.doc && r.doc.source_url);
+    const outside = (text, href) => [
+      el("div", { class: "nm", text: it.label }),
+      el("p", { class: "fn-quiet", text }),
+      href && navigator.onLine ? el("div", { class: "peek-row" }, [el("a", { class: "primary", href, target: "_blank", rel: "noopener", text: `Open on ${new URL(href).hostname.replace(/^www\./, "")}` })]) : null,
+    ].filter(Boolean);
+    if (!u || !/^https?:$/.test(u.protocol)) return outside("That link cannot be opened here.", null);
+    if (!CHURCH.test(u.href)) return outside("That link leaves the library.", u.href);
+    let res = null;
+    try { res = await api("resolve", { href: u.href }); } catch (_) { res = null; }
+    if (!res || !res.found) {
+      const nodes = outside(navigator.onLine ? "Not in your library." : "Not in your library, and you are offline.", u.href);
+      if (res && res.near && res.near.title) (nodes[2] || nodes[nodes.push(el("div", { class: "peek-row" })) - 1]).append(el("button", { type: "button", class: "text-btn", text: `Open ${res.near.title} contents`, onclick: () => { closeSheet(); openBook(res.near); } }));
+      return nodes;
+    }
+    if (res.kind === "book" || res.kind === "shelf") return [el("div", { class: "nm", text: res.title || it.label }), el("div", { class: "peek-row" }, [el("button", { type: "button", class: "primary", text: `Open ${res.title || it.label}`, onclick: () => { closeSheet(); openBook(res); } })])];
+    const same = !!(r.doc && r.doc.id === res.doc_id && state.docId === res.doc_id);
+    const open = async () => {
+      if (same && res.pid) { closeSheet(); focusParagraph(res.pid); return; }
+      hideNote(); await openDoc(res.doc_id, res.pid); markListed(res);
+    };
+    if (res.pid && /^p\d+$/.test(res.pid)) {
+      const focus = /^#p\d+$/.test(u.hash) ? u.hash.slice(1) : null;
+      const nodes = await passageView(res, { open, focus, same });
+      if (nodes) return nodes;
+    }
+    // an entry or a page with no verse named: how it begins, and the way in
+    let doc = null;
+    try { doc = await api("doc", { id: res.doc_id }); } catch (_) { doc = null; }
+    const paras = ((doc && doc.paragraphs) || []).filter((x) => x.kind !== "heading" && x.kind !== "title" && (x.text || "").trim()).slice(0, 8);
+    return [
+      el("div", { class: "nm", text: res.title || it.label }),
+      el("div", { class: "peek" }, paras.map((x) => el("p", { class: x.kind === "verse" ? "verse" : "para" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, document.createTextNode(x.text)].filter(Boolean)))),
+      el("div", { class: "peek-row" }, [
+        el("button", { type: "button", class: "primary", text: `Open ${res.title || it.label}`, onclick: open }),
+        window.Beside?.button?.(res) || null,
+      ].filter(Boolean)),
+    ];
+  }
+  window.addEventListener("resize", () => { const r = refs; if (r && !sheet.hidden && r.at > 0) r.track.scrollLeft = r.pages[r.at].offsetLeft - r.pages[0].offsetLeft; }); // a window resized (iPadOS) keeps its page
   let sheetOpener = null;
   function openSheet(label) {
+    if (label !== "Footnote") { refs = null; sheet.classList.remove("refs", "one"); }
     sheet.setAttribute("aria-label", label);
     const wasHidden = sheet.hidden;
     sheet.hidden = false;
@@ -3988,7 +4168,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     }
     sheetSlid = false;
     sheet.hidden = true; $("#scrim")?.remove();
-    sheet.classList.remove("page", "has-done");
+    sheet.classList.remove("page", "has-done", "refs", "one");
+    refs = null;
     document.body.classList.remove("sheet-page");
     inertBehind(sheet, false); // before the focus goes back to what opened it
     sheetKeep = null;
@@ -4040,6 +4221,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   }
   sheet.tabIndex = -1;
   sheet.addEventListener("keydown", (e) => { // Tab stays within the sheet while it is open
+    if (refs && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.target.closest?.("input, textarea")) { e.preventDefault(); e.stopPropagation(); refGo(refs.at + (e.key === "ArrowRight" ? 1 : -1), true); return; }
     if (e.key !== "Tab") return;
     const focusables = [...sheet.querySelectorAll("button, [href], input, textarea, select, [tabindex]:not([tabindex='-1'])")].filter((n) => !n.disabled && n.offsetParent !== null);
     if (!focusables.length) return;
