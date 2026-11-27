@@ -53,7 +53,7 @@ export default async function run(browser, { BASE, PASS }) {
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
   await page.waitForTimeout(400);
   const before = await hash();
-  await page.click("#reader .doc #p21");
+  await page.click("#reader .doc #p21 .verse-number");
   await page.click("#reader .select-bar button:has-text('Note')");
   await page.waitForSelector("#sheet:not([hidden])", { timeout: 5000 });
   await page.goBack();
@@ -62,7 +62,7 @@ export default async function run(browser, { BASE, PASS }) {
   check(await hash() === before, `and stay on the page (${await hash()} vs ${before})`);
   check(!!(await page.$("#reader .doc #p21")), "the page is still open");
   // closing by hand leaves no stale entry: one Back now leaves the page
-  await page.click("#reader .doc #p22");
+  await page.click("#reader .doc #p22 .verse-number");
   await page.click("#reader .select-bar button:has-text('Note')");
   await page.waitForSelector("#sheet:not([hidden])", { timeout: 5000 });
   await page.click("#sheet .close");
@@ -77,10 +77,10 @@ export default async function run(browser, { BASE, PASS }) {
   await page.reload();
   await page.waitForSelector("#reader .doc #p21", { timeout: 30000 });
   await page.waitForTimeout(500);
-  await page.click("#reader .doc #p21");
+  await page.click("#reader .doc #p21 .verse-number");
   await page.click("#reader .select-bar .add-deck");
   await page.waitForTimeout(400);
-  for (const id of ["#p21", "#p22", "#p23"]) await page.click(`#reader .doc ${id}`);
+  for (const id of ["#p21", "#p22", "#p23"]) await page.click(`#reader .doc ${id} .verse-number`);
   await page.click("#reader .select-bar .add-deck");
   await page.waitForTimeout(400);
   const items = await page.evaluate(() => window.Deck.state.items.map((i) => i.citation));

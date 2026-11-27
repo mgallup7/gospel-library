@@ -761,7 +761,7 @@ function page(out, offset, limit, t0) {
 // Which paragraphs a search may return, and how much each shelf and kind of
 // paragraph counts. A chosen shelf is searched as an equal; otherwise the
 // scriptures and the prophets rank above lists and study helps.
-const SHELF_PRIOR = { scriptures: 1, "general-conference": 1, "preach-my-gospel": 0.95, "missionary-standards": 0.95, handbook: 0.9, "come-follow-me": 0.9, manuals: 0.85, hymns: 0.85, "study-helps": 0.7 };
+const SHELF_PRIOR = { scriptures: 1, "general-conference": 1, "preach-my-gospel": 0.95, "missionary-standards": 0.95, handbook: 0.9, "come-follow-me": 0.9, manuals: 0.85, hymns: 0.85, "study-helps": 0.4 };
 function prior(hit, scoped) {
   let p = scoped ? 1 : (SHELF_PRIOR[hit.collection] ?? (hit.collection && hit.collection.startsWith("jsp-") ? 0.85 : 0.9));
   const words = hit.text ? hit.text.split(/\s+/).length : 0;

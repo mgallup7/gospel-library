@@ -51,11 +51,12 @@ const TABLE = [
   [`${SITE}/study/general-conference/2024/04/15nelson?lang=eng&id=p12#p12`, "out"],
   ["/general-conference/2024/04/15nelson", "out"],
   ["/study/general-conference", "out"],
-  ["/study/manual/preach-my-gospel-2023/06-chapter-3?lang=eng&id=p12#p12", "out"],
+  // the small test library has no manuals or study helps; the real one holds part of Preach My Gospel and the Bible Dictionary
+  ["/study/manual/preach-my-gospel-2023/06-chapter-3?lang=eng&id=p12#p12", ["out", "out near Preach My Gospel: A Guide to Sharing the Gospel of Jesus Christ"]],
   [`${SITE}/study/manual/general-handbook/38-church-policies-and-guidelines?lang=eng&id=title_number87#title_number87`, "out"],
   [`${SITE}/study/manual/gospel-topics/faith-in-jesus-christ?lang=eng`, "out"],
   [`${SITE}/media/video/2011-10-0001-x`, "out"],
-  ["/study/scriptures/bd/faith?lang=eng", "out"],
+  ["/study/scriptures/bd/faith?lang=eng", ["out", "page /scriptures/bd/faith"]],
   [`${SITE}/study`, "out"],
   ["https://scriptures.lds.org/en/nobook/1/1", "out"],
   ["https://www.josephsmithpapers.org/paper-summary/not-held/2", "out"],
@@ -131,7 +132,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     }
     return out;
   }, TABLE.map((t) => t[0]));
-  TABLE.forEach(([href, want], i) => check(got[i] === want, `resolve ${href}: ${got[i]}, expected ${want}`));
+  TABLE.forEach(([href, want], i) => check([].concat(want).includes(got[i]), `resolve ${href}: ${got[i]}, expected ${want}`));
   check(TABLE.length >= 40, "the table is short");
 
   // ---- helpers --------------------------------------------------------------

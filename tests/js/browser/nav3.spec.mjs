@@ -102,11 +102,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
     // 4. in landscape the selection bar shows everything; a highlight and a note taken off can be undone
     const vis = (sel) => page.evaluate((s) => { const x = document.querySelector(s); return !!x && x.offsetParent !== null; }, sel);
-    await page.click("#reader .doc #p21"); await page.click("#reader .doc #p22");
+    await page.click("#reader .doc #p21 .verse-number"); await page.click("#reader .doc #p22 .verse-number");
     check(name, (await vis("#reader .select-bar .clear-sel")) && !(await vis("#reader .select-bar .sel-more-btn")), "in landscape the selection bar should show Clear and no more button");
     await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press("Escape"); await page.waitForTimeout(150);
     check(name, !(await page.$("#reader .select-bar")) && !(await page.$("#reader .doc .sel")), "Escape did not clear the selection");
-    await page.click("#reader .doc #p21");
+    await page.click("#reader .doc #p21 .verse-number");
     const uri = await page.evaluate(async () => (await window.GL.api("doc", { id: Number(new URLSearchParams(location.hash.split("?")[1]).get("doc")) })).uri);
     const mark = () => page.evaluate(async (u) => { const m = await window.Marks.get(u, "p21"); const x = document.querySelector("#reader .doc #p21"); return { color: m?.color || null, note: m?.note || null, drawn: x.classList.contains("hl-y"), noted: x.classList.contains("noted") }; }, uri);
     await page.click("#reader .select-bar .hl-dot.hl-y"); await page.waitForTimeout(300);
@@ -148,7 +148,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   {
     const name = "portrait", page = await start(name, { width: 820, height: 1180 });
     await open(page, "Alma 32");
-    await page.click("#reader .doc #p21"); await page.click("#reader .doc #p22"); await page.waitForTimeout(200);
+    await page.click("#reader .doc #p21 .verse-number"); await page.click("#reader .doc #p22 .verse-number"); await page.waitForTimeout(200);
     const bar = await page.evaluate(() => {
       const x = document.querySelector("#reader .select-bar"), r = x.getBoundingClientRect();
       const kids = [...x.children].filter((k) => k.offsetParent !== null);
@@ -200,7 +200,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
     // 1d. Back keeps a note that is half typed; Cancel lets it go
     await open(page, "Alma 32");
-    await page.click("#reader .doc #p21"); await page.click("#reader .select-bar >> text=Note");
+    await page.click("#reader .doc #p21 .verse-number"); await page.click("#reader .select-bar >> text=Note");
     await page.waitForSelector("#sheet:not([hidden]) textarea");
     await page.fill("#sheet textarea", "half a thought");
     await page.evaluate(() => history.back()); await page.waitForTimeout(500);

@@ -39,7 +39,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       if (jump && viewport.width < 760 && await jump.isVisible()) await jump.click(); // Enter opens the page on the phone too
       await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
       await page.waitForTimeout(400);
-      await page.click("#reader .doc #p21");
+      await page.click("#reader .doc #p21 .verse-number");
       await page.waitForSelector("#reader .select-bar .add-deck");
     }
     await openAndSelect();
@@ -68,7 +68,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     }
 
     // add it again: the themes and the actions appear
-    await page.click("#reader .doc #p21");
+    await page.click("#reader .doc #p21 .verse-number");
     await page.waitForSelector("#reader .select-bar .add-deck");
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(150);

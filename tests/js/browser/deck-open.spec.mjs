@@ -28,7 +28,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     if (jump && !wide && await jump.isVisible()) await jump.click();
     await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
     await page.waitForTimeout(300);
-    await page.click("#reader .doc #p21");
+    await page.click("#reader .doc #p21 .verse-number");
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(200);
     await box(page, "Ether 12:6"); await page.press("#q", "Enter");

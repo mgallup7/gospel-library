@@ -46,7 +46,18 @@ const selectWords = async (page, pid, words, mouse) => {
   }
   await page.waitForSelector("#reader .phrase-bar", { timeout: 5000 });
 };
-const marked = (page, pid) => page.evaluate((pid) => [...document.querySelectorAll(`#reader .doc #${pid} mark.hlp`)].map((m) => `${m.className.replace("hlp hl-", "")}:${m.textContent}`), pid);
+// A phrase as the page draws it. A word caught in part counts whole, so the mark takes the
+// punctuation that closes its last word, and a footnoted word inside the phrase splits the
+// drawing into pieces: the pieces of one phrase are read as one, without that last punctuation.
+const marked = (page, pid) => page.evaluate((pid) => {
+  const out = [];
+  for (const m of document.querySelectorAll(`#reader .doc #${pid} mark.hlp`)) {
+    const id = m.getAttribute("data-phrase"), last = out[out.length - 1];
+    if (last && last.id === id) last.text += m.textContent;
+    else out.push({ id, color: m.className.replace("hlp hl-", ""), text: m.textContent });
+  }
+  return out.map((o) => `${o.color}:${o.text.replace(/\s+/g, " ").trim().replace(/[.,;:!?]+$/, "")}`);
+}, pid);
 const kept = (page) => page.evaluate(async () => (await window.Marks.phrases(window.GL.reading.doc.uri)).map((r) => `${r.pid}~${r.start}-${r.end}:${r.color}:${r.text}`).sort());
 async function phrases(page, { name, viewport, check, shot }) {
   const mouse = viewport.width >= 760;
@@ -63,7 +74,7 @@ async function phrases(page, { name, viewport, check, shot }) {
   check(await page.evaluate(() => { const p = document.querySelector("#reader .doc #p21"); return p.classList.contains("hl-y") && !!p.querySelector(".note-mark"); }), "the verse keeps its own yellow and its note");
   check((await page.getAttribute("#reader .phrase-bar .hl-dot.hl-g", "aria-pressed").catch(() => null)) === "true" && !!(await page.$("#reader .phrase-bar .ph-remove")) && (await page.evaluate(() => window.getSelection().isCollapsed)), "once the words are marked the selection goes and the bar stays on them, for a note or the deck");
   const rec = await page.evaluate(async () => (await window.Marks.phrases(window.GL.reading.doc.uri))[0]);
-  check(rec && rec.kind === "phrase" && rec.id === `${rec.uri}#p21~${rec.start}-${rec.end}` && rec.end - rec.start === 4 && rec.color === "g" && rec.text === "a perfect knowledge of things" && rec.citation === "Alma 32:21", `the record: ${JSON.stringify(rec)}`);
+  check(rec && rec.kind === "phrase" && rec.id === `${rec.uri}#p21~${rec.start}-${rec.end}` && rec.end - rec.start === 4 && rec.color === "g" && /^a perfect knowledge of things[;,.]?$/.test(rec.text) && rec.citation === "Alma 32:21", `the record: ${JSON.stringify(rec)}`);
   check((await page.evaluate(async () => (await window.Marks.forDoc(window.GL.reading.doc.uri)).some((m) => m.kind === "phrase"))) === false, "forDoc still returns verse and paragraph marks only");
   // a second phrase in the same verse; then one over part of the first: the newer has the shared words
   await selectWords(page, "p21", "which are not seen", mouse);
@@ -72,7 +83,7 @@ async function phrases(page, { name, viewport, check, shot }) {
   await selectWords(page, "p21", "not to have a perfect", mouse);
   await page.click("#reader .phrase-bar .hl-dot.hl-p");
   await page.waitForTimeout(400);
-  check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["p:not to have a perfect", "g:knowledge of things", "b:which are not seen,"]), `three phrases, the newer over the older where they meet: ${JSON.stringify(await marked(page, "p21"))}`);
+  check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["p:not to have a perfect", "g:knowledge of things", "b:which are not seen"]), `three phrases, the newer over the older where they meet: ${JSON.stringify(await marked(page, "p21"))}`);
   await shot("07-phrases");
   // a tap on a marked phrase: its color is pressed; another color changes it, and Undo puts it back
   await page.click("#reader .doc #p21 mark.hlp.hl-b");
@@ -83,9 +94,9 @@ async function phrases(page, { name, viewport, check, shot }) {
   await shot("08-phrase-tapped");
   await page.click("#reader .phrase-bar .hl-dot.hl-y");
   await page.waitForTimeout(400);
-  check((await marked(page, "p21")).includes("y:which are not seen,"), "the phrase is recolored");
+  check((await marked(page, "p21")).includes("y:which are not seen"), "the phrase is recolored");
   await undo();
-  check((await marked(page, "p21")).includes("b:which are not seen,"), `Undo puts the color back: ${JSON.stringify(await marked(page, "p21"))}`);
+  check((await marked(page, "p21")).includes("b:which are not seen"), `Undo puts the color back: ${JSON.stringify(await marked(page, "p21"))}`);
   // Remove, and Undo
   await page.click("#reader .doc #p21 mark.hlp.hl-b");
   await page.click("#reader .phrase-bar .ph-remove");
@@ -93,7 +104,7 @@ async function phrases(page, { name, viewport, check, shot }) {
   check(!(await marked(page, "p21")).some((m) => /which are not seen/.test(m)) && (await kept(page)).length === 2, `Remove takes the phrase off: ${JSON.stringify(await kept(page))}`);
   check((await page.evaluate(async () => (await window.Marks.dump()).filter((r) => r.deleted && /~/.test(r.id)).length)) >= 1, "the removal leaves a tombstone for the other devices");
   await undo();
-  check((await marked(page, "p21")).includes("b:which are not seen,") && (await kept(page)).length === 3, `Undo puts the phrase back: ${JSON.stringify(await kept(page))}`);
+  check((await marked(page, "p21")).includes("b:which are not seen") && (await kept(page)).length === 3, `Undo puts the phrase back: ${JSON.stringify(await kept(page))}`);
   // words across two verses: the bar offers the verses whole, as the selection bar does
   await page.evaluate(() => {
     const a = [...document.querySelector("#reader .doc #p25").childNodes].filter((n) => n.nodeType === 3).pop(), z = [...document.querySelector("#reader .doc #p26").childNodes].find((n) => n.nodeType === 3 && n.nodeValue.trim().length > 8);
@@ -123,7 +134,7 @@ async function phrases(page, { name, viewport, check, shot }) {
   }
   await page.waitForSelector("#reader .doc #p21 mark.hlp", { timeout: 30000 });
   await page.waitForTimeout(600);
-  check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["p:not to have a perfect", "g:knowledge of things", "b:which are not seen,"]), `the phrases survive a reload: ${JSON.stringify(await marked(page, "p21"))}`);
+  check(JSON.stringify(await marked(page, "p21")) === JSON.stringify(["p:not to have a perfect", "g:knowledge of things", "b:which are not seen"]), `the phrases survive a reload: ${JSON.stringify(await marked(page, "p21"))}`);
   await page.evaluate(() => document.querySelector("#reader .doc #p21").scrollIntoView({ block: "center" }));
   await shot("09-phrases-after-reload");
   // the list of marks has the phrases, and a Greek word, beside the verses; the color filter and the search take them in
@@ -195,8 +206,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
     await page.waitForTimeout(500);
     // select two verses, highlight yellow
-    await page.click("#reader .doc #p21");
-    await page.click("#reader .doc #p22");
+    await page.click("#reader .doc #p21 .verse-number");
+    await page.click("#reader .doc #p22 .verse-number");
     await page.waitForSelector("#reader .select-bar .hl-dot.hl-y");
     await shot("01-selected");
     await page.click("#reader .select-bar .hl-dot.hl-y");
@@ -226,7 +237,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(card && /Two verses, one note\./.test(card.notes || ""), `the range note should be the card's speaker note: ${card && card.notes}`);
     check(card && Array.isArray(card.hl) && card.hl.length === 0, "the card's phrase highlights (and so the PowerPoint) are unchanged");
     // a note on verse 23
-    await page.click("#reader .doc #p23");
+    await page.click("#reader .doc #p23 .verse-number");
     await page.click("#reader .select-bar button:has-text('Note')");
     await page.waitForSelector("#sheet:not([hidden]) .note-text");
     await page.fill("#sheet .note-text", "Faith grows by experiment: plant the word.");
@@ -237,7 +248,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(await page.evaluate(() => document.querySelector("#sheet").hidden), "sheet closes after saving");
     await barDo(page, ".clear-sel", "Clear selection");
     // the same color again removes the highlight on verse 22
-    await page.click("#reader .doc #p22");
+    await page.click("#reader .doc #p22 .verse-number");
     await page.click("#reader .select-bar .hl-dot.hl-y");
     await page.waitForTimeout(400);
     check(await page.evaluate(() => !document.querySelector("#reader .doc #p22").classList.contains("hl-y")), "verse 22 highlight should toggle off");

@@ -204,7 +204,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.evaluate(async () => { const s = await GL.api("search", { q: "Alma 32" }); GL.openDoc(s.jump.doc_id, "p21"); });
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
   await page.evaluate(async () => { const d = GL.reading.doc; await window.Marks.set({ uri: d.uri, doc_id: d.id, pid: "p21", verse: 21, kind: "verse", note: "NOTE-MARK faith is not a perfect knowledge of things", text: "And now as I said concerning faith", citation: "Alma 32:21", title: d.title }); });
-  await page.click("#reader .doc #p21");
+  await page.click("#reader .doc #p21 .verse-number");
   await page.fill(".ask-input", "NOTES-TEST what did I note about faith");
   await page.click(".ask-go");
   await page.waitForFunction(() => /Your note says/.test(document.querySelector(".ask-log")?.textContent || ""), null, { timeout: 30000 }).catch(() => null);
@@ -215,7 +215,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   const noteResult = JSON.stringify(notesReqs.at(-1)?.messages?.at(-1)?.content || "");
   check(/His note on \[\d+\] Alma 32:21/.test(noteResult) && /NOTE-MARK faith is not a perfect knowledge/.test(noteResult), `my_notes returns his note with its passage: ${noteResult.slice(0, 200)}`);
   check(!(await page.evaluate(() => [...document.querySelectorAll(".ask-card")].find((c) => /NOTES-TEST/.test(c.textContent))?.querySelector(".quote-note"))), "a quotation from his own note is not flagged");
-  await page.click("#reader .doc #p21"); // unselect
+  await page.click("#reader .doc #p21 .verse-number"); // unselect
 
   // the thread is kept on the device with each [n] replaced by its passage, and comes back after a reload
   const kept = await page.evaluate(() => JSON.parse(localStorage.getItem("gospel.askThread") || "[]"));

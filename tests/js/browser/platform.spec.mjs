@@ -40,9 +40,9 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await classes("the Library");
     await page.click("#homeBody .shelf-tile:has-text('Scriptures')"); await wait(); await classes("a shelf");
     await openDoc("/scriptures/bofm/alma/32", "p21"); await classes("a chapter");
-    await page.click("#reader .doc #p21"); await page.click("#reader .doc #p22"); await wait(200); await classes("a selection");
+    await page.click("#reader .doc #p21 .verse-number"); await page.click("#reader .doc #p22 .verse-number"); await wait(200); await classes("a selection");
     await page.click("#reader .select-bar .add-deck"); await wait(); await classes("after Add to deck");
-    await openDoc("/scriptures/ot/gen/1", "p1"); await page.click("#reader .doc #p1"); await wait(200); await classes("Genesis 1 with a verse selected");
+    await openDoc("/scriptures/ot/gen/1", "p1"); await page.click("#reader .doc #p1 .verse-number"); await wait(200); await classes("Genesis 1 with a verse selected");
     await openDoc("/scriptures/ot/gen/2", "p1"); await classes("a chapter drawn over a selection");
     await page.click("#searchTab"); await wait(); await classes("Search before a word");
     await page.fill("#q", "faith"); await page.press("#q", "Enter"); await page.waitForSelector("#list .hit", { timeout: 20000 }); await wait(600); await classes("results");
@@ -94,10 +94,10 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       await fits(`${size}px, the Library`);
       check(await px("body") === 20 && await px("#homeBody .st-s") > 13 && await px("#tabs .tab-lb") === 15, `${size}px: the shelves and the tabs should have grown: body ${await px("body")}, a shelf's line ${await px("#homeBody .st-s")}, a tab ${await px("#tabs .tab-lb")}`);
       await openDoc("/scriptures/bofm/alma/32", "p21");
-      await page.click("#reader .doc #p21"); await page.click("#reader .doc #p22"); await wait(300);
+      await page.click("#reader .doc #p21 .verse-number"); await page.click("#reader .doc #p22 .verse-number"); await wait(300);
       await fits(`${size}px, a selection`);
       if (size === 34) await page.screenshot({ path: `${SHOTS}platform-${name}-34-selection.png` });
-      await page.click("#reader .doc #p21"); await page.click("#reader .doc #p22"); await wait(200);
+      await page.click("#reader .doc #p21 .verse-number"); await page.click("#reader .doc #p22 .verse-number"); await wait(200);
       await page.click("#searchTab"); await wait();
       await page.fill("#q", "faith"); await page.press("#q", "Enter"); await page.waitForSelector("#list .hit", { timeout: 20000 }); await wait(600);
       await fits(`${size}px, results`);

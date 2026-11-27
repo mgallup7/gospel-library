@@ -1738,12 +1738,16 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (doPush) { push(replace); if (replace) setEntry({ scroll: null }); paneView = "page"; } // a page chosen now is what the pane should show
     markActive();
     showReader();
-    if (!currentDoc || currentDoc.id !== id) {
+    // the page counts as open only once it is drawn: one that loaded after the reader moved on
+    // must not be remembered, or asking for it again would find it "already open" and draw nothing
+    if (!currentDoc || currentDoc.id !== id || !readerPane.querySelector(".doc")) {
       readerPane.replaceChildren(el("div", { class: "status", text: "Opening…" }));
-      try { currentDoc = await api("doc", { id }); }
-      catch (e) { readerPane.replaceChildren(el("div", { class: "status error", text: `Could not open that page (${e.message}).` })); return; }
-      if (!currentDoc) { readerPane.replaceChildren(el("div", { class: "status error", text: "That page is not in the library." })); return; }
+      let got = null;
+      try { got = await api("doc", { id }); }
+      catch (e) { if (state.docId === id) readerPane.replaceChildren(el("div", { class: "status error", text: `Could not open that page (${e.message}).` })); return; }
       if (state.docId !== id) return; // another page was opened while this one loaded
+      if (!got) { currentDoc = null; readerPane.replaceChildren(el("div", { class: "status error", text: "That page is not in the library." })); return; }
+      currentDoc = got;
       renderDoc(currentDoc);
     }
     nameEntry(); // the page's title, or Ask or the Deck when the page rides beside one
@@ -1785,6 +1789,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ].filter(Boolean));
     const body = el("article", { class: "doc" }, [sanitize(doc.body_html || "")]);
     if (doc.footnotes && doc.footnotes.length) {
+      // The Church's page ends with its own list of the footnotes (bare bullets, no letters). The
+      // reader draws them itself just below, each under its letter, so the bare list is taken out
+      // rather than shown twice.
+      for (const f of body.querySelectorAll("footer.study-notes")) f.remove();
       const notes = el("section", { class: "notes" }, [el("h2", { text: "Footnotes" })]);
       const ol = el("ol");
       for (const n of doc.footnotes) ol.append(el("li", { id: `fn-${n.note_id}` }, [el("b", { text: n.marker || "" }), el("span", {}, [sanitize(n.html || esc(n.text))])]));

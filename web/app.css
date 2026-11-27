@@ -574,10 +574,12 @@ main {
 .doc header > .page-break, .doc .body-block > .page-break { display: block; margin: 0 0 .5em; line-height: 1; }
 .doc header > .page-break::before, .doc .body-block > .page-break::before { margin-left: 0; }
 .doc .aside, .doc aside { background: var(--chrome); padding: 12px 14px; border-radius: var(--r-ctl); margin: 1em 0; }
+/* the Church's own bare list of a page's footnotes: never beside the reader's lettered one (app.js), nor in the second pane */
+.doc:has(.notes) footer.study-notes, #beside .doc footer.study-notes { display: none; }
 .doc .notes { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--rule); font-size: .88em; }
 .doc .notes h2 { font-family: var(--sans); font-size: var(--ui-13); color: var(--ink-2); margin: 0 0 .8em; }
 .doc .notes ol { padding-left: 1.6em; margin: 0; }
-.doc .notes li { margin-bottom: .5em; color: var(--ink-2); }
+.doc .notes li { margin-bottom: .5em; color: var(--ink-2); overflow-wrap: anywhere; }
 .doc .notes li b { color: var(--ink); font-family: var(--sans); font-size: .8em; margin-right: 4px; }
 .doc-nav { display: flex; justify-content: space-between; gap: 12px; max-width: 68ch; margin: 0 auto; padding: 0 20px 40px; font-family: var(--sans); }
 /* the chapter before and the chapter after: two buttons that share the whole row (one alone has

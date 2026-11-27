@@ -28,7 +28,7 @@ for (const f of specs) {
   const t0 = Date.now();
   let errors;
   try { errors = await (await import(pathToFileURL(path.join(here, f)).href)).default(browser, { BASE, PASS, SHOTS }); }
-  catch (err) { errors = [`aborted: ${err.message.split("\n")[0]}`]; }
+  catch (err) { errors = [`aborted: ${err.message.replace(/\u001b\[\d+m/g, "").split("\n").filter(Boolean).slice(0, 4).join(" | ")}`]; }
   const real = (errors || []).filter((e) => !/ERR_TUNNEL_CONNECTION_FAILED|NoModificationAllowedError|removeVfs|another tab/.test(e)); // the sandbox cannot reach the web; a reload can race the old worker for the storage
   if (real.length) { failed++; console.log(`✗ ${name} (${((Date.now() - t0) / 1000).toFixed(0)} s)`); for (const e of real) console.log(`    ${e}`); }
   else console.log(`✓ ${name} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);

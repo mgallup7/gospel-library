@@ -133,7 +133,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.waitForTimeout(400);
     await hits(["#reader .matchnav button[aria-label='Previous match']", "#reader .matchnav button[aria-label='Next match']", "#reader .size-btns .icon-btn[aria-label='Larger text']", "#reader .reader-bar .icon-btn[aria-label='Present']",
       "#reader .reader-bar a.icon-btn", "#reader .reader-bar .think-btn", "#reader .reader-bar .crumb", "#reader .reader-bar .chap[data-dir=next]", "#reader .reader-bar .trail-back"]);
-    await page.click("#reader .doc p.verse >> nth=1");
+    await page.click("#reader .doc p.verse .verse-number >> nth=1");
     await hits(["#reader .select-bar .hl-dot.hl-y", "#reader .select-bar .hl-dot.hl-p", "#reader .select-bar .text-btn:not(.fold)", "#reader .select-bar .fold:not(.clear-sel):not(.only-wide)", "#reader .select-bar .clear-sel"]);
     // offline, the site icon says so and opens nothing
     await page.context().setOffline(true);
@@ -158,7 +158,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     j = await page.evaluate(() => document.querySelector("#list .jump")?.textContent || null);
     if (!j || !/^Alma 32:43 /.test(j) || /no verse/.test(j)) errors.push(`${name}: Alma 32:43 offers “${j}”`);
     await page.press("#q", "Enter"); await page.waitForSelector("#reader:not([hidden]) .doc #p43.is-target");
-    await page.click("#reader .doc #p43"); await page.waitForTimeout(200);
+    await page.click("#reader .doc #p43 .verse-number"); await page.waitForTimeout(200);
     const dots = await page.evaluate(() => {
       const ds = [...document.querySelectorAll("#reader .select-bar .hl-dot")];
       return ds.map((d) => { const r = d.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2; return [[-21, 0], [21, 0], [0, -21], [0, 21]].every(([dx, dy]) => document.elementFromPoint(cx + dx, cy + dy) === d); });

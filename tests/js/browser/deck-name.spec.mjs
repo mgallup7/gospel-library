@@ -18,7 +18,7 @@ export default async function run(browser, { BASE, PASS }) {
   await box(page, "Alma 32:21"); await page.press("#q", "Enter");
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
   await page.waitForTimeout(300);
-  await page.click("#reader .doc #p21");
+  await page.click("#reader .doc #p21 .verse-number");
   await page.click("#reader .select-bar .add-deck");
   await page.click("#deckBtn");
   await page.waitForSelector(".board .bcard .bc-cite", { timeout: 10000 });

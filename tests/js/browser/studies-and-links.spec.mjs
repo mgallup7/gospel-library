@@ -14,7 +14,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   <p><a id="l3" href="https://www.churchofjesuschrist.org/study/scriptures/bofm/alma?lang=eng">Alma (the book)</a></p>
   <p><a id="l4" href="https://www.churchofjesuschrist.org/study/scriptures/nt/1-thes/4?lang=eng">1 Thessalonians 4 (chapter)</a></p>
   <p><a id="l5" href="https://www.lds.org/scriptures/ot/mal/3.1?lang=eng#0">Malachi 3:1 (old site)</a></p>
-  <p><a id="l6" href="https://www.churchofjesuschrist.org/study/manual/preach-my-gospel-2023?lang=eng">Preach My Gospel (not in this test library)</a></p>
+  <p><a id="l6" href="https://www.churchofjesuschrist.org/study/manual/teaching-in-the-saviors-way-2022?lang=eng">Preach My Gospel (not in this test library)</a></p>
   <p><a id="l7" href="https://example.com/elsewhere">Elsewhere on the web</a></p>
   <p><a id="l8" href="#l1">Within the page</a></p>
   </body></html>`;
@@ -116,7 +116,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await page.frameLocator("#reader .study-frame").locator("#l6").click();
     await page.waitForSelector("#toast.show a.toast-action", { timeout: 5000 });
     let out = await page.evaluate(() => { const a = document.querySelector("#toast a.toast-action"); return { href: a.href, target: a.target, rel: a.rel, text: document.querySelector("#toast").textContent }; });
-    check(out.href === "https://www.churchofjesuschrist.org/study/manual/preach-my-gospel-2023?lang=eng" && out.target === "_blank" && out.rel === "noopener", `l6 toast link: ${JSON.stringify(out)}`);
+    check(out.href === "https://www.churchofjesuschrist.org/study/manual/teaching-in-the-saviors-way-2022?lang=eng" && out.target === "_blank" && out.rel === "noopener", `l6 toast link: ${JSON.stringify(out)}`);
     check(/Not in your library/.test(out.text) && /churchofjesuschrist\.org/.test(out.text), `l6 toast says: ${out.text}`);
     check(popups.length === 0, `l6 popups: ${popups}`);
     await page.frameLocator("#reader .study-frame").locator("#l7").click();

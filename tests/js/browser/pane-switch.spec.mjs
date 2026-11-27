@@ -48,11 +48,11 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     let w = await look(page);
     if (w.sw) errors.push(`ipad: a switch before the deck was opened: ${w.sw}`);
     // select verse 21 and put it on the deck
-    await page.click("#reader .doc #p21");
+    await page.click("#reader .doc #p21 .verse-number");
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(300);
     // select verse 22 too, to see the selection outlive the board
-    await page.click("#reader .doc #p22");
+    await page.click("#reader .doc #p22 .verse-number");
     const scrolled = (await look(page)).scroll;
     await page.click("#deckBtn");
     await page.waitForTimeout(700);
@@ -125,7 +125,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // a typed reference only lists the chapter on a phone, so go to the verse by its address
     await page.goto(`${BASE}#scriptures?b.book=alma&doc=${doc}&p=p21`);
     await page.waitForSelector("#reader .doc #p21.is-target", { timeout: 30000 });
-    await page.click("#reader .doc #p21");
+    await page.click("#reader .doc #p21 .verse-number");
     await page.click("#reader .select-bar .add-deck");
     await page.waitForTimeout(300);
     await page.click("#deckBtn");

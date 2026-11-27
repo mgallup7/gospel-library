@@ -70,7 +70,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     check(await page.evaluate(() => window.Deck.count()) === 0, "Ctrl+Z undoes the add while the toast shows");
     check(await page.evaluate(() => document.querySelectorAll(".toast").length === 1 && /Taken off/.test(document.querySelector("#toast").textContent)), "the same toast says what Undo did");
     // Esc with words typed in a note keeps them; Cancel lets them go
-    await page.click(`#reader .doc #${moved}`);
+    await page.click(`#reader .doc #${moved} .verse-number`);
     await page.click("#reader .select-bar button:has-text('Note')");
     await page.waitForSelector("#sheet:not([hidden]) .note-text");
     await page.fill("#sheet .note-text", "Half a thought");

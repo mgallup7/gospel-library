@@ -68,7 +68,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const toast = async (words = "Copied, with the citation.") => { await page.evaluate((w) => window.GL.toast(w, { action: "Undo", onAction() {} }), words); await wait(350); };
     if (phone) { await toast(); const o = await over("#tabs"); check(o.clear && o.shown && o.inView, `the Library: a toast should sit above the tab bar: ${JSON.stringify(o)}`); }
     await openDoc("/scriptures/bofm/alma/32", "p21");
-    await page.click("#reader .doc #p21"); await page.click("#reader .doc #p22"); await wait(200);
+    await page.click("#reader .doc #p21 .verse-number"); await page.click("#reader .doc #p22 .verse-number"); await wait(200);
     await toast();
     let o = await over("#reader .select-bar");
     check(o.clear && o.shown && o.inView, `a toast should sit above the selection bar: ${JSON.stringify(o)}`);

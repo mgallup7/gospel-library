@@ -75,7 +75,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   check(!!(await page.$(".board .board-empty")) && /add a passage/i.test(await page.textContent(".board")), "an empty deck says how to add a passage");
   await box(page, "Alma 32:21"); await page.press("#q", "Enter");
   await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
-  await page.click("#reader .doc #p21");
+  await page.click("#reader .doc #p21 .verse-number");
   await page.click("#reader .select-bar .add-deck");
   await page.waitForTimeout(500);
   const n = await page.evaluate(() => window.Deck.count());

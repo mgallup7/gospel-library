@@ -26,7 +26,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
 
     // ---- a selection is said, and each verse carries it
     await openDoc("/scriptures/bofm/alma/32", "p21");
-    for (const pid of ["p21", "p22", "p23"]) await page.click(`#reader .doc #${pid}`);
+    for (const pid of ["p21", "p22", "p23"]) await page.click(`#reader .doc #${pid} .verse-number`);
     await wait(200);
     check(await said() === "3 verses selected", `three verses picked should be said: "${await said()}"`);
     const marks = await page.evaluate(() => ({
@@ -35,7 +35,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
       alt: getComputedStyle(document.querySelector("#reader .doc #p21"), "::before").content,
     }));
     check(marks.described === "p21,p22,p23" && marks.words === "Selected", `each selected verse should be described as selected: ${JSON.stringify(marks)}`);
-    await page.click("#reader .doc #p23"); await wait(200);
+    await page.click("#reader .doc #p23 .verse-number"); await wait(200);
     check(await said() === "2 verses selected", `one let go should be said: "${await said()}"`);
     check(await page.evaluate(() => !document.querySelector("#reader .doc #p23").hasAttribute("aria-describedby")), "a verse let go should lose its description");
     await page.keyboard.press("Escape"); await wait(200);

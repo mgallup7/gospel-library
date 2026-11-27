@@ -140,7 +140,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // ---- the tab bar under a selection and a toast; gone under the stage
     await page.evaluate(async () => { const d = await window.GL.api("doc", { uri: "/scriptures/bofm/alma/32" }); window.GL.openDoc(d.id, "p21"); });
     await page.waitForSelector("#reader .doc #p21", { timeout: 15000 });
-    await page.click("#reader .doc #p21");
+    await page.click("#reader .doc #p21 .verse-number");
     await page.waitForSelector("#reader .select-bar");
     await page.evaluate(() => window.GL.toast("A line to say something was done.", { action: "Undo", onAction: () => {} }));
     await page.waitForTimeout(450);

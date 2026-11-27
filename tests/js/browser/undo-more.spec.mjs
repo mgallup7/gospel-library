@@ -24,7 +24,7 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
   await page.evaluate((id) => GL.openDoc(id), alma.doc_id);
   await page.waitForSelector("#reader .doc .verse", { timeout: 10000 });
   const mark = () => page.evaluate(async (uri) => { const m = (await window.Marks.all()).find((x) => x.pid === "p3"); return m ? { color: m.color, note: m.note } : null; });
-  await page.click("#reader .doc p.verse >> nth=2");
+  await page.click("#reader .doc p.verse .verse-number >> nth=2");
   await page.click("#reader .select-bar .hl-dot.hl-y");
   await toastSays(/Highlighted/);
   const first = await mark();
