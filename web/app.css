@@ -672,6 +672,16 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .sheet-body.level-in > :not(.fn-head) { animation: rise .2s cubic-bezier(.2, .8, .2, 1); }
 .sheet-body.level-up > :not(.fn-head) { animation: fall .2s cubic-bezier(.2, .8, .2, 1); }
 @keyframes fall { from { opacity: 0; translate: 0 -14px; } }
+/* the trail: the steps above the one showing, each with the word that was tapped there */
+.fn-trail { flex: none; display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 calc(18px + var(--safe-right)) 4px calc(18px + var(--safe-left)); white-space: nowrap; overflow: hidden; touch-action: none; }
+.fn-crumb { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 56px; height: 44px; margin: -8px 0; overflow: hidden; }
+.fn-crumb-cite { font: 600 var(--ui-13) var(--sans); color: var(--accent); overflow: hidden; text-overflow: ellipsis; }
+.fn-crumb-word { font: italic var(--ui-13) var(--serif); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.fn-crumb-sep { flex: none; color: var(--ink-3); font: var(--ui-13) var(--sans); }
+.fn-crumb:active { opacity: .6; }
+/* a reference already read in this note goes quiet; one that leads back onto the trail is marked */
+.fn-chip.seen { color: var(--ink-2); font-weight: 500; border-color: var(--rule); }
+.fn-chip.loop::before { content: "\21A9\00A0"; }
 .fn-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
 .fn-word { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
 .fn-mark { flex: none; font-size: var(--ui-12); font-weight: 600; color: var(--accent); }

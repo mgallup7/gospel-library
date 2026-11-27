@@ -3467,7 +3467,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       if (!best) return;
       e.preventDefault(); e.stopPropagation();
       const v = best.closest("p")?.dataset.verse;
-      showNote(best.dataset.note, null, { doc: md.doc, word: (best.textContent || "").replace(/\s+/g, " ").trim(), cite: v ? `${chapter}:${v}` : chapter });
+      showNote(best.dataset.note, null, { doc: md.doc, word: (best.textContent || "").replace(/\s+/g, " ").trim(), cite: v ? `${chapter}:${v}` : chapter, key: `${md.doc.id}:${best.closest("p")?.dataset.pid || ""}` });
     });
     return [
       el("div", { class: "nm", text: listed ? `${res.title}:${verseList(listed)}` : ctx.citation || res.title }),
@@ -4055,23 +4055,40 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
   // up one; close, a tap outside and a pull down end the chase, and the chapter never moved.
   // Three levels is the limit; at the third the marks are not drawn, and the way on is Open.
   const CHASE_DEEP = 3;
-  let chase = []; // the levels above the one showing, the first note first: [{ nodes, refs, label, cls, left, tops }]
+  let chase = []; // the levels above the one showing, the first note first: [{ nodes, refs, label, cls, left, tops, step }]
+  // The step showing: the verse its note belongs to, the word that was tapped there, and that
+  // verse's place (chapter and paragraph), by which a reference that leads back onto the trail
+  // is known. The trail, drawn above the names from the second level on, is the steps above.
+  let step = { cite: "", word: "", key: "" };
+  const trailKeys = () => [...chase.map((l) => l.step.key), step.key];
+  function chaseTo(depth) { // back to a level by its place on the trail (0 is the first note)
+    let moved = false;
+    while (chase.length > depth && chase.length) { moved = chaseUp(true) || moved; }
+    if (moved) { levelIn($(".sheet-body", sheet), true); say(sheet.getAttribute("aria-label")); }
+  }
+  function trailRow() {
+    if (!chase.length) return null;
+    return el("nav", { class: "fn-trail", "aria-label": "How you got here" }, chase.flatMap((l, k) => [
+      el("button", { type: "button", class: "fn-crumb", "aria-label": `Back to ${l.step.cite}${l.step.word ? `, ${l.step.word}` : ""}`, onclick: () => chaseTo(k) }, [el("span", { class: "fn-crumb-cite", text: l.step.cite || "Start" }), l.step.word ? el("span", { class: "fn-crumb-word", text: l.step.word }) : null].filter(Boolean)),
+      el("span", { class: "fn-crumb-sep", "aria-hidden": "true", text: "›" }),
+    ]));
+  }
   function levelKeep() {
     const bodyEl = $(".sheet-body", sheet);
-    return { nodes: [...bodyEl.childNodes], refs, label: sheet.getAttribute("aria-label"), one: sheet.classList.contains("one"), pager: sheet.classList.contains("refs"),
+    return { nodes: [...bodyEl.childNodes], refs, step, label: sheet.getAttribute("aria-label"), one: sheet.classList.contains("one"), pager: sheet.classList.contains("refs"),
       left: refs ? refs.track.scrollLeft : 0, tops: refs ? refs.pages.map((pg) => pg.scrollTop) : [] };
   }
-  function chaseUp() {
+  function chaseUp(quiet = false) {
     const l = chase.pop();
     if (!l) return false;
+    step = l.step;
     const bodyEl = $(".sheet-body", sheet);
     bodyEl.replaceChildren(...l.nodes);
     refs = l.refs;
     sheet.classList.toggle("refs", l.pager); sheet.classList.toggle("one", l.one); sheet.classList.toggle("deep", chase.length > 0);
     sheet.setAttribute("aria-label", l.label);
     if (refs) { refs.track.scrollLeft = l.left; refs.pages.forEach((pg, k) => { pg.scrollTop = l.tops[k] || 0; }); }
-    levelIn(bodyEl, true);
-    say(l.label);
+    if (!quiet) { levelIn(bodyEl, true); say(l.label); }
     return true;
   }
   function levelIn(bodyEl, up) {
@@ -4088,8 +4105,14 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const n = (doc.footnotes || []).find((x) => x.note_id === noteId) || null;
     const bodyEl = $(".sheet-body", sheet);
     const word = deeper ? deeper.word : from && from.classList?.contains("study-note-ref") ? (from.textContent || "").replace(/\s+/g, " ").trim() : "";
-    if (deeper) { if (!n || sheet.hidden) return; chase.push(levelKeep()); }
-    else chase = [];
+    if (deeper) { if (!n || sheet.hidden) return; chase.push(levelKeep()); step = { cite: deeper.cite || "", word, key: deeper.key || "" }; }
+    else {
+      chase = [];
+      // the verse of the chapter the word was tapped in: where the trail begins
+      const unit = from && from.closest ? from.closest("p[id], li[id]") : null;
+      const vn = unit ? (unit.querySelector(".verse-number")?.textContent || "").trim() : "";
+      step = { cite: vn ? `${doc.title}:${vn}` : doc.title || "", word, key: unit ? `${doc.id}:${unit.id}` : "" };
+    }
     refs = null;
     sheet.classList.remove("refs", "one");
     sheet.classList.toggle("deep", chase.length > 0);
@@ -4108,7 +4131,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     ].filter(Boolean));
     const named = `Footnote ${deeper && deeper.cite ? `${deeper.cite} ` : ""}${n.marker || ""}${word ? `, ${word}` : ""}`.replace(/\s+/g, " ").trim();
     if (!items.length) { // words only: the note is the whole of it
-      bodyEl.replaceChildren(head, noteEl);
+      bodyEl.replaceChildren(...[head, trailRow(), noteEl].filter(Boolean));
       openSheet("Footnote");
       if (deeper) { sheet.setAttribute("aria-label", named); levelIn(bodyEl); say(named); }
       return;
@@ -4119,7 +4142,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const own = (bare.textContent || "").split(/\s+/).filter((w) => /[a-z]{2}/i.test(w)).length;
     // A note that is mostly its own words (the Papers' notes, a manual's) is read as it is written:
     // a link in it shows its passage in the sheet and Back returns to the note, as before.
-    if (own > 12) { bodyEl.replaceChildren(head, noteEl); openSheet("Footnote"); if (deeper) { sheet.setAttribute("aria-label", named); levelIn(bodyEl); say(named); } return; }
+    if (own > 12) { bodyEl.replaceChildren(...[head, trailRow(), noteEl].filter(Boolean)); openSheet("Footnote"); if (deeper) { sheet.setAttribute("aria-label", named); levelIn(bodyEl); say(named); } return; }
     const hasWords = own > 0;
     const many = items.length > 1;
     const count = many ? el("span", { class: "fn-count" }) : null;
@@ -4128,8 +4151,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (many) head.append(count, prev, next);
     const chips = many ? el("nav", { class: "fn-chips", "aria-label": "References" }, items.map((it, i) => el("button", { type: "button", class: "fn-chip", text: it.label, onclick: () => refGo(i, true) }))) : null;
     const track = el("div", { class: "fn-track" }, items.map((it, i) => el("section", { class: "fn-page", role: "group", "aria-label": many ? `${it.label}, ${i + 1} of ${items.length}` : it.label, tabindex: "-1" })));
-    bodyEl.replaceChildren(...[head, hasWords ? noteEl : null, chips, track].filter(Boolean));
-    const mine = refs = { noteId, items, at: -1, track, pages: [...track.children], chips: chips ? [...chips.children] : [], strip: chips, count, prev, next, loaded: new Set(), doc, quiet: true };
+    bodyEl.replaceChildren(...[head, trailRow(), hasWords ? noteEl : null, chips, track].filter(Boolean));
+    const mine = refs = { noteId, items, at: -1, track, pages: [...track.children], chips: chips ? [...chips.children] : [], strip: chips, count, prev, next, loaded: new Set(), seen: new Set(), doc, quiet: true };
     sheet.classList.add("refs");
     sheet.classList.toggle("one", !many);
     if (hasWords) noteEl.addEventListener("click", (e) => { // a reference named in the note's own words goes to its page
@@ -4164,7 +4187,8 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     if (i === r.at) return;
     r.at = i;
     r.pages.forEach((pg, k) => { pg.inert = k !== i; });
-    r.chips.forEach((c, k) => { if (k === i) c.setAttribute("aria-current", "true"); else c.removeAttribute("aria-current"); });
+    r.seen.add(i);
+    r.chips.forEach((c, k) => { if (k === i) c.setAttribute("aria-current", "true"); else c.removeAttribute("aria-current"); c.classList.toggle("seen", k !== i && r.seen.has(k)); });
     if (r.strip && r.chips[i]) { // its name is brought to the middle of the row (never by scrollIntoView, which would move the page too)
       const c = r.chips[i];
       const left = c.offsetLeft - (r.strip.clientWidth - c.offsetWidth) / 2;
@@ -4226,6 +4250,22 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     };
     if (res.pid && /^p\d+$/.test(res.pid)) {
       const focus = /^#p\d+$/.test(u.hash) ? u.hash.slice(1) : null;
+      // A reference that leads back to a verse already on the trail (its note pointed here, and
+      // this note points back): said plainly, with the way back to that step, instead of the
+      // same verse shown again as if it were new.
+      const keys = trailKeys(), mineKey = `${res.doc_id}:${focus || res.pid}`;
+      const back = keys.indexOf(mineKey);
+      if (back >= 0 && keys.length > 1 && back < keys.length - 1) {
+        const where = back === 0 ? "where you started" : `step ${back + 1} of your trail`;
+        const name = (chase[back] ? chase[back].step.cite : "") || it.label;
+        const i = r.items.findIndex((x) => x.href === it.href);
+        if (i >= 0 && r.chips[i]) r.chips[i].classList.add("loop");
+        return [
+          el("div", { class: "nm", text: name }),
+          el("p", { class: "fn-quiet", text: `This is ${where}: the verse whose footnote brought you here.` }),
+          el("div", { class: "peek-row" }, [el("button", { type: "button", class: "primary", text: `Back to ${name}`, onclick: () => chaseTo(back) })]),
+        ];
+      }
       const nodes = await passageView(res, { open, focus, same, marks: chase.length + 1 < CHASE_DEEP, last: chase.length + 1 >= CHASE_DEEP });
       if (nodes) return nodes;
     }

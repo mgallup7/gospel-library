@@ -42,6 +42,10 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     const b = await st();
     check(b.deep && b.up && b.cite === "Alma 38:2" && b.word === "endureth" && /Alma 38:2/.test(b.label), `${name}: a tap on a marked word shows that verse's note, named at the top (${JSON.stringify(b).slice(0, 260)})`);
     check(b.rows <= 1 && b.hist === a.hist && b.hash === a.hash && b.h === a.h, `${name}: one row of names, and history, the chapter and the sheet's height as they were (${b.rows}, ${a.hist}/${b.hist}, ${a.h}/${b.h})`);
+    const trail = await page.evaluate(() => [...document.querySelectorAll(".fn-trail .fn-crumb")].map((c) => c.textContent.replace(/\s+/g, " ").trim()));
+    check(trail.length === 1 && /Alma 32:13/.test(trail[0]) && /endureth/.test(trail[0]), `${name}: the trail above the names says where this came from, and by which word (${JSON.stringify(trail)})`);
+    const crumbH = await page.evaluate(() => Math.round(document.querySelector(".fn-crumb").getBoundingClientRect().height));
+    check(crumbH >= 44, `${name}: a step of the trail takes a thumb (${crumbH})`);
     await page.screenshot({ path: `${SHOTS}footnote-chase-${name}-2.png` });
     // sideways still means the next reference of the note at the top
     if (b.chips > 1) {
@@ -76,6 +80,42 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     // at the first level Back closes
     await page.goBack(); await page.waitForTimeout(700);
     check(!(await st()).open && (await st()).hash === a.hash, `${name}: at the first level Back closes the sheet and stays`);
+    // a reference that leads back onto the trail says so, and offers the way back, not the same verse again
+    {
+      const w3 = await page.locator('#reader .doc a.study-note-ref[href$="#note13_b"]').first().boundingBox();
+      await page.touchscreen.tap(w3.x + w3.width / 2, w3.y + w3.height / 2);
+      await page.waitForSelector(".fn-page:not([inert]) .fn-mk", { timeout: 8000 }); await page.waitForTimeout(400);
+      await tapMark("endureth");
+      const loopAt = await page.evaluate(() => [...document.querySelectorAll(".fn-chip")].findIndex((c) => /^Alma 32:13/.test(c.textContent)));
+      if (loopAt >= 0) {
+        await page.evaluate((i) => document.querySelectorAll(".fn-chip")[i].click(), loopAt); await page.waitForTimeout(1100);
+        const lp = await page.evaluate((i) => { const p = document.querySelector(".fn-page:not([inert])"); return { text: p.textContent.replace(/\s+/g, " "), verses: p.querySelectorAll(".peek p").length, chip: document.querySelectorAll(".fn-chip")[i].className, btn: p.querySelector(".peek-row .primary")?.textContent || "" }; }, loopAt);
+        check(/where you started/.test(lp.text) && lp.verses === 0 && /loop/.test(lp.chip) && /Back to Alma 32:13/.test(lp.btn), `${name}: a reference back to the start says so and offers the way back (${JSON.stringify(lp).slice(0, 240)})`);
+        const seen = await page.evaluate(() => [...document.querySelectorAll(".fn-chip")].map((c) => (c.classList.contains("seen") ? "s" : c.getAttribute("aria-current") ? "c" : ".")).join(""));
+        check(seen[0] === "s" && seen[loopAt] === "c" && (loopAt < 2 || seen[1] === "."), `${name}: names already read go quiet, the rest stay as they were (${seen})`);
+        const bk = await page.locator(".fn-page:not([inert]) .peek-row .primary").boundingBox();
+        await page.touchscreen.tap(bk.x + bk.width / 2, bk.y + bk.height / 2); await page.waitForTimeout(800);
+        const l1 = await st();
+        check(l1.open && !l1.deep && l1.word === "endureth" && l1.count === "1 of 5", `${name}: its button returns to that step (${JSON.stringify(l1).slice(0, 160)})`);
+      } else console.log(`footnote-chase ${name}: no reference back to the start in this note; the loop was not tried`);
+      // from two levels down, a tap on the first step of the trail returns to the first note
+      await tapMark("endureth");
+      let q = await st();
+      for (let i = 0; i < 8 && !q.marks.length; i++) { const moved = await page.evaluate(() => { const n = document.querySelector(".fn-next"); if (!n || n.disabled) return false; n.click(); return true; }); if (!moved) break; await page.waitForTimeout(900); q = await st(); }
+      if (q.marks.length) {
+        await tapMark(q.marks[0]);
+        const crumbs = await page.evaluate(() => [...document.querySelectorAll(".fn-trail .fn-crumb")].map((c) => c.textContent.replace(/\s+/g, " ").trim()));
+        check(crumbs.length === 2 && /Alma 32:13/.test(crumbs[0]) && /Alma 38:2/.test(crumbs[1]), `${name}: at the third level the trail shows both steps above (${JSON.stringify(crumbs)})`);
+        const fits = await page.evaluate(() => { const t = document.querySelector(".fn-trail"); return t.scrollWidth <= t.clientWidth + 1; });
+        check(fits, `${name}: and fits on one line`);
+        const c0 = await page.locator(".fn-trail .fn-crumb").first().boundingBox();
+        await page.touchscreen.tap(c0.x + Math.min(20, c0.width / 2), c0.y + c0.height / 2); await page.waitForTimeout(800);
+        const l1 = await st();
+        check(l1.open && !l1.deep && l1.word === "endureth" && l1.hist === a.hist, `${name}: a tap on the first step returns to the first note in one go (${JSON.stringify(l1).slice(0, 160)})`);
+      }
+      const x0 = await page.locator("#sheet .close").boundingBox();
+      await page.touchscreen.tap(x0.x + x0.width / 2, x0.y + x0.height / 2); await page.waitForTimeout(700);
+    }
     // close from a deeper level ends the whole chase
     const w2 = await page.locator('#reader .doc a.study-note-ref[href$="#note13_b"]').first().boundingBox();
     await page.touchscreen.tap(w2.x + w2.width / 2, w2.y + w2.height / 2);
