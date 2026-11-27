@@ -658,6 +658,9 @@ main.tab-in > .pane { animation: tab-in .14s ease-out; }
 .sheet.refs.one { height: auto; max-height: 55vh; }
 .sheet.refs .sheet-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .fn-head { flex: none; display: flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 calc(52px + var(--safe-right)) 6px calc(18px + var(--safe-left)); font-family: var(--sans); }
+/* a finger dragged on the head or the row of names moves nothing behind the sheet */
+.sheet.refs .fn-head { touch-action: none; }
+.sheet.refs .fn-chips { touch-action: pan-x; }
 .fn-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
 .fn-word { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
 .fn-mark { flex: none; font-size: var(--ui-12); font-weight: 600; color: var(--accent); }

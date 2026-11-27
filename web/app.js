@@ -653,13 +653,16 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       if (kind === "sheet") hideNote(); else if (!stage.hidden) stopPresenting();
       return;
     }
+    // Forward after a sheet was closed lands on its old marker, where nothing is: it used to become
+    // a second copy of the page, and the next Back seemed to do nothing. Step straight back off it.
+    if (history.state?.overlay && !overlay && sheet.hidden && stage.hidden) { poppingOverlay = true; history.back(); return; }
     if (history.state?.overlay) history.replaceState({ ...history.state, overlay: null }, "", location.href); // a marker reached from elsewhere is its place
     overlay = null;
     hideNote(); if (!stage.hidden) stopPresenting();
     const left = { doc: state.docId, pid: state.pid };
     readUrl(); syncControls();
     if (typedLeft !== null) { input.value = typedLeft; typedLeft = null; } // a letter still in the box after a search too short to run
-    render({ restore: history.state?.scroll || null }).then(() => focusAfterBack(left), () => {});
+    render({ restore: history.state?.scroll || null }).then(() => { focusAfterBack(left); resumeNote(); }, () => {});
   });
   let typedLeft = null;
   // On a phone Back swaps the whole screen and the focus went with it: it lands on the row of the
@@ -3970,6 +3973,25 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     }
     return items;
   }
+  // Open, from a reference, goes to that chapter and the sheet goes down. Back from there used to
+  // return to the page without the note, so the reference had to be found again. The note and
+  // the reference in view are kept with the place they were over, and Back to that place puts
+  // them up again. (Kept while the app is open; a reload starts clean.)
+  const keptNotes = new Map(); // the address of a page -> { noteId, at }
+  function keepNote(r) {
+    if (!r || !r.noteId) return;
+    keptNotes.set(location.href, { noteId: r.noteId, at: r.at });
+    if (keptNotes.size > 12) keptNotes.delete(keptNotes.keys().next().value);
+  }
+  function resumeNote() {
+    const k = keptNotes.get(location.href);
+    if (!k) return;
+    keptNotes.delete(location.href);
+    if (!currentDoc || !sheet.hidden || overlay || !(currentDoc.footnotes || []).some((x) => x.note_id === k.noteId)) return;
+    const from = [...readerPane.querySelectorAll("a.study-note-ref, a[data-scroll-id]")].find((a) => (a.dataset.scrollId || (a.getAttribute("href") || "").split("#").pop()) === k.noteId) || null;
+    showNote(k.noteId, from);
+    if (refs && k.at > 0) { refs.quiet = true; const left = refs.pages[k.at] ? refs.pages[k.at].offsetLeft - refs.pages[0].offsetLeft : 0; refs.track.scrollLeft = left; refAt(k.at); refs.quiet = false; }
+  }
   function showNote(noteId, from) {
     if (!currentDoc) return;
     const n = (currentDoc.footnotes || []).find((x) => x.note_id === noteId) || null;
@@ -4010,7 +4032,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const chips = many ? el("nav", { class: "fn-chips", "aria-label": "References" }, items.map((it, i) => el("button", { type: "button", class: "fn-chip", text: it.label, onclick: () => refGo(i, true) }))) : null;
     const track = el("div", { class: "fn-track" }, items.map((it, i) => el("section", { class: "fn-page", role: "group", "aria-label": many ? `${it.label}, ${i + 1} of ${items.length}` : it.label, tabindex: "-1" })));
     bodyEl.replaceChildren(...[head, hasWords ? noteEl : null, chips, track].filter(Boolean));
-    const mine = refs = { items, at: -1, track, pages: [...track.children], chips: chips ? [...chips.children] : [], strip: chips, count, prev, next, loaded: new Set(), doc: currentDoc, quiet: true };
+    const mine = refs = { noteId, items, at: -1, track, pages: [...track.children], chips: chips ? [...chips.children] : [], strip: chips, count, prev, next, loaded: new Set(), doc: currentDoc, quiet: true };
     sheet.classList.add("refs");
     sheet.classList.toggle("one", !many);
     if (hasWords) noteEl.addEventListener("click", (e) => { // a reference named in the note's own words goes to its page
@@ -4102,7 +4124,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const same = !!(r.doc && r.doc.id === res.doc_id && state.docId === res.doc_id);
     const open = async () => {
       if (same && res.pid) { closeSheet(); focusParagraph(res.pid); return; }
-      hideNote(); await openDoc(res.doc_id, res.pid); markListed(res);
+      keepNote(r); hideNote(); await openDoc(res.doc_id, res.pid); markListed(res);
     };
     if (res.pid && /^p\d+$/.test(res.pid)) {
       const focus = /^#p\d+$/.test(u.hash) ? u.hash.slice(1) : null;
@@ -4171,7 +4193,26 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       liftSheet();
       inertBehind(sheet, true);
     }
-    if (!$("#scrim")) { const scrim = el("div", { class: "scrim", onclick: () => { if (!keepTyped()) closeSheet(); } }); scrim.id = "scrim"; document.body.append(scrim); }
+    if (!$("#scrim")) {
+      const scrim = el("div", { class: "scrim", onclick: (e) => {
+        if (keepTyped()) return;
+        // on another footnoted word of the page: that note takes this one's place, in one tap
+        if (refs && currentDoc) {
+          let best = null, near = 10;
+          for (const a of readerPane.querySelectorAll(".doc a.study-note-ref")) {
+            for (const b of a.getClientRects()) {
+              const dx = Math.max(b.left - e.clientX, 0, e.clientX - b.right), dy = Math.max(b.top - e.clientY, 0, e.clientY - b.bottom);
+              const d = Math.hypot(dx, dy);
+              if (d < near) { near = d; best = a; }
+            }
+          }
+          const id = best ? best.dataset.scrollId || (best.getAttribute("href") || "").split("#").pop() : "";
+          if (id && id !== refs.noteId && (currentDoc.footnotes || []).some((x) => x.note_id === id)) { showNote(id, best); return; }
+        }
+        closeSheet();
+      } });
+      scrim.id = "scrim"; document.body.append(scrim);
+    }
     $(".sheet-body", sheet).onclick = (e) => {
       const a = e.target.closest("a");
       if (!a) return;

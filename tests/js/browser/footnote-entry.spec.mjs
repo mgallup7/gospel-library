@@ -49,7 +49,8 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     await tapIn(page.locator(".fn-page:not([inert]) p.title a").first());
     const e = await cur();
     const said = await page.evaluate(() => document.querySelector(".fn-page:not([inert])").textContent);
-    check(/Not in your library/.test(said) && /Steadfastness/.test(e.back || "") && !e.toast, `${name}: an entry the library lacks says so on the page, with the way back (${said.slice(0, 70)})`);
+    // (a library with the whole Topical Guide holds it; a small one says it is not here)
+    check((e.rows > 0 || /Not in your library/.test(said)) && /Steadfastness/.test(e.back || "") && !e.toast, `${name}: the next entry opens here too, or says it is not in the library, with the way back (${said.replace(/\s+/g, " ").slice(0, 70)})`);
     await tapIn(page.locator(".fn-page:not([inert]) .fn-back"), 30);
     await tapIn(page.locator(".fn-page:not([inert]) .fn-back"), 30);
     const f = await cur();
