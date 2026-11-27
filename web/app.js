@@ -3997,7 +3997,11 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     // does the note say anything beyond naming its references?
     const bare = noteEl.cloneNode(true);
     for (const a of bare.querySelectorAll("a[href]")) a.remove();
-    const hasWords = /[a-z]{2}/i.test(bare.textContent || "");
+    const own = (bare.textContent || "").split(/\s+/).filter((w) => /[a-z]{2}/i.test(w)).length;
+    // A note that is mostly its own words (the Papers' notes, a manual's) is read as it is written:
+    // a link in it shows its passage in the sheet and Back returns to the note, as before.
+    if (own > 12) { bodyEl.replaceChildren(head, noteEl); openSheet("Footnote"); return; }
+    const hasWords = own > 0;
     const many = items.length > 1;
     const count = many ? el("span", { class: "fn-count" }) : null;
     const prev = many ? el("button", { type: "button", class: "fn-step fn-prev", "aria-label": "Previous reference", html: ICON_BACK }) : null;
