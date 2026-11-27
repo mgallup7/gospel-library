@@ -854,3 +854,30 @@ def test_a_hymn_is_cut_into_verses_and_choruses():
     assert "figure1_p3" not in texts and "figure1_p4" not in texts  # a later line, the [Chorus] label
     assert texts["figure1_p1"] == "Brightly" and texts["p1"] == "Matthew 5:14"
     assert any(c["slug"] == "hymns" for c in __import__("gospel_library.config", fromlist=["x"]).COLLECTIONS)
+
+
+def test_an_index_entry_is_kept_with_its_lines():
+    # invented lines in the site's markup for a Topical Guide entry: each block of lines is one
+    # passage, so the entry is found by any of them and read whole
+    from gospel_library import parse
+    body = """<header><h1 id="title1"><strong>Lanterns</strong></h1></header>
+<div class="body-block">
+<nav class="index"><ul class="reference"><li><p class="title" id="title2"><em>See also</em> <a class="scripture-ref" href="/study/scriptures/tg/lamps?lang=eng">Lamps</a>; <a class="scripture-ref" href="/study/scriptures/tg/windows?lang=eng">Windows</a></p></li></ul></nav>
+<p id="p0">A lantern is carried; a lamp is set down.</p>
+<nav class="index"><ul>
+<li><p class="entry" id="p1">the lantern on the hill is <span class="key-word">lit</span>, <a class="scripture-ref" href="/study/scriptures/ot/gen/1?lang=eng&amp;id=p3#p3">Gen. 1:3</a>.</p></li>
+<li><p class="entry" id="p2">every window <span class="key-word">glows</span>, <a class="scripture-ref" href="/study/scriptures/ot/ps/119?lang=eng&amp;id=p105#p105">Ps. 119:105</a>.</p></li>
+</ul></nav>
+<nav class="index"><ul>
+<li><p class="entry" id="p3">a light upon the snows, <a class="scripture-ref" href="/study/scriptures/nt/matt/5?lang=eng&amp;id=p14#p14">Matt. 5:14</a>.</p></li>
+</ul></nav>
+<nav class="site-menu"><ul><li><p id="chrome1">Sign in</p></li></ul></nav>
+</div>"""
+    doc = parse.parse_content({"meta": {"title": "Lanterns"}, "content": {"body": body}}, "/scriptures/tg/lanterns")
+    texts = {p.pid: p.text for p in doc.paragraphs}
+    assert texts["title2"] == "See also Lamps; Windows"
+    assert texts["p0"] == "A lantern is carried; a lamp is set down."
+    assert texts["p1"] == "the lantern on the hill is lit, Gen. 1:3; every window glows, Ps. 119:105"
+    assert texts["p3"] == "a light upon the snows, Matt. 5:14"
+    assert "p2" not in texts and "chrome1" not in texts  # a later line of the block; the site's own menu
+    assert all(p.kind in ("title", "para") for p in doc.paragraphs)

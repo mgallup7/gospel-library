@@ -126,6 +126,23 @@ def _extract_paragraphs(root: Tag) -> list[Paragraph]:
     seen_ids: set[str] = set()
     for el in root.find_all(_UNIT_TAGS):
         if _inside(el, _SKIP_WITHIN):
+            # A <nav class="index"> is not the site's furniture: it is how an entry of the
+            # Topical Guide, the Bible Dictionary or the Guide to the Scriptures lists its lines
+            # ("men ought always to pray, and not to faint, Luke 18:1."). Each block of lines is
+            # one unit, under its first line's id: found by any of its lines, and read whole.
+            block = _index_block(el)
+            if block is None or el.name != "p":
+                continue
+            lines = [p for p in block.find_all("p") if p.get("id")]
+            if not lines or el is not lines[0]:
+                continue
+            text = _clean("; ".join(t for t in (_unit_text(p).strip().rstrip(".;") for p in lines) if t))
+            pid = el.get("id")
+            if not text or pid in seen_ids:
+                continue
+            seen_ids.add(pid)
+            seq += 1
+            units.append(Paragraph(seq=seq, pid=pid, kind="para", text=text))
             continue
         if el.name == "li" and el.find(["p", "li", "h2", "h3", "h4"]):
             continue  # its children will be collected on their own
@@ -182,6 +199,21 @@ def _song_block(el: Tag):
             if isinstance(up, Tag) and up.name == "figure" and "music" in (up.get("class") or []):
                 return parent
     return None
+
+
+def _index_block(el: Tag):
+    """The <nav class="index"> an element sits in, when that is the only kind of nav around it."""
+    found = None
+    for parent in el.parents:
+        if not isinstance(parent, Tag):
+            continue
+        if parent.name == "nav":
+            if "index" not in (parent.get("class") or []):
+                return None
+            found = found or parent
+        elif parent.name in _SKIP_WITHIN:
+            return None
+    return found
 
 
 def _inside_class(el: Tag, name: str) -> bool:

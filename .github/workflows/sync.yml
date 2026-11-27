@@ -13,6 +13,10 @@ on:
         description: "Re-fetch every page, not just what is missing"
         type: boolean
         default: false
+      rebuild:
+        description: "Read these collections again from the pages already kept, no fetching (comma-separated slugs): for after the reader of pages has learned something new"
+        required: false
+        default: ""
       jsp_minutes:
         description: "Minutes to spend on the Joseph Smith Papers this run (default 75; 0 to skip)"
         required: false
@@ -85,6 +89,15 @@ jobs:
           LIBRARY_PASSPHRASE: ${{ secrets.LIBRARY_PASSPHRASE }}
           GH_TOKEN: ${{ github.token }}
         run: bin/ci-restore.sh
+
+      # After the parser has learned to read a kind of page better (an entry of the Topical Guide
+      # with its lines), the pages already fetched are read again from the copies kept beside the
+      # library. Nothing is fetched; only pages whose text comes out different are rewritten.
+      - name: Read kept pages again
+        if: github.event_name == 'workflow_dispatch' && inputs.rebuild != ''
+        env:
+          REBUILD: ${{ inputs.rebuild }}
+        run: python -m gospel_library rebuild --collections "$REBUILD"
 
       - name: Original languages (loaded once, kept with the state)
         continue-on-error: true
