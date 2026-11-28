@@ -3453,6 +3453,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     const md = marks || last ? await markedDoc(res.doc_id) : null;
     const notes = md && marks ? new Set((md.doc.footnotes || []).map((x) => x.note_id)) : null;
     const chapter = String(res.title || "");
+    const inChase = chase.length > 0 && !!window.Deck?.addChain;
     const wordsOf = (x) => { const got = notes ? verseMarked(md.holder, x.pid, notes) : null; return got || [document.createTextNode(x.text)]; };
     const peek = el("div", { class: "peek" + (aim ? " has-focus" : ""), "data-doc": String(res.doc_id), "data-pid": aim || from }, [
       ...verses.map((x) => el("p", { class: (x.kind === "verse" ? "verse" : "para") + (aim && x.pid === aim ? " focus" : ""), "data-pid": x.pid, "data-verse": x.verse ? String(x.verse) : "" }, [x.verse ? el("span", { class: "vn", text: String(x.verse) }) : null, ...wordsOf(x)].filter(Boolean))),
@@ -3483,7 +3484,10 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
       el("div", { class: "peek-row" }, [
         el("button", { type: "button", class: "primary", text: same ? `Go to verse ${verseList(listed || [from])}` : `Open ${res.title}`, onclick: open }),
         same ? null : window.Beside?.button?.(res) || null, // beside.js: "Open beside", on an iPad
-        window.Deck ? el("button", { type: "button", class: "text-btn", text: aimVerse ? `Add verse ${aimVerse} to deck` : "Add to deck", onclick: async () => {
+        // in a chase the deck button beside the verse takes the whole chase, since that is the one
+        // a thumb finds; the verse alone stays one button further on
+        inChase ? el("button", { type: "button", class: "text-btn fn-chase-deck", text: "Add chase to deck", "aria-label": "Add this chase to the deck, each verse joined to the next", onclick: (e) => chaseToDeck(e.currentTarget) }) : null,
+        window.Deck ? el("button", { type: "button", class: "text-btn", text: inChase ? "This verse only" : aimVerse ? `Add verse ${aimVerse} to deck` : "Add to deck", onclick: async () => {
           try {
             const doc = await api("doc", { id: res.doc_id });
             const units = toDeck.filter((x) => x.kind === "verse" || x.kind === "para").map((x) => ({ pid: x.pid, kind: x.kind, verse: x.verse, text: x.text }));
@@ -4079,7 +4083,7 @@ import { wordSpans, locate, paint, unitText, rangeWords, wrapWords, unwrapPhrase
     return el("nav", { class: "fn-trail", "aria-label": "How you got here" }, chase.flatMap((l, k) => [
       el("button", { type: "button", class: "fn-crumb", "aria-label": `Back to ${l.step.cite}${l.step.word ? `, ${l.step.word}` : ""}`, onclick: () => chaseTo(k) }, [el("span", { class: "fn-crumb-cite", text: l.step.cite || "Start" }), l.step.word ? el("span", { class: "fn-crumb-word", text: l.step.word }) : null].filter(Boolean)),
       el("span", { class: "fn-crumb-sep", "aria-hidden": "true", text: "›" }),
-    ]).concat(window.Deck?.addChain ? [el("button", { type: "button", class: "fn-trail-deck", text: "+ Deck", "aria-label": "Add this chase to the deck, each verse joined to the next", onclick: (e) => chaseToDeck(e.currentTarget) })] : []));
+    ]));
   }
   // The chase as a chain on the deck: the verse it began in, each verse a word was tapped in, and
   // the verse now in view, in that order; the tapped words highlighted, an arrow from each to the

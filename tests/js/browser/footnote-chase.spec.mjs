@@ -50,11 +50,13 @@ export default async function run(browser, { BASE, PASS, SHOTS }) {
     {
       const before = await page.evaluate(() => window.Deck.tally());
       const inView = (await st()).nm;
-      const db = await page.locator(".fn-trail-deck").boundingBox();
+      // the button beside the verse in view (each page of the note has its own)
+      const db = await page.evaluate(() => { for (const x of document.querySelectorAll("#sheet .fn-chase-deck")) { const r = x.getBoundingClientRect(); if (r.width && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight) return { x: r.left, y: r.top, width: r.width, height: r.height, label: x.textContent, only: x.nextElementSibling?.textContent }; } return null; });
+      check(db && db.label === "Add chase to deck" && db.only === "This verse only" && db.height >= 44, `${name}: in a chase the deck button beside the verse takes the whole chase (${JSON.stringify(db)})`);
       await page.touchscreen.tap(db.x + db.width / 2, db.y + db.height / 2); await page.waitForTimeout(1200);
       const after = await page.evaluate(() => window.Deck.tally());
       const mine = after.order.slice(-3);
-      check(after.passages === before.passages + 3 && after.links === before.links + 2 && mine[0] === "Alma 32:13" && mine[1] === "Alma 38:2" && inView.startsWith(mine[2]), `${name}: + Deck puts the chase on the deck in order, joined (${JSON.stringify(mine)}, in view ${inView}; links ${before.links} to ${after.links})`);
+      check(after.passages === before.passages + 3 && after.links === before.links + 2 && mine[0] === "Alma 32:13" && mine[1] === "Alma 38:2" && inView.startsWith(mine[2]), `${name}: Add chase to deck puts the chase on the deck in order, joined (${JSON.stringify(mine)}, in view ${inView}; links ${before.links} to ${after.links})`);
       check(/endureth/.test(after.marked[after.marked.length - 3]) && /endureth/.test(after.marked[after.marked.length - 2]), `${name}: with the tapped word marked in each (${JSON.stringify(after.marked.slice(-3))})`);
       check((await st()).open && (await st()).deep, `${name}: and the chase stays up`);
       await page.touchscreen.tap(db.x + db.width / 2, db.y + db.height / 2); await page.waitForTimeout(1000);
